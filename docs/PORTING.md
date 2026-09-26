@@ -150,8 +150,8 @@ Check a fresh Cargo home with the pinned toolchain available to show no registry
 | P0 | complete | `tools/reference.sh` verifies all 43 pinned files; the C suites pass on macOS arm64 and Linux arm64/x86_64; oracles only observe (`tools/oracle/`); `tests/inventory.rs` rediscovers the 112 C tests |
 | P1 | complete | empty dependency graph; `tests/options_oracle.rs`, `tests/cli_differential.rs`; RNG and grid exact in `tests/sim_oracle.rs`; `tests/abi.rs` identical on all four targets |
 | P2 | complete | `tests/c_png.rs`, `tests/c_gif.rs`, `tests/png_oracle.rs`, `tests/gif_oracle.rs`, sprite pipeline exact |
-| P3 | complete | `tests/sim_oracle.rs` bit-exact, including 68 s recordings and a 4,700-frame live session; the two numerical findings classified and reproduced (DESIGN §5) |
-| P4 | complete | `tests/cells_oracle.rs`, `tests/kitty_oracle.rs`, `tests/headless_differential.rs` (every rate, byte-identical GIFs and casts) |
+| P3 | complete | `tests/sim_oracle.rs` matches the C exactly, including 68 s recordings and a 4,700-frame live session; the two numerical findings classified and reproduced (DESIGN §5) |
+| P4 | complete | `tests/cells_oracle.rs`, `tests/kitty_oracle.rs`, `tests/headless_differential.rs` (every rate; GIFs and casts match the C output) |
 | P5 | complete | `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs`; debug and release agree; all 112 mappings executed |
 | P6 | partly complete | done: matrix on the four targets (x86_64 translated/emulated), installation and dependency audit. Open: native x86_64 runs, real terminals, independent playback, performance budgets (`tools/perf.sh`) |
 | P7 | pending | needs the owner's release identity and decisions on [the deviations](DEVIATIONS.md) |

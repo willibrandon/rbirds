@@ -1,7 +1,7 @@
 //! No per-frame allocation in steady state (docs/PORTING.md §7): once the
 //! first frames have sized the grid, the canvas, the cells and the output
-//! buffer, a live frame — keys, clock, simulation, composition, the panel,
-//! the queued bytes — allocates nothing, in every renderer.
+//! buffer, a live frame (keys, clock, simulation, composition, the panel,
+//! the queued bytes) allocates nothing, in every renderer.
 //!
 //! The C allocates in steady state only where the port does too, and those
 //! paths are not live frames: the recording's painted image per GIF frame.

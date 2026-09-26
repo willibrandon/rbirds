@@ -5,7 +5,7 @@
 #     cc -std=c99 -Wall -Wextra -O3 -g -I<ref> boids.c cells.c font.c gif.c \
 #        kitty_graphics.c options.c png.c spatial_grid.c -o <out> -lm
 #
-# The reference is $RBIRDS_REFERENCE or .reference/cbirds; it is only read —
+# The reference is $RBIRDS_REFERENCE or .reference/cbirds. It is only read:
 # no make, no files written there. It must be at the pinned commit with no
 # tracked changes. Output: target/oracle/cbirds, or the path given.
 #

@@ -65,8 +65,8 @@ pub fn png_status_string(status: Result<(), PngError>) -> &'static str {
 /// An 8 bit RGBA image with straight (not premultiplied) alpha, row major,
 /// `width * height * 4` bytes (`png_image_t`).
 ///
-/// The empty image — zero by zero with no pixels — stands for the C image
-/// whose `pixels` pointer is NULL: never allocated, or freed.
+/// The empty image (zero by zero, no pixels) stands for the C image whose
+/// `pixels` pointer is NULL: never allocated, or freed.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Image {
     pub width: i32,

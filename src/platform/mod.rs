@@ -15,7 +15,7 @@
 //!   comparison with `tools/oracle/abi_probe.c`.
 //! - `termios.rs`, `tty.rs`, `poll.rs`, `time.rs`, `errors.rs`: safe wrappers.
 //! - `restore.rs`, `signals.rs`: the terminal-ownership flags, boids.c's
-//!   `restore_terminal`, and its signal handler — the async-signal-safe path.
+//!   `restore_terminal`, and its signal handler (the async-signal-safe path).
 //! - [`pty`]: pseudoterminals, as test support only.
 
 #![allow(unsafe_code)]
@@ -254,9 +254,9 @@ pub struct Strtod {
     pub erange: bool,
 }
 
-/// The C library's own `strtod`, so the grammar a numeric option accepts —
-/// whitespace, sign, hexadecimal, exponents, `inf`, `nan` — is exactly the
-/// reference's. The process never calls `setlocale`, so as in the C program
+/// The C library's own `strtod`, so a numeric option accepts the same syntax
+/// as in the reference: whitespace, sign, hexadecimal, exponents, `inf` and
+/// `nan`. The process never calls `setlocale`, so as in the C program
 /// this is the "C" locale.
 pub fn strtod(text: &CStr) -> Strtod {
     let mut end: *mut c_char = std::ptr::null_mut();

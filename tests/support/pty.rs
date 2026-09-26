@@ -4,8 +4,8 @@
 //! slave side with a cleared environment, and plays the terminal on the
 //! master side: it records every byte the program writes, answers terminal
 //! queries from a reply script (whole or in timed fragments), and performs a
-//! scripted sequence of actions — input, resizes, signals, pauses in reading,
-//! attribute snapshots — each released by an output marker or a delay after
+//! scripted sequence of actions (input, resizes, signals, pauses in reading,
+//! attribute snapshots), each released by an output marker or a delay after
 //! the previous one. It returns the exit (code or signal), the raw
 //! transcript, and the slave's attributes before, during and after.
 //!
@@ -824,7 +824,7 @@ pub mod cases {
     }
 
     /// `--frames 20 --seed 1`, default palette, a terminal that answers no
-    /// query: the seven theme queries come first, byte for byte, then the
+    /// query: the seven theme queries come first, exactly, then the
     /// screen is taken; the run ends by itself with exit 0, the attributes
     /// exactly restored, and the restore sequence last.
     pub fn frames_run(subject: &Subject) -> Outcome {
@@ -1022,7 +1022,7 @@ pub mod cases {
     }
 
     /// A handled signal while flying: the handler restores the terminal and
-    /// leaves with `_exit(128 + signal)` — an exit code, not a signal death.
+    /// leaves with `_exit(128 + signal)`, an exit code, not a signal death.
     pub fn signal_while_running(subject: &Subject, signal: c_int) -> Outcome {
         let spec = Spec::new(subject, &["--color", "ember", "--seed", "1"])
             .step(Step::after_output(ALT_SCREEN_ON, Action::Mark("screen taken")))
@@ -1212,7 +1212,7 @@ pub mod cases {
     }
 
     /// `--snapshot PATH`: at the end the terminal is restored first, then the
-    /// PNG is written and `<name>: wrote PATH` printed on standard error —
+    /// PNG is written and `<name>: wrote PATH` printed on standard error,
     /// after the restore sequence, with the newline cooked again to CR LF.
     pub fn snapshot_run(subject: &Subject, path: &Path) -> Outcome {
         let path_text = path.to_str().expect("a UTF-8 scratch path");

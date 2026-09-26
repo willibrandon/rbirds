@@ -390,9 +390,9 @@ impl KittyGraphics {
         Ok(())
     }
 
-    /// `kitty_graphics_write_raw`: queues bytes as they are — escape text some
-    /// other renderer has already built. The buffer is the one output sink,
-    /// whatever is being drawn with.
+    /// `kitty_graphics_write_raw`: queues bytes as they are, such as escape
+    /// text some other renderer has already built. The buffer is the one
+    /// output sink, whatever is being drawn with.
     pub fn write_raw(&mut self, bytes: &[u8]) -> Result<(), KittyError> {
         if self.unusable() {
             return Err(KittyError::Argument);

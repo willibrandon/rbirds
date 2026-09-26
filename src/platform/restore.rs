@@ -9,12 +9,13 @@
 //! allocation, locking, formatting or unwinding happens on this path.
 //!
 //! The saved attributes are kept field by field in atomics rather than as a
-//! `Termios` behind an `UnsafeCell`. The protocol is the same — written only
-//! before `terminal_is_raw` is set (Release), read by the handler only after
-//! it observes the flag (Acquire) — but with atomics even a violation of it
-//! (a second [`mark_raw_acquired`] racing a handler on another thread) cannot
-//! be a data race: at worst the handler restores a mixture of two saved
-//! states. Padding is never copied, because the value is rebuilt by field.
+//! `Termios` behind an `UnsafeCell`. The protocol is the same: they are
+//! written only before `terminal_is_raw` is set (Release), and read by the
+//! handler only after it observes the flag (Acquire). With atomics, though,
+//! even a violation of it (a second [`mark_raw_acquired`] racing a handler on
+//! another thread) cannot be a data race: at worst the handler restores a
+//! mixture of two saved states. Padding is never copied, because the value is
+//! rebuilt by field.
 //!
 //! Tests share one process, so only subprocess tests (tests/pty_reference.rs)
 //! exercise this path for real; in-process tests may only use
@@ -134,7 +135,7 @@ pub fn write_all_quietly(fd: RawFd, data: &[u8]) {
     }
 }
 
-/// Records that raw mode is on: stores `saved` — the attributes to put back —
+/// Records that raw mode is on: stores `saved` (the attributes to put back)
 /// and then sets `terminal_is_raw` with Release ordering, so a signal handler
 /// that sees the flag sees the whole of `saved`. Call it once, right after
 /// the `tcsetattr` that made the terminal raw succeeded.

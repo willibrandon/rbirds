@@ -1,4 +1,4 @@
-//! C `printf` number formatting, byte for byte.
+//! C `printf` number formatting, with the same output bytes as the C library.
 //!
 //! Rust's `{:.N}` is the exact, round-half-even conversion both C libraries
 //! perform for `%.Nf`, which a differential test confirms; what differs is the

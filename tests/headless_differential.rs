@@ -1,10 +1,10 @@
 //! Headless modes end to end against the canonical C build
-//! (docs/COMPATIBILITY.md C08–C11, C16, C17): GIF recordings byte for byte,
-//! asciinema casts byte for byte apart from the header's wall-clock timestamp
-//! and title, and benchmark reports apart from the two measured timing lines.
-//! A seeded recording exercises everything at once — options, simulation,
-//! sprites, rotation and resampling, composition, cells, palette
-//! quantization, LZW — so one differing byte anywhere fails it.
+//! (docs/COMPATIBILITY.md C08–C11, C16, C17). GIF recordings must match
+//! exactly, asciinema casts exactly apart from the header's wall-clock
+//! timestamp and title, and benchmark reports apart from the two measured
+//! timing lines. A seeded recording exercises options, simulation, sprites,
+//! rotation and resampling, composition, cells, palette quantization and LZW
+//! all at once, so one differing byte anywhere fails it.
 
 mod support;
 

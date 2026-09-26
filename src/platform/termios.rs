@@ -47,7 +47,7 @@ impl Termios {
     /// c_cc[VTIME] = 0;
     /// ```
     ///
-    /// Everything else — `ISIG` included, so ^C still signals — is kept.
+    /// Everything else is kept, `ISIG` included, so ^C still signals.
     pub fn raw_mode(&self) -> Termios {
         let mut raw = *self;
         raw.c_iflag &= !RAW_CLEARED_IFLAG;

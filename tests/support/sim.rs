@@ -1,8 +1,8 @@
 //! The Rust half of the simulation oracle: runs the script language of
 //! `tools/oracle/sim_oracle.c` through the Rust port and prints the same
 //! "rbirds-sim-trace 1" format, so the two transcripts can be compared line
-//! for line. Every command calls the port's own entry points — `record_step`,
-//! `bench_step`, `LiveLoop::frame` — never a reimplementation.
+//! for line. Every command calls the port's own entry points (`record_step`,
+//! `bench_step`, `LiveLoop::frame`), never a reimplementation.
 
 use std::fmt::Write as _;
 

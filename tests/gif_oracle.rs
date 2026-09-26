@@ -195,7 +195,7 @@ fn compare(exe: &Path, scratch: &oracle::Scratch, n: usize, case: &Case) -> Stri
     c
 }
 
-/// Same frames through C and Rust: byte-identical files over sizes, delays,
+/// Same frames through C and Rust give the same file bytes, over sizes, delays,
 /// frame counts, palette-overflowing, flat, gradient and alpha content, and
 /// frames that need colours the first frame's table lacks.
 #[test]

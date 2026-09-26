@@ -18,7 +18,7 @@ use crate::image::{Image, PngError};
 use crate::palette::Rgb;
 use crate::simulation::Sim;
 
-/// The embedded artwork, byte-identical to cbirds `matrix.png`/`sprite_png.h`.
+/// The embedded artwork, the same bytes as cbirds `matrix.png`/`sprite_png.h`.
 pub static SPRITE_PNG: &[u8] = include_bytes!("../assets/sprite.png");
 
 /// Four megabytes of PNG is a generous bird.

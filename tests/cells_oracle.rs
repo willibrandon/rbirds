@@ -2,7 +2,7 @@
 //!
 //! Each scenario is a script of calls (`tools/oracle/cells_oracle.c` documents
 //! the format). The C oracle runs it against the reference and prints a
-//! transcript: every status, the emitted text byte for byte, the text buffer's
+//! transcript: every status, all of the emitted text, the text buffer's
 //! length and capacity, the whole cell state (both grids, every field) and
 //! every painted pixel. The same script runs here against the Rust translation
 //! and must print exactly the same transcript. Scenarios run in fresh oracle
@@ -637,7 +637,7 @@ fn random_cell(rng: &mut Rng, palette: &[[u8; 3]]) -> Cell {
 
 /// Cells set directly, as no canvas could make them: every UTF-8 length and
 /// the values beyond it, background without foreground, colours without their
-/// flags, stale grids after a swap — the pen, the resets and the moves.
+/// flags, stale grids after a swap. Checks the pen, the resets and the moves.
 #[test]
 fn directly_set_cells_emit_as_the_reference_does() {
     let Some(exe) = oracle() else { return };

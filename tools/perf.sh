@@ -12,11 +12,17 @@
 # contention from elsewhere on the host and the run should be repeated when
 # it is quieter.
 #
-#   tools/perf.sh [SAMPLES]      default 10
+#   tools/perf.sh [SAMPLES [WORKLOAD...]]   default 10 samples, every workload
+#
+# Naming workloads (the first column below, or "startup") repeats only those,
+# for a workload whose samples met contention in a full run.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
 samples=${1:-10}
+[ "$#" -gt 0 ] && shift
+only=" $* "
+wanted() { [ "$only" = "  " ] || case "$only" in *" $1 "*) true ;; *) false ;; esac; }
 out="target/perf/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$out"
 
@@ -46,6 +52,7 @@ iqr() { sort -n | awk '{v[NR] = $1} END {q1 = v[int((NR + 3) / 4)]; q3 = v[int((
 verdicts=0
 while read -r name args; do
     [ -z "$name" ] && continue
+    wanted "$name" || continue
     for side in c rust; do : > "$out/$name.$side.ms"; : > "$out/$name.$side.kb"; : > "$out/$name.$side.bytes"; done
     for i in 0 1; do "$c" $args > /dev/null; "$rust" $args > /dev/null; done
     i=0
@@ -87,24 +94,26 @@ busy-braille --bench 320 --render braille --speed 12 --hawks 4 --flocks 3 --dept
 EOF
 
 # Startup: the whole process for one frame, sprite construction included.
-for side in c rust; do : > "$out/startup.$side.s"; done
-i=0
-while [ "$i" -lt "$samples" ]; do
-    for side in c rust; do
-        exe=$c; [ "$side" = rust ] && exe=$rust
-        start=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
-        "$exe" --bench 1 --render braille > /dev/null
-        end=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
-        awk -v s="$start" -v e="$end" 'BEGIN {printf "%.6f\n", e - s}' >> "$out/startup.$side.s"
+if wanted startup; then
+    for side in c rust; do : > "$out/startup.$side.s"; done
+    i=0
+    while [ "$i" -lt "$samples" ]; do
+        for side in c rust; do
+            exe=$c; [ "$side" = rust ] && exe=$rust
+            start=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+            "$exe" --bench 1 --render braille > /dev/null
+            end=$(perl -MTime::HiRes=time -e 'printf "%.6f", time')
+            awk -v s="$start" -v e="$end" 'BEGIN {printf "%.6f\n", e - s}' >> "$out/startup.$side.s"
+        done
+        i=$((i + 1))
     done
-    i=$((i + 1))
-done
-cs=$(median < "$out/startup.c.s"); rs=$(median < "$out/startup.rust.s")
-ratio=$(awk -v r="$rs" -v c="$cs" 'BEGIN {printf "%.3f", r / c}')
-ok=$(awk -v x="$ratio" 'BEGIN {print (x <= 1.20) ? "PASS" : "FAIL"}')
-printf '%-16s C %8.4f s   Rust %8.4f s   x%s %s | spread C %s%% Rust %s%%, IQR C %s%% Rust %s%%\n' startup "$cs" "$rs" "$ratio" "$ok" \
-    "$(spread < "$out/startup.c.s")" "$(spread < "$out/startup.rust.s")" "$(iqr < "$out/startup.c.s")" "$(iqr < "$out/startup.rust.s")" | tee -a "$out/summary.txt"
-[ "$ok" = PASS ] || verdicts=1
+    cs=$(median < "$out/startup.c.s"); rs=$(median < "$out/startup.rust.s")
+    ratio=$(awk -v r="$rs" -v c="$cs" 'BEGIN {printf "%.3f", r / c}')
+    ok=$(awk -v x="$ratio" 'BEGIN {print (x <= 1.20) ? "PASS" : "FAIL"}')
+    printf '%-16s C %8.4f s   Rust %8.4f s   x%s %s | spread C %s%% Rust %s%%, IQR C %s%% Rust %s%%\n' startup "$cs" "$rs" "$ratio" "$ok" \
+        "$(spread < "$out/startup.c.s")" "$(spread < "$out/startup.rust.s")" "$(iqr < "$out/startup.c.s")" "$(iqr < "$out/startup.rust.s")" | tee -a "$out/summary.txt"
+    [ "$ok" = PASS ] || verdicts=1
+fi
 printf 'binary size: C %s bytes, Rust %s bytes\n' "$(wc -c < "$c" | tr -d ' ')" "$(wc -c < "$rust" | tr -d ' ')" | tee -a "$out/summary.txt"
 echo "observations kept in $out"
 exit "$verdicts"

@@ -3,8 +3,8 @@
 use super::{ERANGE, errno, sys};
 use std::ffi::c_int;
 
-/// The C library's message for `errnum`, byte for byte what `strerror` gives
-/// in the "C" locale (neither program calls `setlocale`): for example
+/// The C library's message for `errnum`, exactly what `strerror` gives in the
+/// "C" locale (neither program calls `setlocale`): for example
 /// `Inappropriate ioctl for device`. Unknown numbers get the library's own
 /// "Unknown error" text. Uses the thread-safe XSI `strerror_r` (glibc:
 /// `__xpg_strerror_r`). Allocates, so it is not for signal handlers.

@@ -130,8 +130,8 @@ fn test_against_brute_force() {
 #[test]
 fn test_invalid_arguments() {
     // spatial_grid_init(NULL, ...) has no Rust form: a grid is a value. The
-    // guarantee it protects — nothing is built from an invalid request — is
-    // kept by the refusals below.
+    // refusals below keep the guarantee it protects, that nothing is built
+    // from an invalid request.
     assert_eq!(SpatialGrid::new(0).err(), Some(GridError::Argument));
     let mut grid = SpatialGrid::new(CELL_SIZE).expect("init");
     assert_eq!(grid.prepare(0, 10, 1), Err(GridError::Argument));

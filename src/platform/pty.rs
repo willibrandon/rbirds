@@ -1,4 +1,4 @@
-//! Pseudoterminals — **test support only; the application never uses this.**
+//! Pseudoterminals, for test support only. The application never uses this.
 //!
 //! The PTY harness in tests/support/pty.rs runs the C reference and rbirds on
 //! the slave side of one of these, playing the terminal on the master side.

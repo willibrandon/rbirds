@@ -230,7 +230,7 @@ pub fn notch_integer(notch: i32, minimum: i32, maximum: i32) -> i32 {
 }
 
 /// `ldexp(1.0, -exponent)` for the small exponents the avoidance slider uses;
-/// halving is exact, so this is the C library's answer bit for bit.
+/// halving is exact, so this gives exactly the C library's answer.
 fn negative_power_of_two(exponent: i32) -> f64 {
     let mut value = 1.0_f64;
     for _ in 0..exponent {

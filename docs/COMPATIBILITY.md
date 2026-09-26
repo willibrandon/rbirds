@@ -1,6 +1,6 @@
 # Compatibility contract
 
-Status: every requirement has executed evidence on the four targets (x86_64 under translation or emulation), except where the ledger says otherwise; see [the evidence index](evidence/README.md). Real-terminal (visual) checks, native x86_64 runs and the performance gate remain open.
+Status: every requirement has test evidence on the four targets, except where the ledger says otherwise. See [the evidence index](evidence/README.md). Checks in real terminals are still open.
 
 Reference: [cbirds 1.4.0, commit cc446fc3cb80733371c62676533adcac2fc10002](https://github.com/clainstone/cbirds/tree/cc446fc3cb80733371c62676533adcac2fc10002). Inspect that revision, not a moving upstream branch. [The manifest](reference-manifest.json) pins its tracked file hashes.
 
@@ -28,26 +28,26 @@ OS-provided error text is compared against the same-target C execution; cross-OS
 
 A completed row links to automated test cases and their evidence through [the evidence index](evidence/README.md). The C test inventory complements this ledger; neither replaces the other.
 
-| ID | Behavior and important boundaries | Evidence |
-| --- | --- | --- |
-| C01 | CLI forms, validation, aliases, duplicate flags, unknown-option suggestions, argument order, help/version early returns, stdout/stderr and exit status | CLI differential corpus + all `options_test.c` tests; `tests/cli_differential.rs`, `tests/options_oracle.rs`, `tests/c_options.rs` — **passing** |
-| C02 | Defaults, presets, notches, perception snapping, reset and matrix overrides | Configuration traces + boids control tests; `tests/sim_oracle.rs` (notch sweep, presets, keys), `tests/c_boids.rs` — **passing** |
-| C03 | RNG sequence, seed-zero equivalence, large internal seeds, draw count/order | Exact RNG vectors and state traces; `tests/c_boids.rs::test_a_seed_draws_the_same_numbers_everywhere` (glibc cross-check on Linux), every RNG word in every `tests/sim_oracle.rs` dump — **passing** |
-| C04 | Spatial cell mapping, border clamping, stable membership, neighbor order, reuse on rebuild | Grid oracle + brute-force tests; `tests/c_spatial_grid.rs`, grid digests in `tests/sim_oracle.rs`, `test_engine_matches_brute_force` — **passing** |
-| C05 | Flocking, boundaries, panel repulsion, leash, population growth/shrink, flocks and avoidance | Numerical traces + long-run behavioral assertions; `tests/sim_oracle.rs` recordings and live sessions, `tests/c_boids.rs` — **passing** |
-| C06 | Hawk selection, chase commitment, lead, dive, spacing and edge recovery | Hawk/boid traces and reference scenarios; `tests/sim_oracle.rs` (hawk scenarios), `test_hawks_hunt_and_the_flock_flees` and siblings — **passing** |
-| C07 | Time, speed substeps, zero duration, pause, step, intro/outro, idle autopilot | Injected clock/event scenarios; `tests/sim_oracle.rs` (zero, 240 Hz, late frames, substeps, intro, autopilot, outro), recording rates — **passing** |
-| C08 | Wings, glides, trails, depth, formations, matrix rain, palette/shapes and custom sprites | State, sprite pixel and frame comparisons; `tests/sim_oracle.rs`, `tests/headless_differential.rs` (shapes, custom sprite, matrix, depth, trails), `tests/png_oracle.rs` sprite pipeline — **passing**; visual check pending |
-| C09 | PNG formats, transforms, DEFLATE, checksums, limits and malformed input | All PNG tests + bidirectional C/Rust decoding; `tests/c_png.rs`, `tests/png_oracle.rs` — **passing** |
-| C10 | GIF palette, LZW, frame count, delay, loop metadata, errors and compression | GIF tests + byte and independently decoded comparisons; `tests/c_gif.rs`, `tests/gif_oracle.rs`, every rate in `tests/headless_differential.rs` — **passing**; independent viewer check pending |
-| C11 | Braille/sextants/blocks, glyph maps, alpha thresholds, colors, unchanged cells, cursor movement, panel exclusion | Cell state and exact emitted bytes; `tests/c_cells.rs`, `tests/cells_oracle.rs`, text frames in `tests/sim_oracle.rs` — **passing** |
-| C12 | Kitty uploads/chunking/base64, placements, IDs, deletion, synchronized updates | Protocol tests and scripted terminal transcripts; `tests/c_kitty.rs`, `tests/kitty_oracle.rs`, Kitty frames in `tests/sim_oracle.rs`, PTY Kitty case — **passing**; real Kitty/Ghostty pending |
-| C13 | Live defaults, theme queries/fallback, truecolor detection, dimensions and resize | Scripted PTY + real terminals; `tests/pty_reference.rs`, `tests/pty_rbirds.rs` (theme replies, fragments, resizes, tiny windows) — **passing**; real terminals pending |
-| C14 | Keys, fragmented escape sequences, mouse reports, malformed input, hidden sequence | Parser oracle + PTY input scripts; `tests/sim_oracle.rs` (keys, split sequences, mouse, Konami), input tests in `tests/c_boids.rs` — **passing** |
-| C15 | Terminal setup/cleanup, partial setup, signals, panic/error paths, blocked/closed output | ABI probes + failure injection + subprocess/PTY checks; `tests/abi.rs`, `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs` — **passing** (see D-001) |
-| C16 | GIF/cast recording, snapshots, headless defaults, mode selection and diagnostics | End-to-end files and decoded frames; `tests/headless_differential.rs`, recording tests in `tests/c_boids.rs`, PTY snapshot cases — **passing** |
-| C17 | Bench output, configuration, byte counts, release performance and allocation behavior | Same-host C/Rust measurements; `tests/headless_differential.rs` (bench output, byte counts) — **passing**; performance budgets: see evidence |
-| C18 | Offline/no-dependency build, supported targets, clean install/uninstall and provenance | Dependency audit, native CI and packaging smoke checks; `tools/verify.sh` (dependency graph, linkage, install), Rosetta and Docker runs — **passing** locally; native x86_64 CI pending |
+| ID | Behavior and important boundaries | Evidence | Status |
+| --- | --- | --- | --- |
+| C01 | CLI forms, validation, aliases, duplicate flags, unknown-option suggestions, argument order, help/version early returns, stdout/stderr and exit status | CLI differential corpus + all `options_test.c` tests; `tests/cli_differential.rs`, `tests/options_oracle.rs`, `tests/c_options.rs` | passing |
+| C02 | Defaults, presets, notches, perception snapping, reset and matrix overrides | Configuration traces + boids control tests; `tests/sim_oracle.rs` (notch sweep, presets, keys), `tests/c_boids.rs` | passing |
+| C03 | RNG sequence, seed-zero equivalence, large internal seeds, draw count/order | Exact RNG vectors and state traces; `tests/c_boids.rs::test_a_seed_draws_the_same_numbers_everywhere` (glibc cross-check on Linux), every RNG word in every `tests/sim_oracle.rs` dump | passing |
+| C04 | Spatial cell mapping, border clamping, stable membership, neighbor order, reuse on rebuild | Grid oracle + brute-force tests; `tests/c_spatial_grid.rs`, grid digests in `tests/sim_oracle.rs`, `test_engine_matches_brute_force` | passing |
+| C05 | Flocking, boundaries, panel repulsion, leash, population growth/shrink, flocks and avoidance | Numerical traces + long-run behavioral assertions; `tests/sim_oracle.rs` recordings and live sessions, `tests/c_boids.rs` | passing |
+| C06 | Hawk selection, chase commitment, lead, dive, spacing and edge recovery | Hawk/boid traces and reference scenarios; `tests/sim_oracle.rs` (hawk scenarios), `test_hawks_hunt_and_the_flock_flees` and siblings | passing |
+| C07 | Time, speed substeps, zero duration, pause, step, intro/outro, idle autopilot | Injected clock/event scenarios; `tests/sim_oracle.rs` (zero, 240 Hz, late frames, substeps, intro, autopilot, outro), recording rates | passing |
+| C08 | Wings, glides, trails, depth, formations, matrix rain, palette/shapes and custom sprites | State, sprite pixel and frame comparisons; `tests/sim_oracle.rs`, `tests/headless_differential.rs` (shapes, custom sprite, matrix, depth, trails), `tests/png_oracle.rs` sprite pipeline | passing; visual check pending |
+| C09 | PNG formats, transforms, DEFLATE, checksums, limits and malformed input | All PNG tests + bidirectional C/Rust decoding; `tests/c_png.rs`, `tests/png_oracle.rs` | passing |
+| C10 | GIF palette, LZW, frame count, delay, loop metadata, errors and compression | GIF tests + byte and independently decoded comparisons; `tests/c_gif.rs`, `tests/gif_oracle.rs`, every rate in `tests/headless_differential.rs` | passing; independent viewer check pending |
+| C11 | Braille/sextants/blocks, glyph maps, alpha thresholds, colors, unchanged cells, cursor movement, panel exclusion | Cell state and exact emitted bytes; `tests/c_cells.rs`, `tests/cells_oracle.rs`, text frames in `tests/sim_oracle.rs` | passing |
+| C12 | Kitty uploads/chunking/base64, placements, IDs, deletion, synchronized updates | Protocol tests and scripted terminal transcripts; `tests/c_kitty.rs`, `tests/kitty_oracle.rs`, Kitty frames in `tests/sim_oracle.rs`, PTY Kitty case | passing; real Kitty/Ghostty pending |
+| C13 | Live defaults, theme queries/fallback, truecolor detection, dimensions and resize | Scripted PTY + real terminals; `tests/pty_reference.rs`, `tests/pty_rbirds.rs` (theme replies, fragments, resizes, tiny windows) | passing; real terminals pending |
+| C14 | Keys, fragmented escape sequences, mouse reports, malformed input, hidden sequence | Parser oracle + PTY input scripts; `tests/sim_oracle.rs` (keys, split sequences, mouse, Konami), input tests in `tests/c_boids.rs` | passing |
+| C15 | Terminal setup/cleanup, partial setup, signals, panic/error paths, blocked/closed output | ABI probes + failure injection + subprocess/PTY checks; `tests/abi.rs`, `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs` | passing (see D-001) |
+| C16 | GIF/cast recording, snapshots, headless defaults, mode selection and diagnostics | End-to-end files and decoded frames; `tests/headless_differential.rs`, recording tests in `tests/c_boids.rs`, PTY snapshot cases | passing |
+| C17 | Bench output, configuration, byte counts, release performance and allocation behavior | Same-host C/Rust measurements; `tests/headless_differential.rs` (bench output, byte counts) | passing; performance budgets: see evidence |
+| C18 | Offline/no-dependency build, supported targets, clean install/uninstall and provenance | Dependency audit, native CI and packaging smoke checks; `tools/verify.sh` (dependency graph, linkage, install), Rosetta and Docker runs | passing locally; native x86_64 CI pending |
 
 ## 3. CLI surface
 

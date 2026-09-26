@@ -6,8 +6,8 @@
 //! through them unchanged.
 //!
 //! Also here: the Rust emergency path (`rbirds::platform`'s signal handler
-//! and `restore_terminal`) exercised for real, in a subprocess — this test
-//! binary re-executed in a child mode — for every handled signal, with the
+//! and `restore_terminal`) exercised for real in a subprocess (this test
+//! binary re-executed in a child mode) for every handled signal, with the
 //! same assertions the C results are held to.
 //!
 //! The cases run one at a time (a process-wide lock): each drives a live,
@@ -142,8 +142,8 @@ const CHILD_READY: &[u8] = b"child ready\n";
 
 /// Not a test of its own: the body of the subprocess. In the parent test run
 /// it returns at once. In the child (this binary run with `CHILD_MODE` set,
-/// on a PTY) it takes the terminal the way cbirds does — raw mode, the
-/// handlers, the alternate screen, optionally the sprite flag — says it is
+/// on a PTY) it takes the terminal the way cbirds does (raw mode, the
+/// handlers, the alternate screen, optionally the sprite flag), says it is
 /// ready, and waits for a signal (for at most 20 s): idle, or in mode
 /// `congested` writing to the terminal without end, so that a terminal that
 /// stops reading leaves it blocked in write(2). (Blocking writes, unlike
@@ -233,7 +233,7 @@ fn rust_sigpipe_is_ignored() {
 
 /// The handler while the program is blocked writing to a terminal that has
 /// stopped reading: still 128 + signal, the attributes back, and the restore
-/// sequence written in full once the terminal reads again — on Darwin, as for
+/// sequence written in full once the terminal reads again. On Darwin, as for
 /// the reference, the exit waits for that (see
 /// `cases::signal_while_output_blocked`).
 ///

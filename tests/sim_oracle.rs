@@ -612,7 +612,7 @@ fn keys_presets_and_population_match_the_reference() {
 }
 
 /// Every notch of every slider, each flown for a few frames from one seeded
-/// flock: the derived values and the flight they give, bit for bit.
+/// flock. The derived values and the flight they give must match exactly.
 #[test]
 fn every_notch_of_every_slider_matches_the_reference() {
     let mut s = String::new();

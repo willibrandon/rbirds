@@ -17,9 +17,9 @@ const CAUGHT: [c_int; 8] = [SIGINT, SIGTERM, SIGHUP, SIGQUIT, SIGSEGV, SIGFPE, S
 /// boids.c `signal_handler`: `restore_terminal(); _exit(128 + signal_number);`.
 ///
 /// Only async-signal-safe work happens here (see `restore.rs`). Nothing on the
-/// path can panic — its only indexing is by constants into fixed-size arrays,
-/// its arithmetic wraps — and `_exit` never returns, so no unwind can reach
-/// the C caller (a panic would abort at this `extern "C"` boundary anyway).
+/// path can panic: its only indexing is by constants into fixed-size arrays,
+/// and its arithmetic wraps. `_exit` never returns, so no unwind can reach the
+/// C caller (a panic would abort at this `extern "C"` boundary anyway).
 extern "C" fn signal_handler(signal_number: c_int) {
     restore_terminal();
     exit_immediately(signal_number.wrapping_add(128));
@@ -66,7 +66,7 @@ pub fn send_signal(pid: pid_t, signal: c_int) -> io::Result<()> {
 /// SIGPIPE back to its default action, as a C program starts. Rust's runtime
 /// ignores SIGPIPE before `main`; cbirds does not, so outside the live run
 /// (which installs `SIG_IGN` itself) a vanished reader kills the process
-/// exactly as it kills the reference — `rbirds --help | true`, say.
+/// exactly as it kills the reference (`rbirds --help | true`, for example).
 pub fn default_sigpipe() {
     let mut action = SigAction { sa_handler: SIG_DFL, sa_flags: 0, ..SigAction::default() };
     // SAFETY: `action.sa_mask` is a live, writable `sigset_t` of the target's

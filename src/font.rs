@@ -1,5 +1,5 @@
 //! A 5 by 7 bitmap font, just wide enough for a flock to spell with,
-//! translated from cbirds `font.c` glyph for glyph.
+//! translated from cbirds `font.c` with every glyph unchanged.
 //!
 //! Glyphs are seven rows of five characters, `#` where a bird goes. Lower
 //! case maps to upper case: at five pixels wide there is no room for two.

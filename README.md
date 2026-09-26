@@ -1,50 +1,54 @@
 # rbirds
 
-A Rust port of [cbirds](https://github.com/clainstone/cbirds) 1.4.0 — a flock of birds in your terminal — that reproduces the reference's behavior bit for bit: the same flock for the same seed, the same frames, the same files, the same messages and exit codes, the same terminal lifecycle.
+Rust port of [cbirds](https://github.com/clainstone/cbirds) 1.4.0, a flocking simulation that runs in the terminal.
+
+## Build and run
 
 ```sh
 cargo build --release
-./target/release/rbirds                 # a flock in braille
+./target/release/rbirds
 ./target/release/rbirds --hawks 2 --panel
-./target/release/rbirds --render kitty  # sprites, in Kitty or Ghostty
+./target/release/rbirds --render kitty    # needs Kitty or Ghostty
 ./target/release/rbirds --record flock.gif --seed 42
 ./target/release/rbirds --help
 ```
 
-The dependency policy is **Rust's standard library and system libraries only**: the package has no dependencies of any kind, and the binary links nothing but the C library (`libSystem` on macOS, glibc on Linux).
+There are no crate dependencies. The binary links only against the system C library.
 
-## What "the same" means here
+## Compatibility with cbirds
 
-The reference is cbirds 1.4.0 at commit [`cc446fc3cb80733371c62676533adcac2fc10002`](https://github.com/clainstone/cbirds/tree/cc446fc3cb80733371c62676533adcac2fc10002), pinned file by file in [the manifest](docs/reference-manifest.json). The port is checked against that reference built with its own canonical flags, never against a description of it:
+The port follows cbirds at commit [`cc446fc`](https://github.com/clainstone/cbirds/tree/cc446fc3cb80733371c62676533adcac2fc10002). With the same seed and options, rbirds gives the same simulation, the same terminal output and the same GIF and cast files as cbirds built with its default flags. The intended differences are the program name (in the help, completions, version and cast title) and the cases in [DEVIATIONS.md](docs/DEVIATIONS.md), which involve undefined behavior in the C code.
 
-- **Simulation**: scripted scenarios run through the *unmodified* C code and through the port with identical injected time, keys and window sizes, and every double is compared as its IEEE bits — recordings, live sessions, every slider notch, every recording rate, sixty-plus seconds of autopilot. No tolerance.
-- **Output**: seeded GIF recordings and asciinema casts are byte-identical to the reference's; so are the escape sequences of every renderer, the Kitty protocol stream, the PNG and GIF codecs' bytes, the help text and completions.
-- **Behavior**: a cross-process corpus compares exit codes and both output streams for the CLI; a scripted pseudoterminal holds the live program to the reference's observed lifecycle (theme queries, raw mode and its exact undoing, every handled signal, blocked and broken output, snapshots).
-- **Tests**: all 112 of the reference's own C tests are translated, each starting from the exact state the C suite enters it with.
+On Apple Silicon, matching the C build takes two things the source doesn't show. Apple clang fuses 92 `a*b+c` expressions into FMA instructions, and it replaces each sin/cos pair with `__sincos_stret`, which can differ from separate calls in the last bit. The port does the same on that target. See section 5 of [DESIGN.md](docs/DESIGN.md).
 
-Two properties of the C *compiler's* output turned out to be part of the reference's arithmetic, and are reproduced deliberately: Apple clang contracts 92 `a*b+c` sites into fused multiply-adds on arm64, and fuses every `sin`/`cos` pair into `__sincos_stret`, which differs from separate calls by an ulp on arm64. See [the design](docs/DESIGN.md) §5.
+## Tests
 
-The intentional differences are the product identity (`rbirds` in help, completions, version and the cast title) and three [proposed deviations](docs/DEVIATIONS.md), all in behavior the C leaves undefined.
+The test suite builds the C reference and compares the two programs directly:
 
-## Verifying
+- All 112 cbirds C tests, translated to Rust.
+- Scripted simulations run through both programs, comparing every floating point value.
+- Recordings, PNG and GIF codec output, renderer escape sequences and CLI output, compared exactly.
+- Terminal handling (raw mode, signals, resizes, blocked output) checked under a pseudoterminal.
 
 ```sh
-tools/reference.sh        # clone and verify the pinned C reference into .reference/
-tools/verify.sh           # every local gate; --all-local adds x86_64 macOS (Rosetta) and Linux (Docker)
-tools/perf.sh             # same-host performance against the C build
+tools/reference.sh   # fetch the pinned cbirds source into .reference/
+tools/verify.sh      # run all checks; --all-local adds x86_64 macOS and Linux (Docker)
+tools/perf.sh        # compare speed and memory with the C build
 ```
 
-The oracle tests build the reference with the platform's `cc` and fail loudly without it; `RBIRDS_NO_ORACLE=1` turns that into an explicit skip for machines that cannot host it.
+The comparison tests need a C compiler. Set `RBIRDS_NO_ORACLE=1` to skip them.
 
-## Documents
+CI runs the same checks on Linux and macOS, on both x86_64 and arm64.
 
-- [Design](docs/DESIGN.md): architecture, dependency boundaries, numerical behavior, terminal lifecycle.
-- [Port process](docs/PORTING.md): phases, required evidence and release gates.
-- [Compatibility contract](docs/COMPATIBILITY.md): the behavior preserved and how it is compared.
-- [Evidence](docs/evidence/README.md): what was run, where, and with what result.
-- [Deviations](docs/DEVIATIONS.md): proposed, pending acceptance.
-- [C test inventory](docs/c-test-inventory.csv): all 112 C tests and their Rust translations.
+## Docs
+
+- [DESIGN.md](docs/DESIGN.md) covers the architecture and numerical details.
+- [PORTING.md](docs/PORTING.md) describes the porting process and release checks.
+- [COMPATIBILITY.md](docs/COMPATIBILITY.md) lists the behavior that has to match and how it's tested.
+- [docs/evidence](docs/evidence/README.md) records test runs and results.
+- [DEVIATIONS.md](docs/DEVIATIONS.md) lists proposed differences from cbirds.
+- [c-test-inventory.csv](docs/c-test-inventory.csv) maps each C test to its Rust version.
 
 ## License
 
-MIT, as cbirds is; see [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). The translated code, the bird artwork and the bitmap font are the upstream author's work.
+MIT, same as cbirds. See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md). The simulation, bird sprites and bitmap font come from cbirds.

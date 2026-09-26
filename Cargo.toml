@@ -27,7 +27,7 @@ path = "src/main.rs"
 # Overflow checks and debug assertions stay on: they are what running the
 # suite in this profile is for (docs/PORTING.md §4.A). A little optimization
 # takes the unoptimized sprite pipeline from 9 s to 0.6 s at startup, which
-# keeps the C-faithful statistical tests and live PTY timing tractable.
+# keeps the translated statistical tests and live PTY timing tractable.
 # Results cannot change: every contraction and fused sine is explicit.
 opt-level = 1
 

@@ -11,8 +11,8 @@ unsafe extern "C" {
 }
 
 /// `fopen(path, "wb")`, `fwrite` of all of `data`, `fclose`: created with
-/// mode 0666 less the umask, truncated, and any failure — open, write or
-/// close — returned.
+/// mode 0666 less the umask, truncated. Any failure (open, write or close) is
+/// returned.
 pub fn write_file(path: &OsStr, data: &[u8]) -> io::Result<()> {
     let mut file =
         std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(path)?;

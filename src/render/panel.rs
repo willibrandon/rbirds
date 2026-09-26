@@ -2,7 +2,7 @@
 //! frame's cost, and how to quit. Translated from cbirds `boids.c`
 //! (`legend_slider`, `legend_number`, `build_legend`, `queue_legend`).
 //!
-//! Rows are bytes padded as `snprintf` pads them — by bytes — and cut as
+//! Rows are bytes, padded as `snprintf` pads them (by bytes) and cut as
 //! `snprintf` cuts them at the C buffer sizes, so a row is the reference's
 //! row even when a statistic outgrows its column. They are built into
 //! buffers the renderer keeps, as the C builds them on its stack, so a frame
@@ -185,8 +185,8 @@ pub fn build_legend(sim: &Sim, stats: &Stats) -> Vec<Vec<u8>> {
 
 impl Renderer {
     /// `queue_legend`: the panel's rows, or, once, the erase of the rows it
-    /// held when a viewport shrank under it — never a screen erase, which
-    /// would take the uploaded sprites with it.
+    /// held when a viewport shrank under it. Never a screen erase, which would
+    /// take the uploaded sprites with it.
     pub fn queue_legend(
         &mut self,
         graphics: &mut KittyGraphics,

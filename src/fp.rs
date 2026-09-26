@@ -35,8 +35,8 @@ pub const CONTRACTS: bool = cfg!(all(target_arch = "aarch64", target_vendor = "a
 /// a rounded product followed by a rounded sum.
 ///
 /// A C `a * b - c` is `mul_add(a, b, -c)` and `c - a * b` is
-/// `mul_add(-a, b, c)`: negation is exact, so both spellings also agree with
-/// the unfused evaluation bit for bit.
+/// `mul_add(-a, b, c)`: negation is exact, so both spellings also give exactly
+/// the unfused result.
 #[inline(always)]
 pub fn mul_add(a: f64, b: f64, c: f64) -> f64 {
     if CONTRACTS { a.mul_add(b, c) } else { a * b + c }

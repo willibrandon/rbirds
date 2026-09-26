@@ -1,7 +1,7 @@
 //! The global state each cbirds boids test is entered with, captured by
 //! running the unmodified C suite (`tools/oracle/boids_suite.c`) once per
 //! test process, so every translated test in tests/c_boids.rs starts exactly
-//! where the C one did — random state, panel switch, hawks and all.
+//! where the C one did, including random state, panel switch and hawks.
 
 use std::collections::HashMap;
 use std::process::{Command, Stdio};
