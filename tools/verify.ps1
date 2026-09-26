@@ -25,9 +25,10 @@ function Linkage([string]$Binary) {
     if (-not $dumpbin) {
         $vswhere = "${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer/vswhere.exe"
         if (Test-Path -LiteralPath $vswhere) {
-            $installation = & $vswhere -latest -products '*' -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+            $installation = & $vswhere -latest -products '*' -property installationPath
+            $tools = if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq 'Arm64') { 'Hostarm64/arm64' } else { 'Hostx64/x64' }
             if ($installation) {
-                $dumpbin = Get-ChildItem -Path "$installation/VC/Tools/MSVC/*/bin/Hostx64/x64/dumpbin.exe" |
+                $dumpbin = Get-ChildItem -Path "$installation/VC/Tools/MSVC/*/bin/$tools/dumpbin.exe" |
                     Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName -First 1
             }
         }

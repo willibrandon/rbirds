@@ -3,8 +3,7 @@
 rbirds runs natively on Windows with the MSVC toolchain. Use `--render sixel` for
 pixel graphics in Windows Terminal, or leave it off for braille.
 
-Windows x64 is tested. The bindings also permit ARM64, but it has not been tested
-on hardware. GNU/MinGW and 32-bit Windows are unsupported.
+Windows x64 and ARM64 are tested. GNU/MinGW and 32-bit Windows are unsupported.
 
 ## Run in Windows Terminal
 
@@ -151,9 +150,9 @@ zero means no live sample was obtained. It is not the Unix peak RSS measure.
   as described in [the fixture provenance](../tests/fixtures/README.md). Unix
   continues fresh C comparisons and all POSIX lifecycle tests.
 
-CI includes a Windows x64 job alongside the four existing Unix runners. A local
-pass does not establish that a hosted job ran. Windows ARM64 and visual rendering
-in actual emulators remain manual validation items. Before release, record the
+CI includes Windows x64 and ARM64 jobs alongside the four Unix runners. A local
+pass does not establish that a hosted job ran. Visual rendering in actual
+emulators remains a manual validation item. Before release, record the
 terminal version/font and check:
 
 1. Sixel in Windows Terminal: birds, trails, hawks, panel toggling, mouse input,

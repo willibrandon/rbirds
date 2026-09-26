@@ -1,5 +1,5 @@
 # Runs when a version tag is pushed. The tag has to match Cargo.toml and the
-# tagged commit has to have passed ci.yml. Builds the five targets, attaches
+# tagged commit has to have passed ci.yml. Builds the six targets, attaches
 # them to a GitHub release with the tag's message as the notes, then publishes
 # the crate.
 #
@@ -56,6 +56,7 @@ jobs:
           - { target: x86_64-apple-darwin, os: macos-15-intel }
           - { target: aarch64-apple-darwin, os: macos-15 }
           - { target: x86_64-pc-windows-msvc, os: windows-2025 }
+          - { target: aarch64-pc-windows-msvc, os: windows-11-arm }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     defaults:
