@@ -76,9 +76,11 @@ cbirds publishes seven GIFs and an asciinema cast in its `docs/`, with the comma
 
 ## Terminal
 
-`tools/vhs/live.sh` runs the pinned C build and rbirds through the same [VHS](https://github.com/charmbracelet/vhs) tape (`tools/vhs/live.tape`) in a headless terminal: VHS 0.12.1 with ttyd 1.7.7 and xterm.js, Cascadia Code at 14 px, 1100×640 pixels. The tape runs braille with hawks, two flocks, depth, trails and the panel, then types h, K, + and e and quits with q; then sextants with `--matrix`, stopped with Ctrl-C; then blocks in acid with the plane shape, quit with q. After each run the shell prints the exit status and compares `stty -g` with the settings saved before.
+`tools/vhs/live.sh` runs the pinned C build and rbirds through the same [VHS](https://github.com/charmbracelet/vhs) tape (`tools/vhs/live.tape`): braille with hawks, two flocks, depth, trails and the panel, with h, K, + and e typed and q to quit; sextants with `--matrix`, stopped with Ctrl-C; blocks in acid with the plane shape, quit with q. After each run the shell prints the exit status and compares `stty -g` with the settings saved before.
 
-Both programs exit with 0 after q and 130 after Ctrl-C, and both leave the terminal settings as they found them. The one change `stty -g` shows after either program is PENDIN, a kernel state bit set when a program returns to canonical mode with input still queued and cleared by the next read, which a plain command doesn't cause; the check leaves it out. [`vhs-2026-09-26-macos-arm64.jpg`](vhs-2026-09-26-macos-arm64.jpg) shows one frame of each run, C on the left.
+Both programs exit with 0 after q and 130 after Ctrl-C, and both leave the terminal settings as they found them. The one change `stty -g` shows after either program is PENDIN, a kernel state bit set when a program returns to canonical mode with input still queued and cleared by the next read; the check leaves it out.
+
+This is not a visual check. VHS draws with xterm.js in a headless browser, which doesn't render braille or sextants the way a real terminal does.
 
 ## Independent playback
 
@@ -102,5 +104,5 @@ Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.
 
 ## Not yet done
 
-- Kitty graphics in a real Kitty or Ghostty window, and macOS Terminal and tmux, recorded with their versions and fonts (PORTING.md §6). The headless terminal above has no Kitty graphics. The bytes both programs send under the scripted PTY are the same, which is necessary but not enough to show a terminal draws them the same.
+- How the flock looks in real terminals: Kitty and Ghostty (sprites and the three text renderers), macOS Terminal and tmux, recorded with their versions and fonts (PORTING.md §6). The bytes both programs send under the scripted PTY are the same, which is necessary but not enough to show a terminal draws them the same.
 - Deviations D-001 to D-003 are waiting for the owner's decision ([DEVIATIONS.md](../DEVIATIONS.md)).

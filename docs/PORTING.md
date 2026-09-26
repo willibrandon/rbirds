@@ -153,7 +153,7 @@ Check a fresh Cargo home with the pinned toolchain available to show no registry
 | P3 | complete | `tests/sim_oracle.rs` matches the C exactly, including 68 s recordings and a 4,700-frame live session; the two numerical findings classified and reproduced (DESIGN §5) |
 | P4 | complete | `tests/cells_oracle.rs`, `tests/kitty_oracle.rs`, `tests/headless_differential.rs` (every rate; GIFs and casts match the C output) |
 | P5 | complete | `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs`; debug and release agree; all 112 mappings executed |
-| P6 | partly complete | done: native CI on the four targets, the translated and emulated runs, installation and dependency audit, performance budgets (`tools/perf.sh`, macOS arm64), cbirds' published recordings made again exactly on Linux (`tests/published_media.rs`), a headless terminal run (`tools/vhs/live.sh`), independent playback. Open: Kitty graphics in real Kitty and Ghostty windows, macOS Terminal and tmux |
+| P6 | partly complete | done: native CI on the four targets, the translated and emulated runs, installation and dependency audit, performance budgets (`tools/perf.sh`, macOS arm64), cbirds' published recordings made again exactly on Linux (`tests/published_media.rs`), exit and restore in a headless terminal (`tools/vhs/live.sh`), independent playback. Open: how it looks in real terminals (Kitty, Ghostty, macOS Terminal, tmux) |
 | P7 | pending | needs the owner's release identity and decisions on [the deviations](DEVIATIONS.md) |
 
 Each phase should consist of reviewable module-sized changes with its tests and updated mappings. Keep algorithm changes out of translation changes. Do not remove C reference access after the Rust executable first animates successfully.

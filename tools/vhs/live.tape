@@ -16,7 +16,7 @@ Type "cd OUT; PS1='$ '; stty -g > PROGRAM.stty; clear" Enter
 Show
 
 Type "./PROGRAM --seed 7 --hawks 2 --flocks 2 --depth --trails --panel" Enter
-Sleep 3s
+Sleep 6s
 Screenshot OUT/PROGRAM-braille-start.png
 Sleep 0.5s
 Type "hK+e"
@@ -31,7 +31,7 @@ Screenshot OUT/PROGRAM-braille-quit.png
 Sleep 0.5s
 
 Type "clear; ./PROGRAM --seed 7 --render sextants --matrix" Enter
-Sleep 3s
+Sleep 6s
 Screenshot OUT/PROGRAM-sextants.png
 Sleep 0.5s
 Ctrl+C
@@ -42,7 +42,7 @@ Screenshot OUT/PROGRAM-sextants-interrupted.png
 Sleep 0.5s
 
 Type "clear; ./PROGRAM --seed 7 --render blocks --color acid --shape plane" Enter
-Sleep 3s
+Sleep 6s
 Screenshot OUT/PROGRAM-blocks.png
 Sleep 0.5s
 Type "q"
