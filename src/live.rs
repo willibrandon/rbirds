@@ -12,8 +12,9 @@
 
 use crate::platform::OsStrExt;
 use std::ffi::OsStr;
+use std::time::{Duration, Instant};
 
-use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Program, frame_delay_after};
+use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Program};
 use crate::config::*;
 use crate::image::{Image, PngError, png};
 use crate::input::InputParser;
@@ -26,6 +27,7 @@ use crate::spatial_grid::{SpatialGrid, status_string};
 use crate::sprites::{PICTURE_GROUND, SpriteError, empty_catalogue, free_sprites};
 use crate::stdio::{CStdout, cat, eprint};
 use crate::terminal::{self, Terminal};
+use crate::timing::{FramePacer, FrameProfile, Trace};
 
 /// `handle_input`'s read: at most INPUT_BUFFER_SIZE bytes, whatever is there.
 pub fn read_keys(sim: &mut Sim, parser: &mut InputParser) -> bool {
@@ -190,13 +192,18 @@ impl LiveLoop {
         if let Err(error) = sim.snapshot_and_build(birds, snapshot, grid) {
             return Err(grid_failure("Cannot build spatial grid", error));
         }
-        let rendered = if self.leaving > 0.0 {
+        if self.leaving > 0.0 {
             sim.fly_away(birds);
-            renderer.queue_render_frame(graphics, sim, birds)
         } else {
             sim.advance(birds, snapshot, grid);
-            renderer.queue_render_frame(graphics, sim, birds)
-        };
+        }
+        if let Some(profile) = &mut renderer.profile {
+            profile.updated();
+        }
+        let rendered = renderer.queue_render_frame(graphics, sim, birds);
+        if let Some(profile) = &mut renderer.profile {
+            profile.rendered();
+        }
         if let Err(error) = rendered {
             let renderer = if sim.render_mode == RenderMode::Sixel { "Sixel" } else { "Kitty" };
             return Err(fail(
@@ -285,6 +292,8 @@ fn run_live(
 ) -> Result<i32, i32> {
     let name = settings.program_name.clone();
     let sprite_path = settings.sprite_path.as_deref();
+    let mut trace = Trace::from_environment()
+        .map_err(|error| fail(format!("Cannot start live trace: {error}\n").as_bytes()))?;
     platform::install_signal_handlers();
 
     // The terminal is asked its questions before anything is built for it.
@@ -375,11 +384,28 @@ fn run_live(
     }
 
     let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
+    if let Some(trace) = &mut trace {
+        trace
+            .begin(
+                sim.render_mode.name(),
+                [sim.screen.cols, sim.screen.rows, sim.screen.width, sim.screen.height],
+            )
+            .map_err(|error| fail(format!("Cannot start live trace: {error}\n").as_bytes()))?;
+    }
+    let mut pacer = FramePacer::new(Instant::now());
+    let mut sleeper = platform::FrameSleeper::new();
     let mut input = [0_u8; INPUT_BUFFER_SIZE];
     loop {
         if platform::exit_requested() {
             return Ok(130);
         }
+        renderer.profile = trace.as_ref().map(|_| {
+            let mut profile = FrameProfile::new();
+            if !settings.unlock_fps {
+                profile.target = pacer.target();
+            }
+            profile
+        });
         let keys = platform::read(STDIN_FILENO, &mut input).ok();
         let frame_start = platform::monotonic_now();
         let window = terminal::graphics_window(
@@ -407,9 +433,8 @@ fn run_live(
         if !flush_frame(sim, &mut live.parser, &mut graphics, &name)? {
             break;
         }
-        if settings.frame_limit > 0 && sim.clock.frame >= i64::from(settings.frame_limit) {
-            break;
-        }
+        let flushed = Instant::now();
+        let last = settings.frame_limit > 0 && sim.clock.frame >= i64::from(settings.frame_limit);
         let frame_end = platform::monotonic_now();
         account_frame(
             renderer,
@@ -417,19 +442,32 @@ fn run_live(
             elapsed_microseconds(&frame_start, &frame_end),
             frame_bytes,
         );
-        let remaining =
-            frame_delay_after(settings.unlock_fps, elapsed_microseconds(&frame_start, &frame_end));
-        if remaining > 0 {
-            let _ = platform::nanosleep(&Timespec {
-                tv_sec: remaining / 1_000_000,
-                tv_nsec: (remaining % 1_000_000) * 1000,
-            });
+        let delay =
+            if settings.unlock_fps || last { Duration::ZERO } else { pacer.delay_after(flushed) };
+        if let Some(trace) = &mut trace {
+            trace.record(
+                renderer.profile.unwrap(),
+                flushed,
+                delay,
+                frame_bytes,
+                keys.map_or(0, <[u8]>::len),
+            );
         }
+        if last {
+            break;
+        }
+        sleeper.sleep(delay);
     }
     // A Ctrl event may also interrupt a blocked frame flush, which exits the
     // loop before its next iteration can observe the cancellation flag.
     if platform::exit_requested() {
         return Ok(130);
+    }
+    if let Some(trace) = trace {
+        terminal.restore();
+        trace
+            .finish()
+            .map_err(|error| fail(format!("Cannot finish live trace: {error}\n").as_bytes()))?;
     }
     // A snapshot asked for and not written is a failed run.
     let mut outcome = EXIT_SUCCESS;

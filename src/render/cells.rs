@@ -240,6 +240,27 @@ fn inked(patch: &Patch) -> bool {
     patch.coverage >= f64::from(INK_THRESHOLD)
 }
 
+/// Dots need only coverage. Computing a colour histogram for each dot would
+/// repeat the whole cell's colour work up to eight times. Alpha sums are
+/// integers, so comparing before division also preserves the exact threshold.
+fn patch_inked(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> bool {
+    let y_start = y0.max(0);
+    let y_end = (i64::from(y0) + i64::from(height)).min(i64::from(canvas.height)) as i32;
+    let x_start = x0.max(0);
+    let x_end = (i64::from(x0) + i64::from(width)).min(i64::from(canvas.width)) as i32;
+    if x_end <= x_start || y_end <= y_start {
+        return false;
+    }
+    let pixels = (x_end - x_start) as u64 * (y_end - y_start) as u64;
+    let mut alpha = 0_u64;
+    for y in y_start..y_end {
+        let start = canvas.offset(x_start, y);
+        let end = start + (x_end - x_start) as usize * 4;
+        alpha += canvas.pixels[start..end].chunks_exact(4).map(|p| u64::from(p[3])).sum::<u64>();
+    }
+    alpha >= INK_THRESHOLD as u64 * pixels
+}
+
 fn read_braille_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_height: i32) -> Cell {
     // Dots are the cell divided two by four; a cell narrower than two pixels
     // or shorter than four gets what it gets.
@@ -256,8 +277,7 @@ fn read_braille_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_hei
             if dy1 <= dy0 {
                 dy1 = dy0 + 1;
             }
-            let dot = read_patch(canvas, dx0, dy0, dx1 - dx0, dy1 - dy0);
-            if inked(&dot) {
+            if patch_inked(canvas, dx0, dy0, dx1 - dx0, dy1 - dy0) {
                 dots |= 1u32 << (column + row * 2);
             }
         }
@@ -288,8 +308,7 @@ fn read_sextant_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_hei
             if by1 <= by0 {
                 by1 = by0 + 1;
             }
-            let block = read_patch(canvas, bx0, by0, bx1 - bx0, by1 - by0);
-            if inked(&block) {
+            if patch_inked(canvas, bx0, by0, bx1 - bx0, by1 - by0) {
                 blocks |= 1u32 << (column + row * 2);
             }
         }
@@ -519,6 +538,33 @@ impl Cells {
     /// marking ink: transparent is sky. Pixels off the canvas are not counted.
     /// An empty canvas or an unsized grid reads nothing.
     pub fn read(&mut self, style: CellsStyle, canvas: &Image, cell_width: i32, cell_height: i32) {
+        self.read_inner(style, canvas, cell_width, cell_height, None);
+    }
+
+    /// As `read`, with conservative sprite coverage supplied by composition.
+    pub fn read_occupied(
+        &mut self,
+        style: CellsStyle,
+        canvas: &Image,
+        cell_width: i32,
+        cell_height: i32,
+        occupied: &[bool],
+    ) {
+        // Tiny cells sample beyond their nominal bounds when a dot rounds to
+        // zero pixels. Keep the general reader for those unusual dimensions.
+        let occupied = (cell_width >= 2 && cell_height >= 4 && occupied.len() == self.now.len())
+            .then_some(occupied);
+        self.read_inner(style, canvas, cell_width, cell_height, occupied);
+    }
+
+    fn read_inner(
+        &mut self,
+        style: CellsStyle,
+        canvas: &Image,
+        cell_width: i32,
+        cell_height: i32,
+        occupied: Option<&[bool]>,
+    ) {
         if canvas.is_empty() || self.now.is_empty() {
             return;
         }
@@ -527,7 +573,9 @@ impl Cells {
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let at = row as usize * self.cols as usize + col as usize;
-                if col < self.keep_cols && row < self.keep_rows {
+                if col < self.keep_cols && row < self.keep_rows
+                    || occupied.is_some_and(|mask| !mask[at])
+                {
                     self.now[at] = Cell::default();
                     continue;
                 }

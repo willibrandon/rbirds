@@ -29,3 +29,4 @@ pub mod spatial_grid;
 pub mod sprites;
 pub mod stdio;
 pub mod terminal;
+pub mod timing;

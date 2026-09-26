@@ -164,6 +164,29 @@ pub fn rust_layout_report() -> String {
     r.offset("timespec.tv_nsec", offset_of!(Timespec, tv_nsec));
     r.field_size("timespec.tv_nsec", size_of::<c_long>());
     r.constant("CLOCK_MONOTONIC", os::CLOCK_MONOTONIC.into());
+    r.constant("CLOCK_PROCESS_CPUTIME_ID", os::CLOCK_PROCESS_CPUTIME_ID.into());
+    #[cfg(target_os = "macos")]
+    {
+        use os::Kevent64;
+        r.layout::<Kevent64>("kevent64_s");
+        r.offset("kevent64_s.ident", offset_of!(Kevent64, ident));
+        r.offset("kevent64_s.filter", offset_of!(Kevent64, filter));
+        r.offset("kevent64_s.flags", offset_of!(Kevent64, flags));
+        r.offset("kevent64_s.fflags", offset_of!(Kevent64, fflags));
+        r.offset("kevent64_s.data", offset_of!(Kevent64, data));
+        r.offset("kevent64_s.udata", offset_of!(Kevent64, udata));
+        r.offset("kevent64_s.ext", offset_of!(Kevent64, ext));
+        for (name, value) in [
+            ("EVFILT_TIMER", i128::from(os::EVFILT_TIMER)),
+            ("EV_ADD", os::EV_ADD.into()),
+            ("EV_ONESHOT", os::EV_ONESHOT.into()),
+            ("EV_ERROR", os::EV_ERROR.into()),
+            ("NOTE_NSECONDS", os::NOTE_NSECONDS.into()),
+            ("NOTE_CRITICAL", os::NOTE_CRITICAL.into()),
+        ] {
+            r.constant(name, value);
+        }
+    }
 
     // struct sigaction, as the sigaction() wrapper takes it
     r.layout::<sigset_t>("sigset_t");

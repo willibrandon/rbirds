@@ -34,6 +34,9 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/event.h>
+#endif
 
 #if !defined(__APPLE__) && !defined(__linux__)
 #error "the probe knows the prototypes of Darwin and GNU/Linux only"
@@ -147,6 +150,24 @@ static void report(void) {
     OFFSET("timespec", struct timespec, tv_nsec);
     FIELD_SIZE("timespec", struct timespec, tv_nsec);
     CONST(CLOCK_MONOTONIC);
+    CONST(CLOCK_PROCESS_CPUTIME_ID);
+#ifdef __APPLE__
+    SIZE("kevent64_s", struct kevent64_s);
+    ALIGN("kevent64_s", struct kevent64_s);
+    OFFSET("kevent64_s", struct kevent64_s, ident);
+    OFFSET("kevent64_s", struct kevent64_s, filter);
+    OFFSET("kevent64_s", struct kevent64_s, flags);
+    OFFSET("kevent64_s", struct kevent64_s, fflags);
+    OFFSET("kevent64_s", struct kevent64_s, data);
+    OFFSET("kevent64_s", struct kevent64_s, udata);
+    OFFSET("kevent64_s", struct kevent64_s, ext);
+    CONST(EVFILT_TIMER);
+    CONST(EV_ADD);
+    CONST(EV_ONESHOT);
+    CONST(EV_ERROR);
+    CONST(NOTE_NSECONDS);
+    CONST(NOTE_CRITICAL);
+#endif
 
     /* struct sigaction, as the sigaction() wrapper takes it */
     SIZE("sigset_t", sigset_t);
@@ -212,6 +233,11 @@ static void report(void) {
     FN(clock_gettime, int (*)(clockid_t, struct timespec *), "int(clockid_t, struct timespec *)");
     FN(nanosleep, int (*)(const struct timespec *, struct timespec *),
        "int(const struct timespec *, struct timespec *)");
+#ifdef __APPLE__
+    FN(kqueue, int (*)(void), "int(void)");
+    FN(kevent64, int (*)(int, const struct kevent64_s *, int, struct kevent64_s *, int, unsigned int, const struct timespec *),
+       "int(int, const struct kevent64_s *, int, struct kevent64_s *, int, unsigned int, const struct timespec *)");
+#endif
     FN(time, time_t (*)(time_t *), "time_t(time_t *)");
     /* With these feature macros glibc's strerror_r is the XSI one, which it
      * links as __xpg_strerror_r; the Rust declaration names that symbol. */

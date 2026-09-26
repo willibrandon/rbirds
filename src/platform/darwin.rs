@@ -81,6 +81,25 @@ pub const POLLHUP: c_short = 0x0010;
 pub const POLLNVAL: c_short = 0x0020;
 
 pub const CLOCK_MONOTONIC: clockid_t = 6;
+pub const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 12;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Kevent64 {
+    pub ident: u64,
+    pub filter: i16,
+    pub flags: u16,
+    pub fflags: u32,
+    pub data: i64,
+    pub udata: u64,
+    pub ext: [u64; 2],
+}
+pub const EVFILT_TIMER: i16 = -7;
+pub const EV_ADD: u16 = 0x0001;
+pub const EV_ONESHOT: u16 = 0x0010;
+pub const EV_ERROR: u16 = 0x4000;
+pub const NOTE_NSECONDS: u32 = 0x0004;
+pub const NOTE_CRITICAL: u32 = 0x0020;
 
 /// The `struct sigaction` that libSystem's `sigaction()` takes (not the
 /// kernel's `struct __sigaction`, which adds a trampoline): the handler union,

@@ -87,6 +87,7 @@ pub const POLLHUP: c_short = 0x0010;
 pub const POLLNVAL: c_short = 0x0020;
 
 pub const CLOCK_MONOTONIC: clockid_t = 1;
+pub const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 2;
 
 /// glibc's `struct sigaction`: the handler union, the 128-byte mask, the
 /// flags, then the restorer glibc fills in itself.

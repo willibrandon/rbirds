@@ -6,7 +6,20 @@ use crate::image::Image;
 use crate::render::kitty::{KittyError, KittyGraphics};
 use crate::sprites::PICTURE_GROUND;
 
-#[derive(Debug, Default)]
+const GROUND_BLOCK: [u8; 32] = {
+    let mut bytes = [0; 32];
+    let mut i = 0;
+    while i < 8 {
+        bytes[i * 4] = PICTURE_GROUND[0];
+        bytes[i * 4 + 1] = PICTURE_GROUND[1];
+        bytes[i * 4 + 2] = PICTURE_GROUND[2];
+        bytes[i * 4 + 3] = 255;
+        i += 1;
+    }
+    bytes
+};
+
+#[derive(Debug)]
 pub struct Sixel {
     bytes: Vec<u8>,
     /// One row of six-pixel columns per palette colour. Each band clears the
@@ -14,6 +27,39 @@ pub struct Sixel {
     planes: Vec<u8>,
     /// Whether an encode stopped partway through a band, leaving bits set.
     dirty: bool,
+    /// Exact RGBA-to-palette memoization. Collisions replace an entry; they
+    /// never approximate a colour. Flat sprites reuse very few colours.
+    colours: [ColourEntry; 4096],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ColourEntry {
+    rgba: u32,
+    index: u8,
+}
+
+impl Default for Sixel {
+    fn default() -> Self {
+        Self {
+            bytes: Vec::new(),
+            planes: Vec::new(),
+            dirty: false,
+            colours: [ColourEntry::default(); 4096],
+        }
+    }
+}
+
+fn cached_colour(cache: &mut [ColourEntry; 4096], pixel: &[u8]) -> usize {
+    if pixel[3] == 0 || pixel[..3] == PICTURE_GROUND {
+        return 0;
+    }
+    let rgba = u32::from_le_bytes(pixel.try_into().unwrap());
+    let slot = (rgba.wrapping_mul(0x9e37_79b1) >> 20) as usize;
+    let entry = &mut cache[slot];
+    if entry.rgba != rgba {
+        *entry = ColourEntry { rgba, index: colour(pixel) as u8 };
+    }
+    usize::from(entry.index)
 }
 
 fn palette(index: usize) -> [u8; 3] {
@@ -98,7 +144,7 @@ impl Sixel {
     /// Encodes an RGBA image, flattening alpha onto the picture background.
     /// Colour definitions are sent in each image so it is self-contained.
     pub fn encode(&mut self, image: &Image) -> Result<&[u8], KittyError> {
-        let Sixel { bytes: out, planes, dirty } = self;
+        let Sixel { bytes: out, planes, dirty, colours } = self;
         out.clear();
         let width = usize::try_from(image.width).map_err(|_| KittyError::Argument)?;
         let height = usize::try_from(image.height).map_err(|_| KittyError::Argument)?;
@@ -128,11 +174,25 @@ impl Sixel {
             let mut ends = [0; 256];
             *dirty = true;
             for dy in 0..6.min(height - y) {
-                for x in 0..width {
-                    let pixel = ((y + dy) * width + x) * 4;
-                    let c = colour(&image.pixels[pixel..pixel + 4]);
-                    planes[c * width + x] |= 1 << dy;
-                    ends[c] = ends[c].max(x + 1);
+                let start = (y + dy) * width * 4;
+                let row = &image.pixels[start..start + width * 4];
+                // The empty sky occupies most of a frame. Classify and set
+                // eight background pixels together, without palette lookups.
+                for (block, pixels) in row.chunks(32).enumerate() {
+                    let x = block * 8;
+                    if pixels == GROUND_BLOCK {
+                        for column in &mut planes[x..x + 8] {
+                            *column |= 1 << dy;
+                        }
+                        ends[0] = ends[0].max(x + 8);
+                    } else {
+                        for (offset, pixel) in pixels.chunks_exact(4).enumerate() {
+                            let x = x + offset;
+                            let c = cached_colour(colours, pixel);
+                            planes[c * width + x] |= 1 << dy;
+                            ends[c] = ends[c].max(x + 1);
+                        }
+                    }
                 }
             }
             let mut first = true;
@@ -180,5 +240,26 @@ impl Sixel {
     }
     pub fn queue(&mut self, graphics: &mut KittyGraphics, image: &Image) -> Result<(), KittyError> {
         graphics.write_raw(self.encode(image)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn palette_cache_remains_exact_after_collisions_and_alpha_changes() {
+        let mut cache = [ColourEntry::default(); 4096];
+        let mut word = 1_u32;
+        for _ in 0..100_000 {
+            word = word.wrapping_mul(1664525).wrapping_add(1013904223);
+            let pixel = word.to_le_bytes();
+            assert_eq!(cached_colour(&mut cache, &pixel), colour(&pixel));
+            assert_eq!(cached_colour(&mut cache, &pixel), colour(&pixel));
+        }
+        for alpha in 0..=255 {
+            let pixel = [PICTURE_GROUND[0], PICTURE_GROUND[1], PICTURE_GROUND[2], alpha];
+            assert_eq!(cached_colour(&mut cache, &pixel), colour(&pixel));
+        }
     }
 }

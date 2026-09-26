@@ -7,7 +7,7 @@
 use std::collections::VecDeque;
 use std::ffi::{CStr, OsStr, OsString, c_char, c_int, c_void};
 use std::io::{self, Write};
-use std::os::windows::io::AsRawHandle;
+use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -52,6 +52,12 @@ pub fn os_string_from_bytes(bytes: &[u8]) -> OsString {
 }
 
 type Handle = *mut c_void;
+#[repr(C)]
+#[derive(Default)]
+struct FileTime {
+    low: u32,
+    high: u32,
+}
 #[repr(C)]
 #[derive(Clone, Copy, Default)]
 struct Coord {
@@ -130,6 +136,23 @@ const _: () = {
 
 #[link(name = "kernel32")]
 unsafe extern "system" {
+    fn CreateEventW(
+        attributes: *const c_void,
+        manual: i32,
+        initial: i32,
+        name: *const u16,
+    ) -> Handle;
+    fn SetEvent(event: Handle) -> i32;
+    fn ResetEvent(event: Handle) -> i32;
+    fn WaitForMultipleObjects(count: u32, handles: *const Handle, all: i32, timeout: u32) -> u32;
+    fn GetCurrentProcess() -> Handle;
+    fn GetProcessTimes(
+        process: Handle,
+        created: *mut FileTime,
+        exited: *mut FileTime,
+        kernel: *mut FileTime,
+        user: *mut FileTime,
+    ) -> i32;
     fn GetStdHandle(which: u32) -> Handle;
     fn GetConsoleMode(handle: Handle, mode: *mut u32) -> i32;
     fn SetConsoleMode(handle: Handle, mode: u32) -> i32;
@@ -245,6 +268,32 @@ pub fn nanosleep(delay: &Timespec) -> io::Result<()> {
     }
     std::thread::sleep(Duration::new(delay.tv_sec as u64, delay.tv_nsec as u32));
     Ok(())
+}
+
+#[derive(Default)]
+pub struct FrameSleeper;
+impl FrameSleeper {
+    pub fn new() -> Self {
+        Self
+    }
+    pub fn sleep(&mut self, delay: Duration) {
+        std::thread::sleep(delay);
+    }
+}
+
+pub fn process_cpu_time() -> io::Result<Duration> {
+    let mut created = FileTime::default();
+    let mut exited = FileTime::default();
+    let mut kernel = FileTime::default();
+    let mut user = FileTime::default();
+    // SAFETY: the current-process pseudo-handle is valid, and every output
+    // points to a writable FILETIME (two DWORDs, alignment four).
+    check(unsafe {
+        GetProcessTimes(GetCurrentProcess(), &mut created, &mut exited, &mut kernel, &mut user)
+    })?;
+    let ticks = |time: FileTime| (u64::from(time.high) << 32) | u64::from(time.low);
+    let total = ticks(kernel) + ticks(user);
+    Ok(Duration::new(total / 10_000_000, (total % 10_000_000) as u32 * 100))
 }
 pub fn time_now() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64
@@ -487,6 +536,7 @@ impl PollFd {
 }
 pub fn poll(fds: &mut [PollFd], timeout_ms: i32) -> io::Result<i32> {
     let start = Instant::now();
+    let cancellation = cancellation_event()?;
     loop {
         let mut ready = 0;
         for fd in fds.iter_mut() {
@@ -499,8 +549,7 @@ pub fn poll(fds: &mut [PollFd], timeout_ms: i32) -> io::Result<i32> {
                 fd.revents |= POLLIN;
             }
             if fd.events & POLLOUT != 0
-                && WRITER
-                    .get()
+                && active_writer()
                     .is_none_or(|w| !w.state.0.lock().unwrap_or_else(|e| e.into_inner()).busy)
             {
                 fd.revents |= POLLOUT;
@@ -512,27 +561,84 @@ pub fn poll(fds: &mut [PollFd], timeout_ms: i32) -> io::Result<i32> {
         {
             return Ok(ready);
         }
-        std::thread::sleep(Duration::from_millis(1));
+        let mut handles =
+            [cancellation.as_raw_handle(), std::ptr::null_mut(), std::ptr::null_mut()];
+        let mut count = 1;
+        if fds.iter().any(|fd| fd.events & POLLIN != 0) {
+            handles[count] = handle(STDIN_FILENO)?;
+            count += 1;
+        }
+        if fds.iter().any(|fd| fd.events & POLLOUT != 0)
+            && let Some(writer) = active_writer()
+        {
+            handles[count] = writer.completed.as_raw_handle();
+            count += 1;
+        }
+        let timeout = if timeout_ms < 0 {
+            u32::MAX
+        } else {
+            let remaining =
+                Duration::from_millis(timeout_ms as u64).saturating_sub(start.elapsed());
+            remaining.as_nanos().div_ceil(1_000_000).min(u128::from(u32::MAX - 1)) as u32
+        };
+        // SAFETY: distinct, live console/event handles owned throughout the
+        // call; count bounds the initialized part of the array. No polling
+        // timer is needed: console input, write completion or Ctrl+C wakes us.
+        let result = unsafe { WaitForMultipleObjects(count as u32, handles.as_ptr(), 0, timeout) };
+        if result == u32::MAX {
+            return Err(io::Error::last_os_error());
+        }
+        if result == 258 {
+            return Ok(0);
+        }
+        if exit_requested() {
+            return Ok(0);
+        }
     }
+}
+
+fn new_event() -> io::Result<OwnedHandle> {
+    // SAFETY: no name or security attributes; returns a new manual-reset event.
+    let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+    if event.is_null() {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: ownership of this fresh handle transfers to OwnedHandle.
+    Ok(unsafe { OwnedHandle::from_raw_handle(event) })
+}
+
+static CANCELLATION_EVENT: OnceLock<Result<OwnedHandle, i32>> = OnceLock::new();
+fn cancellation_event() -> io::Result<&'static OwnedHandle> {
+    CANCELLATION_EVENT
+        .get_or_init(|| new_event().map_err(|e| e.raw_os_error().unwrap_or(EIO)))
+        .as_ref()
+        .map_err(|&code| io::Error::from_raw_os_error(code))
 }
 
 #[derive(Default)]
 struct WriteState {
     job: Option<(RawFd, Vec<u8>)>,
+    spare: Vec<u8>,
     result: Option<Result<usize, i32>>,
     busy: bool,
     stop: bool,
 }
 struct Writer {
     state: Arc<(Mutex<WriteState>, Condvar)>,
+    completed: Arc<OwnedHandle>,
     thread: std::thread::JoinHandle<()>,
 }
-static WRITER: OnceLock<Writer> = OnceLock::new();
+static WRITER: OnceLock<Result<Writer, i32>> = OnceLock::new();
+fn active_writer() -> Option<&'static Writer> {
+    WRITER.get().and_then(|result| result.as_ref().ok())
+}
 impl Writer {
-    fn new() -> Self {
+    fn new() -> io::Result<Self> {
         let state = Arc::new((Mutex::new(WriteState::default()), Condvar::new()));
+        let completed = Arc::new(new_event()?);
+        let done = completed.clone();
         let worker = state.clone();
-        let thread = std::thread::spawn(move || {
+        let thread = std::thread::Builder::new().name("rbirds-output".into()).spawn(move || {
             loop {
                 let (lock, wake) = &*worker;
                 let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
@@ -542,16 +648,22 @@ impl Writer {
                 if state.stop {
                     return;
                 }
-                let (fd, bytes) = state.job.take().unwrap();
+                let (fd, mut bytes) = state.job.take().unwrap();
                 drop(state);
                 let result = write(fd, &bytes).map_err(|e| e.raw_os_error().unwrap_or(EIO));
                 let mut state = lock.lock().unwrap_or_else(|e| e.into_inner());
                 state.result = Some(result);
                 state.busy = false;
+                bytes.clear();
+                state.spare = bytes;
+                // SAFETY: the shared event is live until this worker exits.
+                unsafe {
+                    SetEvent(done.as_raw_handle());
+                }
                 wake.notify_all();
             }
-        });
-        Self { state, thread }
+        })?;
+        Ok(Self { state, completed, thread })
     }
     fn stop(&self) -> bool {
         let start = Instant::now();
@@ -585,7 +697,10 @@ impl Writer {
     }
 }
 pub fn write_nonblocking(fd: RawFd, data: &[u8]) -> io::Result<usize> {
-    let writer = WRITER.get_or_init(Writer::new);
+    let writer = WRITER
+        .get_or_init(|| Writer::new().map_err(|e| e.raw_os_error().unwrap_or(EIO)))
+        .as_ref()
+        .map_err(|&code| io::Error::from_raw_os_error(code))?;
     let mut state = writer.state.0.lock().unwrap_or_else(|e| e.into_inner());
     // Stopped, the writer takes no more work, and a write it had in hand may
     // have been cancelled with ERROR_OPERATION_ABORTED, which is the EINTR
@@ -598,9 +713,12 @@ pub fn write_nonblocking(fd: RawFd, data: &[u8]) -> io::Result<usize> {
     }
     if !state.busy {
         let count = data.len().min(64 * 1024);
-        let mut bytes = Vec::new();
+        let mut bytes = std::mem::take(&mut state.spare);
         bytes.try_reserve_exact(count).map_err(|_| io::Error::from_raw_os_error(ENOMEM))?;
         bytes.extend_from_slice(&data[..count]);
+        // SAFETY: this writer owns the event; the state lock orders reset
+        // before the worker can complete the next job and signal it again.
+        check(unsafe { ResetEvent(writer.completed.as_raw_handle()) })?;
         state.job = Some((fd, bytes));
         state.busy = true;
         writer.state.1.notify_one();
@@ -629,13 +747,21 @@ static OUTPUT_CP: AtomicU32 = AtomicU32::new(0);
 extern "system" fn control(kind: u32) -> i32 {
     if kind <= 1 {
         CANCELLED.store(true, Ordering::Release);
+        if let Some(Ok(event)) = CANCELLATION_EVENT.get() {
+            // SAFETY: the static event remains live for the process lifetime.
+            unsafe {
+                SetEvent(event.as_raw_handle());
+            }
+        }
         1
     } else {
         0
     }
 }
 pub fn install_signal_handlers() {
-    // SAFETY: control is a static system-ABI callback; it only sets an atomic.
+    let _ = cancellation_event();
+    // SAFETY: control is a static system-ABI callback; it sets an atomic and
+    // signals an already-created event without acquiring a mutex.
     unsafe {
         SetConsoleCtrlHandler(Some(control), 1);
     }
@@ -687,7 +813,7 @@ pub fn restore_terminal() {
     if RESTORED.swap(true, Ordering::AcqRel) {
         return;
     }
-    let drained = WRITER.get().is_none_or(Writer::stop);
+    let drained = active_writer().is_none_or(Writer::stop);
     if SIXEL_MODE.swap(0, Ordering::AcqRel) == 2 && drained {
         write_all_quietly(1, b"\x1b[?80l");
     }

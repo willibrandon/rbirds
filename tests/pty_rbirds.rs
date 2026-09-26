@@ -28,6 +28,30 @@ fn rbirds() -> Subject {
     Subject { exe: oracle::rust_binary(), name: "rbirds".into() }
 }
 
+#[test]
+fn live_trace_covers_every_flushed_frame_and_reports_cpu_time() {
+    let _serial = serial();
+    let path = std::env::temp_dir().join(format!("rbirds-trace-{}.jsonl", std::process::id()));
+    let outcome = pty::run(
+        &pty::Spec::new(&rbirds(), &["--frames", "8", "--color", "ember", "--birds", "10"])
+            .env("RBIRDS_TRACE", &path),
+    );
+    assert_eq!(outcome.exit, Some(pty::Exit::Code(0)), "{}", outcome.describe());
+    outcome.assert_attributes_restored();
+    let report = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let lines: Vec<_> = report.lines().collect();
+    assert_eq!(lines.len(), 9);
+    assert!(lines[0].contains("\"samples\":8,\"omitted\":0"));
+    assert!(lines[0].contains("\"cpu_us\":"));
+    assert!(!lines[0].contains("\"cpu_us\":0,"));
+    for line in &lines[1..] {
+        assert!(line.starts_with("{\"kind\":\"frame\","));
+        assert!(line.contains("\"wake_late_us\":"));
+        assert!(line.contains("\"flush_us\":"));
+    }
+}
+
 macro_rules! rust_case {
     ($name:ident, $case:expr) => {
         #[test]

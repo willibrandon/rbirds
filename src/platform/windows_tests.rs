@@ -360,7 +360,10 @@ fn hidden_console_child() {
                 loop {
                     match graphics.flush_nonblocking() {
                         Ok(()) => break,
-                        Err(crate::render::kitty::KittyError::Again) => std::thread::yield_now(),
+                        Err(crate::render::kitty::KittyError::Again) => {
+                            let mut ready = [PollFd::new(1, POLLOUT)];
+                            assert_eq!(poll(&mut ready, 2000).unwrap(), 1);
+                        }
                         Err(error) => panic!("{error}"),
                     }
                     assert!(start.elapsed() < Duration::from_secs(5));
@@ -368,7 +371,7 @@ fn hidden_console_child() {
                 assert_eq!(drain.join().unwrap(), expected);
                 assert_eq!(graphics.len(), 0);
             } else {
-                assert!(!WRITER.get().unwrap().stop());
+                assert!(!active_writer().unwrap().stop());
                 // The cancelled write and the stopped writer both fail the
                 // flush with EIO, rather than the EINTR it would retry forever.
                 assert_eq!(

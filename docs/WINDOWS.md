@@ -95,7 +95,9 @@ and code pages are saved and restored. These choices follow Microsoft's
 and [VT sequence documentation](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences).
 
 A single writer thread holds at most one 64 KiB chunk so keys remain serviceable
-while output is blocked. Shutdown allows a short drain, then cancels a blocked
+while output is blocked. Its transfer buffer is reused, and the main thread
+waits on input, completion and cancellation events rather than polling a timer.
+Shutdown allows a short drain, then cancels a blocked
 write, and gives up on a write that can't be cancelled after a second. If output
 cannot drain, it cannot carry screen-cleanup sequences; native console
 modes/code pages are still restored. Normal exit, handled Ctrl events,

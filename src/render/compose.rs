@@ -56,28 +56,34 @@ pub fn bird_placement(sim: &Sim, bird: &Bird) -> Option<Placement> {
 /// `blend_sprite`: `mix` blends edges, which a picture wants; without it the
 /// more opaque pixel takes the place, which a text terminal wants.
 pub fn blend_sprite(canvas: &mut Image, sprite: &Image, at_x: i32, at_y: i32, mix: bool) {
-    for y in 0..sprite.height {
-        let cy = at_y + y;
-        if cy < 0 || cy >= canvas.height {
-            continue;
-        }
-        for x in 0..sprite.width {
-            let cx = at_x + x;
-            if cx < 0 || cx >= canvas.width {
-                continue;
-            }
-            let from = sprite.offset(x, y);
-            let to = canvas.offset(cx, cy);
-            let src = &sprite.pixels[from..from + 4];
+    // Clip once, then walk contiguous rows. Most sprites have transparent
+    // margins; neither those nor the clipped pixels need destination work.
+    let x0 = (-i64::from(at_x)).max(0);
+    let y0 = (-i64::from(at_y)).max(0);
+    let x1 = i64::from(sprite.width).min(i64::from(canvas.width) - i64::from(at_x));
+    let y1 = i64::from(sprite.height).min(i64::from(canvas.height) - i64::from(at_y));
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let length = (x1 - x0) as usize * 4;
+    for y in y0..y1 {
+        let from = sprite.offset(x0 as i32, y as i32);
+        let to = canvas.offset((i64::from(at_x) + x0) as i32, (i64::from(at_y) + y) as i32);
+        let source = sprite.pixels[from..from + length].chunks_exact(4);
+        let destination = canvas.pixels[to..to + length].chunks_exact_mut(4);
+        for (src, dst) in source.zip(destination) {
             let alpha = u32::from(src[3]);
             if alpha == 0 {
                 continue;
             }
-            let dst = &mut canvas.pixels[to..to + 4];
             if !mix {
                 if alpha > u32::from(dst[3]) {
                     dst.copy_from_slice(src);
                 }
+                continue;
+            }
+            if alpha == 255 {
+                dst.copy_from_slice(src);
                 continue;
             }
             // Straight alpha over: the colour underneath counts only for as
@@ -116,6 +122,43 @@ pub fn compose_onto(
     birds: &[Bird],
     with_ground: bool,
 ) {
+    compose_with_coverage(sim, canvas, frames, birds, with_ground, None);
+}
+
+/// A sprite's rectangle is a conservative bound on the cells it can ink.
+/// Skipping untouched cells avoids scanning the empty sky for every dot.
+fn compose_with_coverage(
+    sim: &Sim,
+    canvas: &mut Image,
+    frames: &[Image],
+    birds: &[Bird],
+    with_ground: bool,
+    mut occupied: Option<&mut [bool]>,
+) {
+    let mut blend = |canvas: &mut Image, sprite: &Image, x: i32, y: i32, mix: bool| {
+        if let Some(cells) = &mut occupied {
+            let left = i64::from(x).max(0);
+            let top = i64::from(y).max(0);
+            let right = (i64::from(x) + i64::from(sprite.width))
+                .min(i64::from(canvas.width))
+                .min(i64::from(sim.screen.cols) * i64::from(sim.screen.cell_width));
+            let bottom = (i64::from(y) + i64::from(sprite.height))
+                .min(i64::from(canvas.height))
+                .min(i64::from(sim.screen.rows) * i64::from(sim.screen.cell_height));
+            if right > left && bottom > top {
+                let columns = sim.screen.cols as usize;
+                let x0 = (left / i64::from(sim.screen.cell_width)) as usize;
+                let x1 = ((right - 1) / i64::from(sim.screen.cell_width)) as usize + 1;
+                let y0 = top / i64::from(sim.screen.cell_height);
+                let y1 = (bottom - 1) / i64::from(sim.screen.cell_height);
+                for row in y0..=y1 {
+                    let offset = row as usize * columns;
+                    cells[offset + x0..offset + x1].fill(true);
+                }
+            }
+        }
+        blend_sprite(canvas, sprite, x, y, mix);
+    };
     let shades = sim.palette_shades();
     if with_ground {
         fill_ground(canvas);
@@ -135,7 +178,7 @@ pub fn compose_onto(
                         + bird.frame % ROTATION_FRAMES)
                         as usize];
                     if !sprite.is_empty() {
-                        blend_sprite(
+                        blend(
                             canvas,
                             sprite,
                             bird.trail_x[age] as i32,
@@ -159,7 +202,7 @@ pub fn compose_onto(
             if sprite.is_empty() {
                 continue;
             }
-            blend_sprite(canvas, sprite, bird.x as i32, bird.y as i32, with_ground);
+            blend(canvas, sprite, bird.x as i32, bird.y as i32, with_ground);
         }
     }
     let offset = sim.hawk_draw_offset();
@@ -169,7 +212,7 @@ pub fn compose_onto(
         if sprite.is_empty() {
             continue;
         }
-        blend_sprite(canvas, sprite, hawk.x as i32 - offset, hawk.y as i32 - offset, with_ground);
+        blend(canvas, sprite, hawk.x as i32 - offset, hawk.y as i32 - offset, with_ground);
     }
 }
 
@@ -215,7 +258,15 @@ impl Renderer {
                 Err(_) => return false,
             }
         }
-        self.cells.resize(sim.screen.cols, sim.screen.rows).is_ok()
+        if self.cells.resize(sim.screen.cols, sim.screen.rows).is_err() {
+            return false;
+        }
+        let count = self.cells.now.len();
+        if self.occupied.try_reserve(count.saturating_sub(self.occupied.len())).is_err() {
+            return false;
+        }
+        self.occupied.resize(count, false);
+        true
     }
 
     /// `queue_render_frame`: one frame into the output buffer.
@@ -302,6 +353,9 @@ impl Renderer {
         }
         graphics.write_raw(b"\x1b[H")?;
         compose_onto(sim, &mut self.canvas, &self.sprites, birds, true);
+        if let Some(profile) = &mut self.profile {
+            profile.composed();
+        }
         self.sixel.queue(graphics, &self.canvas)?;
         graphics.write_raw(b"\x1b[H")?;
         self.queue_legend(graphics, sim)?;
@@ -330,12 +384,24 @@ impl Renderer {
             if self.legend_drawn { (LEGEND_COLUMNS, sim.legend_rows()) } else { (0, 0) };
         self.cells.keep_out_of(keep_cols, keep_rows);
 
-        compose_onto(sim, &mut self.canvas, &self.sprites, birds, false);
-        self.cells.read(
+        self.occupied.fill(false);
+        compose_with_coverage(
+            sim,
+            &mut self.canvas,
+            &self.sprites,
+            birds,
+            false,
+            Some(&mut self.occupied),
+        );
+        if let Some(profile) = &mut self.profile {
+            profile.composed();
+        }
+        self.cells.read_occupied(
             text_style(sim.render_mode),
             &self.canvas,
             sim.screen.cell_width,
             sim.screen.cell_height,
+            &self.occupied,
         );
         if self.cells.emit().is_err() {
             return Err(KittyError::Memory);

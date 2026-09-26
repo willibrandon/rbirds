@@ -1,12 +1,12 @@
 # Deviations
 
 D-001 through D-003 are proposed changes. D-004 and D-005 describe the accepted
-Sixel and Windows additions. Test results are in [the evidence index](evidence/README.md).
+Sixel and Windows additions. D-006 describes the live pacing change. Test results are in [the evidence index](evidence/README.md).
 
 The first three entries cover C behavior that is undefined, and so can't be reproduced
 without reproducing memory corruption or an implementation-defined accident.
 Where the reference's behavior is well defined, rbirds reproduces it, quirks
-included (for example the benchmark's double hunt, the `c` byte that ends a
+included except for the changes below (for example the benchmark's double hunt, the `c` byte that ends a
 theme query, and the panel columns padded by bytes).
 
 Reference for every entry: cbirds 1.4.0, commit
@@ -94,3 +94,18 @@ Reference for every entry: cbirds 1.4.0, commit
 - Claim affected: Windows has its own tests. C comparisons, Unix ABI checks and
   POSIX signal tests run on Unix. Windows ARM64 and appearance in real terminals
   still need testing. Forced termination may prevent terminal cleanup.
+
+## D-006: live frame deadlines
+
+The C loop sleeps for the remaining part of each frame, so wake-up delays shift
+every subsequent frame. rbirds instead keeps monotonic 60 Hz deadlines and
+rebases after an overrun. It blocks between frames without spinning. On macOS,
+a one-shot kqueue timer requests minimal timer coalescing. No thread priority is
+raised and the simulation still uses the actual elapsed frame duration.
+
+This intentionally changes live timing under C07/C13, while retaining exact
+simulation results for injected times, renderer output for identical state,
+recordings and benchmark behavior. `--unlock-fps` still disables pacing.
+The scheduler tests in `src/timing.rs`, ABI probe, PTY lifecycle tests and live
+measurements cover the change. `RBIRDS_TRACE` is an optional developer diagnostic;
+it does not add an option to the user-facing CLI. See [PERFORMANCE.md](PERFORMANCE.md).

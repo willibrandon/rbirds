@@ -104,6 +104,7 @@ See the [test results](docs/evidence/windows-sixel.md) for what has run locally.
 - [PORTING.md](docs/PORTING.md) describes the porting process and release checks.
 - [COMPATIBILITY.md](docs/COMPATIBILITY.md) lists the behavior that has to match and how it's tested.
 - [WINDOWS.md](docs/WINDOWS.md) covers Windows setup, Sixel, PowerShell workflows and validation limits.
+- [PERFORMANCE.md](docs/PERFORMANCE.md) explains live CPU and frame-timing measurements.
 - [docs/evidence](docs/evidence/README.md) records test runs and results.
 - [DEVIATIONS.md](docs/DEVIATIONS.md) lists differences from cbirds.
 - [c-test-inventory.csv](docs/c-test-inventory.csv) maps each C test to its Rust version.

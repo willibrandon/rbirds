@@ -95,7 +95,9 @@ pub use restore::{
 pub use scan::scan_osc_rgb;
 pub use signals::{default_sigpipe, install_signal_handlers, send_signal};
 pub use termios::{RawModeView, tcgetattr, tcsetattr};
-pub use time::{Timespec, clock_gettime, monotonic_now, nanosleep, time_now};
+pub use time::{
+    FrameSleeper, Timespec, clock_gettime, monotonic_now, nanosleep, process_cpu_time, time_now,
+};
 pub use trig::sin_cos;
 pub use tty::{WinSize, is_terminal, set_window_size, window_size, window_size_or_zero};
 
@@ -167,6 +169,8 @@ macro_rules! foreign {
 /// is exported as `__xpg_strerror_r` (plain `strerror_r` is the GNU variant
 /// returning `char *`).
 mod sys {
+    #[cfg(target_os = "macos")]
+    use super::os::Kevent64;
     use super::os::{SigAction, Termios, clockid_t, nfds_t, pid_t, sigset_t, time_t};
     use super::poll::PollFd;
     use super::time::Timespec;
@@ -193,6 +197,13 @@ mod sys {
         fn clock_gettime(clock: clockid_t, now: *mut Timespec) -> c_int;
         ["nanosleep", "int(const struct timespec *, struct timespec *)"]
         fn nanosleep(delay: *const Timespec, remaining: *mut Timespec) -> c_int;
+        ["kqueue", "int(void)"]
+        #[cfg(target_os = "macos")]
+        fn kqueue() -> c_int;
+        ["kevent64", "int(int, const struct kevent64_s *, int, struct kevent64_s *, int, unsigned int, const struct timespec *)"]
+        #[cfg(target_os = "macos")]
+        fn kevent64(fd: c_int, changes: *const Kevent64, change_count: c_int,
+            events: *mut Kevent64, event_count: c_int, flags: std::ffi::c_uint, timeout: *const Timespec) -> c_int;
         ["time", "time_t(time_t *)"]
         fn time(out: *mut time_t) -> time_t;
         ["strerror_r", "int(int, char *, size_t)"]

@@ -33,6 +33,9 @@ pub struct Renderer {
     /// The panel's rows, rebuilt in place each frame.
     pub legend: LegendBuffers,
     pub sixel: sixel::Sixel,
+    pub profile: Option<crate::timing::FrameProfile>,
+    /// Text cells touched by this frame's sprite rectangles, including trails.
+    pub occupied: Vec<bool>,
 }
 
 impl Default for Renderer {
@@ -46,6 +49,8 @@ impl Default for Renderer {
             stats: Stats::default(),
             legend: LegendBuffers::default(),
             sixel: sixel::Sixel::default(),
+            profile: None,
+            occupied: Vec::new(),
         }
     }
 }
