@@ -6,6 +6,17 @@
 //! checked against the native headers by the ABI probe in `tools/oracle/`.
 //! Safe wrappers return `std::io::Error` carrying the raw `errno`, so callers
 //! can print the C library's own message for them.
+//!
+//! Layout of the boundary:
+//!
+//! - `darwin.rs` / `linux.rs`: the target's C types, structures and constants.
+//! - `sys` (below): every foreign function, declared once, each paired with the
+//!   C prototype it assumes; [`abi::rust_layout_report`] prints both halves for
+//!   comparison with `tools/oracle/abi_probe.c`.
+//! - `termios.rs`, `tty.rs`, `poll.rs`, `time.rs`, `errors.rs`: safe wrappers.
+//! - `restore.rs`, `signals.rs`: the terminal-ownership flags, boids.c's
+//!   `restore_terminal`, and its signal handler — the async-signal-safe path.
+//! - [`pty`]: pseudoterminals, as test support only.
 
 #![allow(unsafe_code)]
 
@@ -26,10 +37,55 @@ compile_error!(
      other targets need their own verified bindings (docs/DESIGN.md §2)"
 );
 
+#[cfg(target_os = "macos")]
+mod darwin;
+#[cfg(target_os = "macos")]
+use darwin as os;
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux as os;
+
+pub mod abi;
+mod errors;
+mod poll;
+pub mod pty;
+mod restore;
 mod scan;
+mod signals;
+mod termios;
+mod time;
 mod trig;
+mod tty;
+
+#[cfg(test)]
+mod tests;
+
+pub use errors::{exit_immediately, perror_message, strerror};
+#[cfg(target_os = "linux")]
+pub use os::TIOCGPTN;
+pub use os::{
+    _POSIX_VDISABLE, BRKINT, CLOCK_MONOTONIC, CS8, CSIZE, EBADF, ECHO, EINVAL, ENOTTY, F_GETFD,
+    F_SETFD, FD_CLOEXEC, ICANON, ICRNL, IEXTEN, INPCK, ISIG, ISTRIP, IXON, NCCS, O_CLOEXEC,
+    O_NOCTTY, O_RDWR, OPOST, POLLERR, POLLHUP, POLLIN, POLLNVAL, POLLOUT, SA_RESETHAND, SIG_DFL,
+    SIG_IGN, SIGABRT, SIGBUS, SIGFPE, SIGHUP, SIGINT, SIGKILL, SIGPIPE, SIGQUIT, SIGSEGV, SIGTERM,
+    TCSAFLUSH, TCSANOW, TIOCGWINSZ, TIOCSWINSZ, Termios, VMIN, VSUSP, VTIME, cc_t, clockid_t,
+    nfds_t, pid_t, speed_t, tcflag_t, time_t,
+};
+pub use poll::{PollFd, poll};
+pub use restore::{
+    ALT_SCREEN_OFF, ALT_SCREEN_ON, CURSOR_HIDE, CURSOR_SHOW, KITTY_FREE_IMAGES, MOUSE_REPORT_OFF,
+    MOUSE_REPORT_ON, SYNC_UPDATE_END, alt_screen_is_on, enter_alt_screen, enter_terminal,
+    is_restored, mark_alt_screen_on, mark_raw_acquired, mark_sprites_uploaded,
+    reset_terminal_state_for_tests, restore_terminal, sprites_uploaded, terminal_is_raw,
+    write_all_quietly,
+};
 pub use scan::scan_osc_rgb;
+pub use signals::{install_signal_handlers, send_signal};
+pub use termios::{RawModeView, tcgetattr, tcsetattr};
+pub use time::{Timespec, clock_gettime, monotonic_now, nanosleep, time_now};
 pub use trig::sin_cos;
+pub use tty::{WinSize, is_terminal, set_window_size, window_size, window_size_or_zero};
 
 pub const STDIN_FILENO: RawFd = 0;
 pub const STDOUT_FILENO: RawFd = 1;
@@ -53,18 +109,111 @@ pub const O_NONBLOCK: c_int = 0x0004;
 #[cfg(target_os = "linux")]
 pub const O_NONBLOCK: c_int = 0o4000;
 
-mod sys {
-    use std::ffi::{c_char, c_int, c_void};
+/// Declares foreign functions together with the C prototype each assumes.
+///
+/// The prototype text is what `tools/oracle/abi_probe.c` prints for a
+/// function only when the native header declares it with exactly that type
+/// (via `_Generic`), so the ABI test fails if a header's prototype differs
+/// from the one the Rust declaration beside it was written against. Rust
+/// parameter types are the target aliases from `darwin.rs`/`linux.rs`, whose
+/// widths and signedness the same report checks.
+macro_rules! foreign {
+    ($(
+        [$c_name:literal, $c_type:literal]
+        $(#[cfg($cfg:meta)])?
+        $(#[link_name = $link:literal])?
+        fn $name:ident($($args:tt)*) $(-> $ret:ty)?;
+    )*) => {
+        unsafe extern "C" {
+            $(
+                $(#[cfg($cfg)])?
+                $(#[link_name = $link])?
+                pub fn $name($($args)*) $(-> $ret)?;
+            )*
+        }
 
-    unsafe extern "C" {
-        pub fn read(fd: c_int, buf: *mut c_void, count: usize) -> isize;
-        pub fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
-        pub fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
-        pub fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64;
+        /// `(C name, assumed C prototype)` for every declared function, in
+        /// declaration order (the order the probe prints them).
+        // Pushed one by one so each entry can carry its declaration's cfg.
+        #[allow(clippy::vec_init_then_push)]
+        pub fn signatures() -> Vec<(&'static str, &'static str)> {
+            let mut list = Vec::new();
+            $(
+                $(#[cfg($cfg)])?
+                list.push(($c_name, $c_type));
+            )*
+            list
+        }
+    };
+}
+
+/// Every foreign function the platform layer calls.
+///
+/// Symbol names: on 64-bit Darwin the `__DARWIN_ALIAS` suffixes are empty, so
+/// each function links under its plain name; on glibc the XSI `strerror_r`
+/// is exported as `__xpg_strerror_r` (plain `strerror_r` is the GNU variant
+/// returning `char *`).
+mod sys {
+    use super::os::{SigAction, Termios, clockid_t, nfds_t, pid_t, sigset_t, time_t};
+    use super::poll::PollFd;
+    use super::time::Timespec;
+    use std::ffi::{c_char, c_int, c_ulong, c_void};
+
+    foreign! {
+        ["read", "ssize_t(int, void *, size_t)"]
+        fn read(fd: c_int, buf: *mut c_void, count: usize) -> isize;
+        ["write", "ssize_t(int, const void *, size_t)"]
+        fn write(fd: c_int, buf: *const c_void, count: usize) -> isize;
+        ["fcntl", "int(int, int, ...)"]
+        fn fcntl(fd: c_int, cmd: c_int, ...) -> c_int;
+        ["strtod", "double(const char *, char **)"]
+        fn strtod(nptr: *const c_char, endptr: *mut *mut c_char) -> f64;
+        ["tcgetattr", "int(int, struct termios *)"]
+        fn tcgetattr(fd: c_int, termios: *mut Termios) -> c_int;
+        ["tcsetattr", "int(int, int, const struct termios *)"]
+        fn tcsetattr(fd: c_int, action: c_int, termios: *const Termios) -> c_int;
+        ["ioctl", "int(int, unsigned long, ...)"]
+        fn ioctl(fd: c_int, request: c_ulong, ...) -> c_int;
+        ["poll", "int(struct pollfd *, nfds_t, int)"]
+        fn poll(fds: *mut PollFd, nfds: nfds_t, timeout: c_int) -> c_int;
+        ["clock_gettime", "int(clockid_t, struct timespec *)"]
+        fn clock_gettime(clock: clockid_t, now: *mut Timespec) -> c_int;
+        ["nanosleep", "int(const struct timespec *, struct timespec *)"]
+        fn nanosleep(delay: *const Timespec, remaining: *mut Timespec) -> c_int;
+        ["time", "time_t(time_t *)"]
+        fn time(out: *mut time_t) -> time_t;
+        ["strerror_r", "int(int, char *, size_t)"]
         #[cfg(target_os = "macos")]
-        pub fn __error() -> *mut c_int;
+        fn strerror_r(errnum: c_int, buf: *mut c_char, len: usize) -> c_int;
+        ["strerror_r", "int(int, char *, size_t)"]
         #[cfg(target_os = "linux")]
-        pub fn __errno_location() -> *mut c_int;
+        #[link_name = "__xpg_strerror_r"]
+        fn strerror_r(errnum: c_int, buf: *mut c_char, len: usize) -> c_int;
+        ["isatty", "int(int)"]
+        fn isatty(fd: c_int) -> c_int;
+        ["_exit", "void(int)"]
+        fn _exit(code: c_int) -> !;
+        ["sigaction", "int(int, const struct sigaction *, struct sigaction *)"]
+        fn sigaction(signal: c_int, action: *const SigAction, old: *mut SigAction) -> c_int;
+        ["sigemptyset", "int(sigset_t *)"]
+        fn sigemptyset(set: *mut sigset_t) -> c_int;
+        ["kill", "int(pid_t, int)"]
+        fn kill(pid: pid_t, signal: c_int) -> c_int;
+        ["posix_openpt", "int(int)"]
+        fn posix_openpt(flags: c_int) -> c_int;
+        ["grantpt", "int(int)"]
+        fn grantpt(fd: c_int) -> c_int;
+        ["unlockpt", "int(int)"]
+        fn unlockpt(fd: c_int) -> c_int;
+        ["ptsname_r", "int(int, char *, size_t)"]
+        #[cfg(target_os = "macos")]
+        fn ptsname_r(fd: c_int, buf: *mut c_char, len: usize) -> c_int;
+        ["__error", "int *(void)"]
+        #[cfg(target_os = "macos")]
+        fn __error() -> *mut c_int;
+        ["__errno_location", "int *(void)"]
+        #[cfg(target_os = "linux")]
+        fn __errno_location() -> *mut c_int;
     }
 }
 
@@ -80,7 +229,7 @@ fn errno_location() -> *mut c_int {
     }
 }
 
-/// The calling thread's `errno`.
+/// The calling thread's `errno`. Async-signal-safe.
 pub fn errno() -> c_int {
     // SAFETY: the pointer is the thread's own errno slot, valid for reads.
     unsafe { *errno_location() }
@@ -149,4 +298,28 @@ pub fn set_status_flags(fd: RawFd, flags: c_int) -> io::Result<()> {
     // calling convention the declaration above selects.
     let result = unsafe { sys::fcntl(fd, F_SETFL, flags) };
     if result < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+}
+
+/// `fcntl(fd, F_GETFD)`: the descriptor flags (`FD_CLOEXEC`).
+pub fn descriptor_flags(fd: RawFd) -> io::Result<c_int> {
+    // SAFETY: F_GETFD takes no third argument and only reads descriptor state.
+    let flags = unsafe { sys::fcntl(fd, F_GETFD) };
+    if flags < 0 { Err(io::Error::last_os_error()) } else { Ok(flags) }
+}
+
+/// `fcntl(fd, F_SETFD, flags)`.
+pub fn set_descriptor_flags(fd: RawFd, flags: c_int) -> io::Result<()> {
+    // SAFETY: F_SETFD takes one `int` argument, passed with the variadic
+    // calling convention the declaration above selects.
+    let result = unsafe { sys::fcntl(fd, F_SETFD, flags) };
+    if result < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+}
+
+/// Sets or clears `O_NONBLOCK` in the status flags of `fd`'s open file
+/// description (shared by every descriptor duplicated from it), keeping the
+/// other flags.
+pub fn set_nonblocking(fd: RawFd, nonblocking: bool) -> io::Result<()> {
+    let flags = status_flags(fd)?;
+    let wanted = if nonblocking { flags | O_NONBLOCK } else { flags & !O_NONBLOCK };
+    if wanted == flags { Ok(()) } else { set_status_flags(fd, wanted) }
 }
