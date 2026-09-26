@@ -42,6 +42,18 @@ pub fn mul_add(a: f64, b: f64, c: f64) -> f64 {
     if CONTRACTS { a.mul_add(b, c) } else { a * b + c }
 }
 
+/// `sin` and `cos` of one argument, as the canonical C build evaluates a
+/// `sin(x)`/`cos(x)` pair (returns `(sin, cos)`).
+///
+/// TEMPORARY stand-in added on the P2 png/gif branch at the coordinator's
+/// request, to be replaced by main's version (backed by
+/// `crate::platform::sin_cos`, which calls `__sincos_stret` on Apple targets)
+/// at merge. This stub makes separate calls; optimized builds merge them into
+/// `__sincos_stret` on Apple targets anyway, unoptimized builds do not.
+pub fn sin_cos(x: f64) -> (f64, f64) {
+    (x.sin(), x.cos())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
