@@ -44,7 +44,9 @@ fn probe() -> Option<PathBuf> {
             let cc = std::env::var_os("CC").unwrap_or_else(|| "cc".into());
             let compiled = Command::new(&cc)
                 .args(target_flags())
-                .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-O0"])
+                // The signedness probe compares `(type)-1 < (type)0` on
+                // purpose, which GCC 12's -Wtype-limits flags for unsigned types.
+                .args(["-std=c11", "-Wall", "-Wextra", "-Werror", "-Wno-type-limits", "-O0"])
                 .arg(&source)
                 .arg("-o")
                 .arg(&partial)

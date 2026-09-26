@@ -17,8 +17,8 @@
  * birds: the suite's birds are the tests' own locals), a "settings" line, and
  * "end". The suite's own assertions still run; a failure aborts the program.
  */
-#include <stdio.h>
-
+/* No include may come before boids.c's own feature test macros, which the
+ * suite brings in first: glibc hides M_PI from a strict C99 build otherwise. */
 static void rbirds_enter(const char *name);
 
 #define RBIRDS_PICK(name, ...) RBIRDS_PICK_##__VA_ARGS__(name)

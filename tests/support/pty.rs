@@ -996,14 +996,28 @@ pub mod cases {
         for _ in 0..10 {
             spec = spec.step(Step::after_output(FRAME_BEGIN, Action::Mark("frame")));
         }
+        // Long enough for any PTY's buffer to fill at ~150 KB a second (a
+        // Darwin PTY holds a few KB, Linux's several tens), so the program
+        // is waiting on its output when the key arrives.
         let spec = spec
-            .step(Step::after(Duration::ZERO, Action::PauseReading(Duration::from_millis(1500))))
-            .step(Step::after(Duration::from_millis(500), Action::Input(b"q".to_vec())));
+            .step(Step::after(Duration::ZERO, Action::PauseReading(Duration::from_millis(4000))))
+            .step(Step::after(Duration::from_millis(2500), Action::Input(b"q".to_vec())));
         let outcome = run(&spec);
         assert_clean_exit(&outcome, false);
-        let quit = outcome.event("wrote q").expect("q was typed");
-        let after_quit = find_all(&outcome.transcript[quit.offset..], FRAME_BEGIN);
-        assert!(after_quit <= 1, "{after_quit} frames after a blocked q\n{}", outcome.describe());
+        // Frames written before the program blocked may still sit in the
+        // PTY and arrive after the pause, so frames are not counted from the
+        // q. What tells the paths apart is when it ends: the outro could only
+        // begin once a write completed, after reading resumed, and would fly
+        // for 40/60 s from there; the blocked quit ends as soon as its
+        // restore sequence drains.
+        outcome.event("wrote q").expect("q was typed");
+        let resumed = outcome.event("reading resumed").expect("reading resumed");
+        let lingered = outcome.run_time.saturating_sub(resumed.at);
+        assert!(
+            lingered < Duration::from_millis(400),
+            "ran {lingered:?} after reading resumed: an outro\n{}",
+            outcome.describe()
+        );
         outcome
     }
 
