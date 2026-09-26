@@ -286,6 +286,32 @@ fn hidden_console_child() {
                 }
                 let size = window_size(1).unwrap();
                 assert_eq!((size.col, size.row), (80, 24));
+                // Scrolled ten rows down its buffer, the window's top left is
+                // still cell 1;1 to the program: buffer row 14 is window row 5.
+                // SAFETY: console handle and a live SMALL_RECT inside the buffer.
+                unsafe {
+                    check(SetConsoleWindowInfo(
+                        output.as_raw_handle(),
+                        1,
+                        &Rect { left: 0, top: 10, right: 79, bottom: 33 },
+                    ))
+                    .unwrap();
+                }
+                inject(&[InputRecord {
+                    kind: 2,
+                    event: Event {
+                        mouse: MouseEvent {
+                            position: Coord { x: 3, y: 14 },
+                            buttons: 1,
+                            controls: 0,
+                            flags: 0,
+                        },
+                    },
+                }]);
+                let n = read(0, &mut bytes).unwrap();
+                assert_eq!(&bytes[..n], b"\x1b[<0;4;5M");
+                let size = window_size(1).unwrap();
+                assert_eq!((size.col, size.row), (80, 24));
                 panic!("controlled terminal panic");
             });
             let panic = result.expect_err("the controlled panic must unwind");
@@ -343,6 +369,12 @@ fn hidden_console_child() {
                 assert_eq!(graphics.len(), 0);
             } else {
                 assert!(!WRITER.get().unwrap().stop());
+                // The cancelled write and the stopped writer both fail the
+                // flush with EIO, rather than the EINTR it would retry forever.
+                assert_eq!(
+                    graphics.flush_nonblocking(),
+                    Err(crate::render::kitty::KittyError::Io(EIO))
+                );
                 drop(reader);
             }
             // SAFETY: output File still owns this original console handle.
