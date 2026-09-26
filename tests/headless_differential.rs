@@ -293,3 +293,37 @@ fn benchmarks_report_what_the_reference_reports() {
         assert_eq!(c.stderr, r.stderr, "{case:?}");
     }
 }
+
+/// Every rate --record-fps accepts, as a GIF and as a cast.
+#[test]
+fn every_recording_rate_matches_the_reference() {
+    for fps in 2..=120 {
+        let fps = fps.to_string();
+        let small = [
+            "--record-fps",
+            fps.as_str(),
+            "--record-seconds",
+            "1",
+            "-n",
+            "5",
+            "--record-size",
+            "40x14",
+        ];
+        gif(&format!("rate-{fps}"), &small);
+        cast(&format!("rate-{fps}"), &small);
+    }
+}
+
+/// Which mode wins, and which options a headless mode ignores.
+#[test]
+fn mode_precedence_is_the_references() {
+    gif(
+        "record-ignores-snapshot-and-frames",
+        &["--record-seconds", "1", "-n", "20", "--snapshot", "s.png", "--frames", "3"],
+    );
+    gif("record-with-panel", &["--record-seconds", "1", "-n", "20", "--panel"]);
+    cast(
+        "cast-ignores-render-and-panel",
+        &["--render", "sextants", "--panel", "--record-seconds", "1", "-n", "20"],
+    );
+}

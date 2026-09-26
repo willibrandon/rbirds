@@ -61,10 +61,7 @@ rust_case!(sigpipe_is_ignored, cases::sigpipe_ignored);
 rust_case!(broken_pipe_stdout_reports_epipe, cases::broken_pipe_stdout);
 rust_case!(kitty_uploads_and_frees_images, cases::kitty_run);
 rust_case!(stdin_dev_null_fails_raw_mode, |s| cases::stdin_not_a_terminal(s, pty::Stream::Null));
-rust_case!(stdin_pipe_fails_raw_mode, |s| cases::stdin_not_a_terminal(
-    s,
-    pty::Stream::ClosedPipe
-));
+rust_case!(stdin_pipe_fails_raw_mode, |s| cases::stdin_not_a_terminal(s, pty::Stream::ClosedPipe));
 rust_case!(tiny_window_and_resizes, cases::tiny_window_and_resizes);
 
 #[test]
@@ -100,4 +97,48 @@ fn a_vanished_terminal_ends_the_run_as_the_reference_does() {
     let r = cases::terminal_closed(&rbirds());
     assert_eq!(c.exit, r.exit, "C:\n{}\nRust:\n{}", c.describe(), r.describe());
     assert_eq!(c.timed_out, r.timed_out);
+}
+
+const PANIC_CHILD: &str = "RBIRDS_PANIC_CHILD";
+const PANIC_READY: &[u8] = b"panic child ready\n";
+
+/// Not a test of its own: the child for `a_panic_after_raw_mode_restores`.
+/// It takes the terminal through the application's own guard, as the live
+/// run does, and panics while holding it.
+#[test]
+fn panic_child() {
+    if std::env::var_os(PANIC_CHILD).is_none() {
+        return;
+    }
+    let mut terminal = rbirds::terminal::Terminal::enter().expect("raw mode");
+    terminal.enter_alt_screen();
+    platform::write_all_quietly(platform::STDOUT_FILENO, PANIC_READY);
+    panic!("a controlled panic with the terminal taken");
+}
+
+/// docs/DESIGN.md §6: panics unwind, and unwinding through the terminal
+/// guard restores the attributes and writes the restore sequence, after the
+/// panic message, before the process exits.
+#[test]
+fn a_panic_after_raw_mode_restores() {
+    use support::pty::{Action, Spec, Step};
+    let _serial = serial();
+    let subject = Subject {
+        exe: std::env::current_exe().expect("this test binary"),
+        name: "pty_rbirds".into(),
+    };
+    let spec = Spec::new(&subject, &["panic_child", "--exact", "--test-threads=1"])
+        .env(PANIC_CHILD, "1")
+        .step(Step::after_output(PANIC_READY, Action::SnapshotTermios));
+    let spec = Spec { initial_termios: Some(cases::cooked_with_everything), ..spec };
+    let outcome = pty::run(&spec);
+    eprintln!("{}", outcome.describe());
+    // libtest reports the failed child test with exit status 101.
+    assert_eq!(outcome.exit, Some(pty::Exit::Code(101)), "{}", outcome.describe());
+    outcome.assert_attributes_restored();
+    assert_eq!(outcome.termios_during, vec![outcome.termios_before.raw_mode()]);
+    let message = outcome.position(b"a controlled panic").expect("the panic message");
+    let restored = outcome.position(&cases::screen_restored(false)).expect("the restore sequence");
+    assert!(message < restored, "restored after the message\n{}", outcome.describe());
+    assert_eq!(outcome.count(platform::ALT_SCREEN_OFF), 1);
 }

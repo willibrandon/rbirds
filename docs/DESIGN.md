@@ -1,6 +1,6 @@
 # rbirds design
 
-Status: implementation contract; application code is not yet implemented.
+Status: implementation contract, implemented. The port and its evidence are described in [the evidence index](evidence/README.md); open gates are listed in [the port process](PORTING.md).
 
 ## 1. Objective and reference
 
@@ -37,15 +37,16 @@ Initial release targets match the reference's CI architecture coverage:
 
 Linux musl, Windows, BSD, and 32-bit targets are outside the initial support claim. Reject unsupported target combinations explicitly rather than using an unverified Unix ABI. Establish minimum OS/libc versions from the chosen release build environments and record them before release; a target triple alone does not define that minimum.
 
-## 3. Proposed organization
+## 3. Organization
 
-These are planned modules, not files that already exist. Keep modules small enough to test independently, without inventing a general framework.
+The modules as built. Keep modules small enough to test independently, without inventing a general framework.
 
 | Rust module | C reference | Responsibility |
 | --- | --- | --- |
-| `main.rs`, `app.rs` | `boids.c:main` and mode entry points | Parse, select mode, coordinate resources, return explicit exit codes. |
+| `main.rs`, `app.rs`, `live.rs` | `boids.c:main`, `read_options`, the live loop, `write_snapshot` | Parse, select mode, coordinate resources, return explicit exit codes; the live loop body takes time, keys and window size as arguments. |
 | `options.rs` | `options.c`, option table in `boids.c` | Table-driven options, validation, help, aliases, completions. |
-| `config.rs` | constants, presets, `apply_notches` | Defaults and derived settings; retain the reference's precedence rules. |
+| `config.rs`, `palette.rs` | constants, presets, `apply_notches`, palettes, theme learning, hawk colour | Defaults and derived settings; retain the reference's precedence rules. |
+| `fp.rs`, `cfmt.rs`, `stdio.rs` | the C build's arithmetic, `printf`, `stdio` | Contraction and fused trigonometry (§5), byte-exact number formatting, C stream buffering. |
 | `rng.rs` | `seed_random`, `next_random` | Exact 31-word generator and draw order. |
 | `simulation/` | flocking, hawks, formations, wings, depth | Owned simulation state, deterministic stepping, population changes. |
 | `spatial_grid.rs` | `spatial_grid.c` | Stable cell membership and neighbor traversal with reusable storage. |
@@ -56,7 +57,7 @@ These are planned modules, not files that already exist. Keep modules small enou
 | `render/compose.rs`, `panel.rs` | composition and legend in `boids.c` | Draw order, trails, panel geometry and formatting. |
 | `input.rs` | `handle_input`, mouse and Konami parsing | Persistent byte parser and ordered actions. |
 | `record.rs`, `bench.rs` | recording and benchmark entry points | GIF/cast clocks, snapshots, statistics and summaries. |
-| `terminal.rs`, `platform/` | termios, signals, polling, writes | Safe terminal interface over narrowly scoped OS bindings. |
+| `terminal.rs`, `platform/` | termios, signals, polling, writes, `sscanf`, `strtod`, `__sincos_stret` | Safe terminal interface over narrowly scoped, ABI-probed OS bindings; the only module with `unsafe`. |
 
 Expose a library for integration tests and a thin binary. Embed the verified sprite bytes with `include_bytes!`; match the compiled C asset, not merely an assumed equivalent PNG. Compare `matrix.png` with `sprite_png.h` before choosing the canonical asset. Preserve the embedded bitmap font exactly.
 
@@ -83,6 +84,11 @@ Use explicit wrapping operations only where the C code intentionally performs un
 Keep the RNG algorithm, warmup, seed-zero behavior, signed seed conversion, output range, and call sequence. Test internal seeds across all `u32` values represented by the C fixtures even though the public CLI permits only `0..=2147483647`.
 
 Retain the spatial grid's cell scan order and the order of birds within each cell. Preserve the existing trig lookup, motion limits, substep formula, palette quantization, and sprite sampling. Avoid introducing explicit fused multiply-add, approximate math, SIMD, or multithreading during parity work.
+
+Two properties of the canonical C build are part of the reference's arithmetic and are reproduced, not introduced:
+
+- **Contraction.** Apple clang defaults to `-ffp-contract=on`: at each `+`/`-` of one expression whose left, or failing that right, operand is an otherwise unused multiplication, it emits `llvm.fmuladd`, which is one `fmadd` on arm64 and a separate multiply and add on baseline x86-64. GCC in the makefile's ISO C mode never contracts. The 92 sites (84 in `boids.c`, 5 in `png.c`, 3 in `cells.c`) are generated from the reference's debug info by `tools/oracle/fma-sites.sh` into `docs/evidence/fma-sites.txt`. Each is a `fp::mul_add` call tagged `fma: FILE:LINE:COLUMN`, fused only where the target's canonical control fuses (`fp::CONTRACTS`), and `tests/fma_sites.rs` holds the tags to the list exactly.
+- **Fused sine and cosine.** At `-O3`, clang turns every `sin(x)`/`cos(x)` pair of one argument into a single `__sincos_stret(x)` on Darwin, and every trigonometric call in cbirds has such a partner (17 call sites, `docs/evidence/trig-sites.txt`, generated by `tools/oracle/trig-sites.sh`). On arm64 that routine differs from separate calls by one ulp for about 0.12% of arguments; on x86_64 Darwin and in glibc (whose `sincos` GCC uses the same way) the fused and separate results agree bit for bit over 2×10⁷ arguments. Every sine and cosine therefore goes through `fp::sin_cos` (`platform::sin_cos`, which calls `__sincos_stret` on Darwin), so debug and release builds and the C agree regardless of what LLVM would merge. `tests/fma_sites.rs` forbids plain `f64::sin`/`cos` in `src/`. The other libm calls (`atan2`, `pow`, `ldexp`) remain plain calls in the C build and in the port.
 
 Default to exact floating-point state comparisons against the canonical C build on the same target under injected identical inputs. If they differ, find the first divergent operation. If necessary, use narrowly wrapped system math calls to match the reference. Rust documents platform/toolchain variation in the precision of functions such as [`sin`](https://doc.rust-lang.org/std/primitive.f64.html#method.sin); matching the RNG does not establish cross-platform trajectory identity.
 

@@ -610,3 +610,70 @@ fn keys_presets_and_population_match_the_reference() {
     s.push_str("resize 160\ndigest\nresize 40\ndigest\ndump\n");
     compare("keys", &s);
 }
+
+/// Every notch of every slider, each flown for a few frames from one seeded
+/// flock: the derived values and the flight they give, bit for bit.
+#[test]
+fn every_notch_of_every_slider_matches_the_reference() {
+    let mut s = String::new();
+    s.push_str("set birds 120\nset flocks 2\nset hawks 1\nset size 30\nnotches\n");
+    let _ = writeln!(s, "seconds {}", bits(1.0 / 60.0));
+    s.push_str("screen 100 30 800 480\ngrid\nseed 9\nalloc 120\ninit\nhawks\ndigest\n");
+    for slider in ["boundary", "separation", "alignment", "vision", "pace", "turning", "avoid"] {
+        for notch in 0..=12 {
+            let _ = writeln!(s, "set {slider} {notch}\nnotches\ndigest");
+            for _ in 0..3 {
+                s.push_str("fly\ndigest\n");
+            }
+        }
+        let _ = writeln!(s, "defaults\ndigest");
+    }
+    for preset in 0..3 {
+        let _ = writeln!(s, "preset {preset}\ndigest\nfly\ndigest");
+    }
+    s.push_str("dump\n");
+    compare("notch-sweep", &s);
+}
+
+/// A live session across the intro's release (3 s) on a faster clock, then
+/// late frames, then long enough idle for the autopilot (60 s) to move the
+/// sliders twice, then the flight out.
+#[test]
+fn a_long_live_session_crosses_every_threshold_as_the_reference_does() {
+    let mut s = String::new();
+    s.push_str("set birds 60\nset hawks 1\nset palette 1\nset legend 1\nnotches\nset render 1\nset size 30\n");
+    s.push_str("seed 11\nscreen 100 30 800 480\ngrid\nsprites\nset truecolor 1\n");
+    let _ = writeln!(s, "seconds {}\nset hawk_sets 1", bits(1.0 / 60.0));
+    s.push_str("alloc 60\nscreen 100 30 800 480\ninit\nhawks\nintro\n");
+    let (mut sec, mut nsec) = (500_i64, 0_i64);
+    let _ = writeln!(s, "live_begin {sec} {nsec}");
+    let mut advance = |s: &mut String, step: i64, keys: &str, digest: bool| {
+        nsec += step;
+        sec += nsec / 1_000_000_000;
+        nsec %= 1_000_000_000;
+        let _ = writeln!(s, "live {keys} {sec} {nsec} 100 30 800 480");
+        if digest {
+            s.push_str("digest\n");
+        }
+    };
+    // 240 Hz through the intro's release at three seconds.
+    for _ in 0..800 {
+        advance(&mut s, 4_166_667, "-", true);
+    }
+    // Late frames, a zero-length one, and a key that resets the idle clock.
+    for step in [100_000_000, 0, 250_000_000, 33_333_333] {
+        advance(&mut s, step, "-", true);
+    }
+    advance(&mut s, 16_666_667, &hex(b"e"), true);
+    // Idle past a minute: the autopilot takes over and drifts every 4 s.
+    for frame in 0..3900 {
+        advance(&mut s, 16_666_667, "-", frame % 25 == 0);
+    }
+    s.push_str("digest\n");
+    advance(&mut s, 16_666_667, &hex(b"q"), true);
+    for _ in 0..50 {
+        advance(&mut s, 16_666_667, "-", true);
+    }
+    s.push_str("dump\n");
+    compare("live-long", &s);
+}
