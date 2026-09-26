@@ -1,5 +1,8 @@
 # Evidence
 
+The runs below were made before Windows and Sixel support was added.
+[Windows and Sixel results](windows-sixel.md) cover the current branch.
+
 What has been compared, where, and with what result. Each entry names the test that checks it, and `tools/verify.sh` reruns the local checks. The reference is cbirds 1.4.0 at commit `cc446fc3cb80733371c62676533adcac2fc10002`, checked file by file against [the manifest](../reference-manifest.json) by `tools/reference.sh`.
 
 ## Targets
@@ -105,4 +108,4 @@ Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.
 ## Not yet done
 
 - How the flock looks in real terminals: Kitty and Ghostty (sprites and the three text renderers), macOS Terminal and tmux, recorded with their versions and fonts (PORTING.md §6). The bytes both programs send under the scripted PTY are the same, which is necessary but not enough to show a terminal draws them the same.
-- Deviations D-001 to D-003 are waiting for the owner's decision ([DEVIATIONS.md](../DEVIATIONS.md)).
+- Deviations D-001 to D-003 remain proposed ([DEVIATIONS.md](../DEVIATIONS.md)).

@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Differential tests of `render::kitty` against the pinned C
 //! `kitty_graphics.c`.
 //!

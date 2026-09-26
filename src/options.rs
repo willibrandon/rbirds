@@ -14,9 +14,9 @@
 
 #![forbid(unsafe_code)]
 
+use crate::platform::OsStrExt;
 use std::ffi::{CString, OsStr, OsString};
 use std::io::{self, Write};
-use std::os::unix::ffi::OsStrExt;
 
 use crate::platform;
 
@@ -219,7 +219,7 @@ fn assign<T>(option: &OptionSpec<T>, settings: &mut T, text: &[u8]) -> Result<()
             return Ok(());
         }
         Kind::Str(target) => {
-            *target(settings) = Some(OsStr::from_bytes(text).to_os_string());
+            *target(settings) = Some(platform::os_string_from_bytes(text));
             return Ok(());
         }
         Kind::Enum { target, names } => {
@@ -283,6 +283,10 @@ pub fn parse<T, A: AsRef<OsStr>>(
         return Parsed { status: Status::Error, message: Vec::new() };
     }
     let found = |status| Parsed { status, message: Vec::new() };
+    #[cfg(windows)]
+    if argv.iter().any(|arg| arg.as_ref().to_str().is_none()) {
+        return refuse(b"arguments must be valid Unicode on Windows".to_vec(), error_size);
+    }
     let args: Vec<&[u8]> = argv.iter().map(|a| c_string(a.as_ref().as_bytes())).collect();
     let argc = args.len();
 

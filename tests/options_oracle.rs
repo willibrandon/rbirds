@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Differential tests: `src/options.rs` against the pinned cbirds `options.c`.
 //!
 //! `tools/oracle/options_oracle.c` runs the unmodified C parser, help printer

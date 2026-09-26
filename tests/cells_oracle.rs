@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Differential tests of `render::cells` against the pinned C `cells.c`.
 //!
 //! Each scenario is a script of calls (`tools/oracle/cells_oracle.c` documents

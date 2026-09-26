@@ -1,10 +1,9 @@
 # Deviations
 
-Status: all entries are proposed. None is accepted until the owner records the
-decision here. Until then the affected requirement stays incomplete
-(docs/COMPATIBILITY.md §6).
+D-001 through D-003 are proposed changes. D-004 and D-005 describe the accepted
+Sixel and Windows additions. Test results are in [the evidence index](evidence/README.md).
 
-Each entry covers C behavior that is undefined, and so can't be reproduced
+The first three entries cover C behavior that is undefined, and so can't be reproduced
 without reproducing memory corruption or an implementation-defined accident.
 Where the reference's behavior is well defined, rbirds reproduces it, quirks
 included (for example the benchmark's double hunt, the `c` byte that ends a
@@ -59,3 +58,39 @@ Reference for every entry: cbirds 1.4.0, commit
 - Regression test: `tests/options_oracle.rs` (a synthetic table; cases that
   don't overrun are compared exactly).
 - Claim affected: none for the cbirds option table.
+
+## D-004: explicit Sixel renderer
+
+- Reference: cbirds 1.4.0 at the pinned commit above; all supported targets.
+- Input: `--render sixel`, help, completions, or an invalid renderer choice.
+- Reference behavior: Sixel is not a choice and no Sixel output is emitted.
+- rbirds behavior / first divergence: the option parser accepts a fifth renderer;
+  known help/choice strings include it. Live startup negotiates Sixel capability
+  and cell dimensions; full frames use a fixed 256-color palette and repaint the
+  picture background. Existing renderer defaults remain intact.
+- Reason: provide pixel graphics in Windows Terminal and compatible emulators.
+- Affected requirements: C01, C08, C12 through C17.
+- Regression tests: `tests/sixel.rs`, `tests/pty_sixel.rs`,
+  `tests/portable_cli.rs`, and the narrowly extended CLI differential corpus.
+- Decision: accepted, including the help and completion changes.
+- Claim affected: new Sixel output has no C equivalent; intentional CLI strings
+  are normalized separately from unchanged Unix behavior.
+
+## D-005: native Windows console
+
+- Reference: cbirds 1.4.0 at the pinned commit above; Windows MSVC targets.
+- Input: native Windows build, live console interaction, Unicode file arguments.
+- Reference behavior: POSIX terminal/ABI dependencies prevent a native build.
+- rbirds behavior / first divergence: platform selection chooses Win32 console
+  records, window dimensions, a bounded writer and Ctrl-event handling. Normal
+  exit and unwinding restore saved modes/code pages; Ctrl+C/Break return 130.
+- Reason: run directly on Windows without WSL or application crate dependencies.
+- Affected requirements: C01, C13 through C18; Windows math/CRT results are not asserted
+  identical to a Unix C build. Invalid UTF-16 arguments are usage errors.
+- Regression tests: native hidden-console tests in `src/platform/windows_tests.rs`,
+  portable CLI/Unicode recording tests, and translated portable tests using the
+  recorded C input fixture where a POSIX suite cannot run.
+- Decision: accepted. Windows runs directly through the native console APIs.
+- Claim affected: Windows has its own tests. C comparisons, Unix ABI checks and
+  POSIX signal tests run on Unix. Windows ARM64 and appearance in real terminals
+  still need testing. Forced termination may prevent terminal cleanup.

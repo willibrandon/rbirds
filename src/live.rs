@@ -10,8 +10,8 @@
 
 #![forbid(unsafe_code)]
 
+use crate::platform::OsStrExt;
 use std::ffi::OsStr;
-use std::os::unix::ffi::OsStrExt;
 
 use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Program, frame_delay_after};
 use crate::config::*;
@@ -29,6 +29,9 @@ use crate::terminal::{self, Terminal};
 
 /// `handle_input`'s read: at most INPUT_BUFFER_SIZE bytes, whatever is there.
 pub fn read_keys(sim: &mut Sim, parser: &mut InputParser) -> bool {
+    if platform::exit_requested() {
+        return false;
+    }
     let mut input = [0_u8; INPUT_BUFFER_SIZE];
     match platform::read(STDIN_FILENO, &mut input) {
         Ok(length) => sim.handle_input(parser, Some(&input[..length])),
@@ -195,8 +198,9 @@ impl LiveLoop {
             renderer.queue_render_frame(graphics, sim, birds)
         };
         if let Err(error) = rendered {
+            let renderer = if sim.render_mode == RenderMode::Sixel { "Sixel" } else { "Kitty" };
             return Err(fail(
-                format!("Cannot render Kitty graphics: {}\n", kitty_status(error)).as_bytes(),
+                format!("Cannot render {renderer} graphics: {}\n", kitty_status(error)).as_bytes(),
             ));
         }
         Ok(Frame::Drawn)
@@ -292,6 +296,14 @@ fn run_live(
     if sim.palette_follows_the_theme() && !terminal::learn_the_theme(&mut sim.theme) {
         sim.config.palette = crate::palette::fallback_palette();
     }
+    let sixel_cell = if sim.render_mode == RenderMode::Sixel {
+        Some(
+            terminal::prepare_sixel()
+                .map_err(|error| fail(format!("Cannot enable Sixel: {error}\n").as_bytes()))?,
+        )
+    } else {
+        None
+    };
 
     let mut grid = SpatialGrid::new(SPATIAL_CELL_SIZE)
         .map_err(|error| grid_failure("Cannot initialize spatial grid", error))?;
@@ -302,7 +314,13 @@ fn run_live(
         platform::time_now() as u32
     };
     sim.rng.seed(seed);
-    terminal::update_screen_dimensions(sim);
+    terminal::apply_window_size(
+        sim,
+        terminal::graphics_window(
+            platform::window_size_or_zero(platform::STDOUT_FILENO),
+            sixel_cell,
+        ),
+    );
     grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds)
         .map_err(|error| grid_failure("Cannot prepare spatial grid", error))?;
     // The sprites, once, as pixels.
@@ -335,7 +353,13 @@ fn run_live(
 
     terminal.enter_alt_screen();
     terminal::write_all(b"\x1b[J");
-    terminal::update_screen_dimensions(sim);
+    terminal::apply_window_size(
+        sim,
+        terminal::graphics_window(
+            platform::window_size_or_zero(platform::STDOUT_FILENO),
+            sixel_cell,
+        ),
+    );
     sim.initialize_birds(&mut birds);
     sim.place_hawks();
     sim.begin_the_intro();
@@ -353,9 +377,15 @@ fn run_live(
     let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
     let mut input = [0_u8; INPUT_BUFFER_SIZE];
     loop {
+        if platform::exit_requested() {
+            return Ok(130);
+        }
         let keys = platform::read(STDIN_FILENO, &mut input).ok();
         let frame_start = platform::monotonic_now();
-        let window = platform::window_size_or_zero(platform::STDOUT_FILENO);
+        let window = terminal::graphics_window(
+            platform::window_size_or_zero(platform::STDOUT_FILENO),
+            sixel_cell,
+        );
         let keys = keys.map(|length| &input[..length]);
         // The clock is read after the keys, as the C reads it; the window a
         // moment later, which no step in between depends on.
@@ -395,6 +425,11 @@ fn run_live(
                 tv_nsec: (remaining % 1_000_000) * 1000,
             });
         }
+    }
+    // A Ctrl event may also interrupt a blocked frame flush, which exits the
+    // loop before its next iteration can observe the cancellation flag.
+    if platform::exit_requested() {
+        return Ok(130);
     }
     // A snapshot asked for and not written is a failed run.
     let mut outcome = EXIT_SUCCESS;

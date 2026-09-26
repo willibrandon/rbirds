@@ -8,8 +8,8 @@
 
 #![forbid(unsafe_code)]
 
+use crate::platform::OsStrExt;
 use std::ffi::OsString;
-use std::os::unix::ffi::OsStrExt;
 
 use crate::config::*;
 use crate::image::png_status_string;
@@ -337,7 +337,7 @@ pub static OPTIONS: [OptionSpec<Program>; 29] = [
         None,
         Kind::Enum { target: |p| &mut p.settings.render_request, names: &RENDER_NAMES },
         Some("HOW"),
-        "braille by default; sextants, blocks, or kitty in Kitty and Ghostty",
+        "braille (default), sextants, blocks, kitty, sixel",
         LOOK,
         true,
     ),
@@ -443,7 +443,7 @@ pub const KEYS_HELP: &str = concat!(
 
 pub const TAGLINE: &str = "rbirds \u{2014} a flock of birds in your terminal.";
 
-pub const EXAMPLES: [Example; 7] = [
+pub const EXAMPLES: [Example; 8] = [
     Example { command: "rbirds", what: "a flock in braille, and nothing to read" },
     Example { command: "rbirds --preset murmuration", what: "the starling look" },
     Example { command: "rbirds --hawks 2 --color ice", what: "something to watch" },
@@ -453,6 +453,7 @@ pub const EXAMPLES: [Example; 7] = [
     },
     Example { command: "rbirds --depth --trails", what: "a second sky behind the first" },
     Example { command: "rbirds --render kitty", what: "sprites, in Kitty or Ghostty" },
+    Example { command: "rbirds --render sixel", what: "pixels, in Windows Terminal 1.22+" },
     Example { command: "rbirds --record flock.gif", what: "a GIF, with no terminal in the way" },
 ];
 

@@ -19,6 +19,7 @@ pub mod input;
 pub mod live;
 pub mod options;
 pub mod palette;
+#[cfg_attr(windows, path = "platform/windows.rs")]
 pub mod platform;
 pub mod record;
 pub mod render;

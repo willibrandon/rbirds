@@ -4,17 +4,28 @@
 //! where the C one did, including random state, panel switch and hawks.
 
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::process::{Command, Stdio};
 use std::sync::OnceLock;
 
+#[cfg(unix)]
 use super::oracle;
 use super::sim::World;
 
+#[cfg(unix)]
 const SOURCES: &[&str] =
     &["cells.c", "font.c", "gif.c", "kitty_graphics.c", "options.c", "png.c", "spatial_grid.c"];
 
 static ENTRIES: OnceLock<Option<HashMap<String, String>>> = OnceLock::new();
 
+#[cfg(windows)]
+fn capture() -> Option<HashMap<String, String>> {
+    // The C suite is POSIX-only. These are its recorded INPUT states, not
+    // expected Windows results; the translated assertions still execute.
+    Some(parse_entries(include_str!("../fixtures/boids-suite-linux-x64.txt")))
+}
+
+#[cfg(unix)]
 fn capture() -> Option<HashMap<String, String>> {
     let exe = oracle::build("boids_suite", "boids_suite.c", SOURCES)?;
     let scratch = oracle::repository().join("target/scratch/boids-suite");
@@ -33,6 +44,17 @@ fn capture() -> Option<HashMap<String, String>> {
         output.status
     );
     let text = String::from_utf8(output.stderr).expect("dumps are ASCII");
+    let entries = parse_entries(&text);
+    #[cfg(all(target_os = "linux", target_arch = "x86_64"))]
+    assert_eq!(
+        entries,
+        parse_entries(include_str!("../fixtures/boids-suite-linux-x64.txt")),
+        "the recorded Windows input fixtures must match the pinned C suite"
+    );
+    Some(entries)
+}
+
+fn parse_entries(text: &str) -> HashMap<String, String> {
     let mut entries = HashMap::new();
     let mut name = None;
     let mut body = String::new();
@@ -48,7 +70,7 @@ fn capture() -> Option<HashMap<String, String>> {
         }
     }
     assert_eq!(entries.len(), 64, "the suite enters 64 tests");
-    Some(entries)
+    entries
 }
 
 /// The dump of the state `test` was entered with, or `None` where oracle

@@ -9,9 +9,9 @@
 
 #![forbid(unsafe_code)]
 
+use crate::platform::RawFd;
 use std::fmt;
 use std::io;
-use std::os::fd::RawFd;
 
 use crate::platform;
 
@@ -433,7 +433,15 @@ impl KittyGraphics {
 
         let mut written = 0;
         while written < self.buffer.len() {
-            match platform::write(self.output_fd, &self.buffer[written..]) {
+            #[cfg(not(windows))]
+            let result = platform::write(self.output_fd, &self.buffer[written..]);
+            #[cfg(windows)]
+            let result = if nonblocking {
+                platform::write_nonblocking(self.output_fd, &self.buffer[written..])
+            } else {
+                platform::write(self.output_fd, &self.buffer[written..])
+            };
+            match result {
                 Err(error) => {
                     let code = os_errno(&error);
                     if code == platform::EINTR {
@@ -474,21 +482,27 @@ impl KittyGraphics {
             return Err(KittyError::Argument);
         }
 
-        let flags = platform::status_flags(self.output_fd)
-            .map_err(|error| KittyError::Io(os_errno(&error)))?;
-        let changed_flags = flags & platform::O_NONBLOCK == 0;
-        if changed_flags {
-            platform::set_status_flags(self.output_fd, flags | platform::O_NONBLOCK)
-                .map_err(|error| KittyError::Io(os_errno(&error)))?;
-        }
+        #[cfg(windows)]
+        return self.flush_buffer(true);
 
-        let status = self.flush_buffer(true);
-        let write_errno = platform::errno();
-        if changed_flags {
-            platform::set_status_flags(self.output_fd, flags)
+        #[cfg(not(windows))]
+        {
+            let flags = platform::status_flags(self.output_fd)
                 .map_err(|error| KittyError::Io(os_errno(&error)))?;
+            let changed_flags = flags & platform::O_NONBLOCK == 0;
+            if changed_flags {
+                platform::set_status_flags(self.output_fd, flags | platform::O_NONBLOCK)
+                    .map_err(|error| KittyError::Io(os_errno(&error)))?;
+            }
+
+            let status = self.flush_buffer(true);
+            let write_errno = platform::errno();
+            if changed_flags {
+                platform::set_status_flags(self.output_fd, flags)
+                    .map_err(|error| KittyError::Io(os_errno(&error)))?;
+            }
+            platform::set_errno(write_errno);
+            status
         }
-        platform::set_errno(write_errno);
-        status
     }
 }

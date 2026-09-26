@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Controlled numerical comparison of the simulation against the pinned C
 //! reference (docs/PORTING.md §4.B, docs/COMPATIBILITY.md C02–C08, C11, C12,
 //! C14).

@@ -3,7 +3,9 @@
 //! bounds. The C's pipes are `std::io::pipe()`; its `fcntl` calls go through
 //! `rbirds::platform`.
 
+#[cfg(unix)]
 use std::io::Read;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 
 use rbirds::platform;
@@ -95,6 +97,7 @@ fn test_write_text() {
     assert_eq!(graphics.buffer(), expected);
 }
 
+#[cfg(unix)]
 #[test]
 fn test_flush() {
     let png = [0u8];
@@ -111,6 +114,7 @@ fn test_flush() {
     drop(writer);
 }
 
+#[cfg(unix)]
 #[test]
 fn test_nonblocking_flush_backpressure() {
     let fill = [0u8; 4096];

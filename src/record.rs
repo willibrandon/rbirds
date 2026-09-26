@@ -6,10 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+use crate::platform::OsStrExt;
 use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{BufWriter, Write};
-use std::os::unix::ffi::OsStrExt;
 
 use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Settings};
 use crate::cfmt;

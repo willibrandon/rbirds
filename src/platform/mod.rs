@@ -22,7 +22,16 @@
 
 use std::ffi::{CStr, c_char, c_int, c_void};
 use std::io;
-use std::os::fd::RawFd;
+pub use std::os::fd::RawFd;
+pub use std::os::unix::ffi::OsStrExt;
+
+pub fn os_string_from_bytes(bytes: &[u8]) -> std::ffi::OsString {
+    std::ffi::OsStr::from_bytes(bytes).to_os_string()
+}
+
+pub fn exit_requested() -> bool {
+    false
+}
 
 #[cfg(not(any(
     all(target_os = "macos", any(target_arch = "aarch64", target_arch = "x86_64")),
@@ -77,8 +86,8 @@ pub use os::{
 pub use poll::{PollFd, poll};
 pub use restore::{
     ALT_SCREEN_OFF, ALT_SCREEN_ON, CURSOR_HIDE, CURSOR_SHOW, KITTY_FREE_IMAGES, MOUSE_REPORT_OFF,
-    MOUSE_REPORT_ON, SYNC_UPDATE_END, alt_screen_is_on, enter_alt_screen, enter_terminal,
-    is_restored, mark_alt_screen_on, mark_raw_acquired, mark_sprites_uploaded,
+    MOUSE_REPORT_ON, SYNC_UPDATE_END, alt_screen_is_on, enable_sixel_mode, enter_alt_screen,
+    enter_terminal, is_restored, mark_alt_screen_on, mark_raw_acquired, mark_sprites_uploaded,
     reset_terminal_state_for_tests, restore_terminal, sprites_uploaded, terminal_is_raw,
     write_all_quietly,
 };

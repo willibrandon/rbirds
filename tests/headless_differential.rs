@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Headless modes end to end against the canonical C build
 //! (docs/COMPATIBILITY.md C08–C11, C16, C17). GIF recordings must match
 //! exactly, asciinema casts exactly apart from the header's wall-clock
