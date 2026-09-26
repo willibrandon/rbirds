@@ -88,6 +88,18 @@ linkage() {
     esac
 }
 
+inventory_executed() {
+    # Every Rust test the inventory maps a C test to is one libtest will run
+    # (not merely one that exists): listed by its own test binary, unignored.
+    cargo test --release --locked --offline -- --list --format terse 2>&1 |
+        awk '/Running tests\// {sub(/.*Running /, ""); sub(/ .*/, ""); file = $0; next}
+             /: test$/ {sub(/: test$/, ""); print file "::" $0}' | sort -u > target/listed-tests.txt
+    missing=$(tail -n +2 docs/c-test-inventory.csv | cut -d, -f5 | tr ';' '\n' | grep . | sort -u |
+        comm -23 - target/listed-tests.txt)
+    [ -z "$missing" ] || { echo "mapped but not run: $missing"; return 1; }
+    echo "$(tail -n +2 docs/c-test-inventory.csv | wc -l | tr -d ' ') C tests, every mapping run"
+}
+
 install_smoke() {
     prefix=$(mktemp -d "${TMPDIR:-/tmp}/rbirds-install.XXXXXX")
     cargo install --path . --locked --offline --root "$prefix" --quiet || return 1
@@ -105,6 +117,7 @@ gate "clippy" cargo clippy --all-targets --all-features --locked --offline -- -D
 gate "tests (debug)" cargo test --all-targets --all-features --locked --offline
 gate "tests (release)" cargo test --release --all-targets --all-features --locked --offline
 gate "release build" cargo build --release --locked --offline
+gate "C test mappings executed" inventory_executed
 gate "dependency graph" dependency_graph
 gate "unsafe confined to src/platform" unsafe_confined
 gate "native linkage" linkage

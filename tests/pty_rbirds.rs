@@ -127,7 +127,9 @@ fn a_panic_after_raw_mode_restores() {
         exe: std::env::current_exe().expect("this test binary"),
         name: "pty_rbirds".into(),
     };
-    let spec = Spec::new(&subject, &["panic_child", "--exact", "--test-threads=1"])
+    // --nocapture: the panic hook writes to the terminal at once, as in the
+    // real program, instead of into libtest's capture.
+    let spec = Spec::new(&subject, &["panic_child", "--exact", "--test-threads=1", "--nocapture"])
         .env(PANIC_CHILD, "1")
         .step(Step::after_output(PANIC_READY, Action::SnapshotTermios));
     let spec = Spec { initial_termios: Some(cases::cooked_with_everything), ..spec };
