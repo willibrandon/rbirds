@@ -116,6 +116,11 @@ fn panic_child() {
     let mut terminal = rbirds::terminal::Terminal::enter().expect("raw mode");
     terminal.enter_alt_screen();
     platform::write_all_quietly(platform::STDOUT_FILENO, PANIC_READY);
+    // Hold raw mode until the harness has read the attributes and types a
+    // key. Raw mode reads return at once, so wait for input first.
+    let mut fds = [platform::PollFd::new(platform::STDIN_FILENO, platform::POLLIN)];
+    platform::poll(&mut fds, -1).expect("wait for the key");
+    platform::read(platform::STDIN_FILENO, &mut [0u8; 1]).expect("read the key");
     panic!("a controlled panic with the terminal taken");
 }
 
@@ -134,7 +139,8 @@ fn a_panic_after_raw_mode_restores() {
     // real program, instead of into libtest's capture.
     let spec = Spec::new(&subject, &["panic_child", "--exact", "--test-threads=1", "--nocapture"])
         .env(PANIC_CHILD, "1")
-        .step(Step::after_output(PANIC_READY, Action::SnapshotTermios));
+        .step(Step::after_output(PANIC_READY, Action::SnapshotTermios))
+        .step(Step::after_bytes(0, Action::Input(b"x".to_vec())));
     let spec = Spec { initial_termios: Some(cases::cooked_with_everything), ..spec };
     let outcome = pty::run(&spec);
     eprintln!("{}", outcome.describe());
