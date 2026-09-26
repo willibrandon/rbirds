@@ -46,8 +46,8 @@ A completed row links to automated test cases and their evidence through [the ev
 | C14 | Keys, fragmented escape sequences, mouse reports, malformed input, hidden sequence | Parser oracle + PTY input scripts; `tests/sim_oracle.rs` (keys, split sequences, mouse, Konami), input tests in `tests/c_boids.rs` | passing |
 | C15 | Terminal setup/cleanup, partial setup, signals, panic/error paths, blocked/closed output | ABI probes + failure injection + subprocess/PTY checks; `tests/abi.rs`, `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs` | passing (see D-001) |
 | C16 | GIF/cast recording, snapshots, headless defaults, mode selection and diagnostics | End-to-end files and decoded frames; `tests/headless_differential.rs`, recording tests in `tests/c_boids.rs`, PTY snapshot cases | passing |
-| C17 | Bench output, configuration, byte counts, release performance and allocation behavior | Same-host C/Rust measurements; `tests/headless_differential.rs` (bench output, byte counts) | passing; performance budgets: see evidence |
-| C18 | Offline/no-dependency build, supported targets, clean install/uninstall and provenance | Dependency audit, native CI and packaging smoke checks; `tools/verify.sh` (dependency graph, linkage, install), Rosetta and Docker runs | passing locally; native x86_64 CI pending |
+| C17 | Bench output, configuration, byte counts, release performance and allocation behavior | Same-host C/Rust measurements; `tests/headless_differential.rs` (bench output, byte counts) | passing; budgets met on macOS arm64 |
+| C18 | Offline/no-dependency build, supported targets, clean install/uninstall and provenance | Dependency audit, native CI and packaging smoke checks; `tools/verify.sh` (dependency graph, linkage, install), Rosetta and Docker runs | passing, natively in CI on all four targets |
 
 ## 3. CLI surface
 

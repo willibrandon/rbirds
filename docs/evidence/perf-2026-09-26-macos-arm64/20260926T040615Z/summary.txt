@@ -1,0 +1,2 @@
+braille-4096     C   11.338 ms  Rust   11.313 ms  x0.998 PASS | peak C  18824 KiB Rust  19216 KiB PASS | bytes/frame 29771 PASS | spread C 6.1% Rust 11.3%, IQR C 2.4% Rust 3.0% (spread over 5%: repeat on a quieter host)
+binary size: C 183272 bytes, Rust 773136 bytes

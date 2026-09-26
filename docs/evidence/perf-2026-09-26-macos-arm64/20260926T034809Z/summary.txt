@@ -1,0 +1,11 @@
+kitty-800        C    0.485 ms  Rust    0.373 ms  x0.768 PASS | peak C   1984 KiB Rust   2304 KiB PASS | bytes/frame 30892 PASS | spread C 2.3% Rust 1.1%, IQR C 0.6% Rust 0.3%
+kitty-4096       C    3.502 ms  Rust    3.004 ms  x0.858 PASS | peak C   2928 KiB Rust   3248 KiB PASS | bytes/frame 157840 PASS | spread C 1.0% Rust 1.2%, IQR C 0.9% Rust 0.3%
+braille-800      C    3.441 ms  Rust    3.432 ms  x0.998 PASS | peak C  19728 KiB Rust  20016 KiB PASS | bytes/frame 12985 PASS | spread C 66.6% Rust 95.1%, IQR C 4.8% Rust 19.8% (spread over 5%: repeat on a quieter host)
+braille-4096     C   11.610 ms  Rust   11.686 ms  x1.007 PASS | peak C  19584 KiB Rust  19992 KiB PASS | bytes/frame 29771 PASS | spread C 9.3% Rust 22.7%, IQR C 4.1% Rust 7.8% (spread over 5%: repeat on a quieter host)
+sextants-800     C    3.238 ms  Rust    3.155 ms  x0.974 PASS | peak C  18296 KiB Rust  18864 KiB PASS | bytes/frame 14055 PASS | spread C 1.7% Rust 3.8%, IQR C 0.7% Rust 1.7%
+blocks-800       C    2.591 ms  Rust    2.398 ms  x0.925 PASS | peak C  18200 KiB Rust  19104 KiB PASS | bytes/frame 21374 PASS | spread C 2.0% Rust 3.6%, IQR C 0.3% Rust 0.6%
+busy-800         C    1.232 ms  Rust    1.128 ms  x0.916 PASS | peak C   2032 KiB Rust   2352 KiB PASS | bytes/frame 47890 PASS | spread C 4.1% Rust 1.5%, IQR C 0.9% Rust 0.4%
+busy-4096        C   11.030 ms  Rust   10.822 ms  x0.981 PASS | peak C   3024 KiB Rust   3344 KiB PASS | bytes/frame 246399 PASS | spread C 1.6% Rust 2.2%, IQR C 1.1% Rust 0.5%
+busy-braille     C    4.498 ms  Rust    4.540 ms  x1.009 PASS | peak C  18928 KiB Rust  18704 KiB PASS | bytes/frame 18450 PASS | spread C 2.9% Rust 3.6%, IQR C 1.1% Rust 1.5%
+startup          C   0.2067 s   Rust   0.2284 s   x1.105 PASS | spread C 4.2% Rust 3.8%, IQR C 0.6% Rust 1.9%
+binary size: C 183272 bytes, Rust 773136 bytes

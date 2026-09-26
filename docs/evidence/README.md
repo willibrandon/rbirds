@@ -11,7 +11,18 @@ What has been compared, where, and with what result. Each entry names the test t
 | aarch64-unknown-linux-gnu | Docker `rust:1.96-bookworm` on the Mac's arm64 VM | GCC 12.2.0, glibc 2.36, same flags | release | all pass |
 | x86_64-unknown-linux-gnu | Docker `rust:1.96-bookworm`, amd64 emulated | GCC 12.2.0, glibc 2.36, same flags | release | all pass except one case that fails the same way for the C under emulation (see [Linux](#linux)) |
 
-The x86_64 rows above run under translation or emulation. CI runs the same checks natively on GitHub's Linux and macOS runners for both architectures (`.github/workflows/ci.yml`).
+The x86_64 rows above run under translation or emulation. [CI](../../.github/workflows/ci.yml) runs `tools/verify.sh` natively on GitHub's runners:
+
+| Runner | C control | Result |
+| --- | --- | --- |
+| ubuntu-24.04 (x86_64) | GCC 13.3.0, Ubuntu 24.04 | every check passes |
+| ubuntu-24.04-arm (aarch64) | GCC 13.3.0, Ubuntu 24.04 | every check passes |
+| macos-15 (arm64) | Apple clang 17.0.0 (clang-1700.0.13.5) | every check passes after the quit case fix below |
+| macos-15-intel (x86_64) | Apple clang 17.0.0 (clang-1700.0.13.5) | every check passes |
+
+The reference's own suites also pass there under Clang and under ASan and UBSan (the `c-controls` job).
+
+The first macos-15 run failed one debug-build case, `quit_key_flies_out_or_leaves_at_once`. The test expected at least 10 frames in the flight out after `q`. The flight lasts 40/60 s of measured frame time, and the debug build on that runner drew about 11 frames a second, so it drew 9. The case now checks the flight's length instead of assuming 60 Hz.
 
 ## Reference baselines
 
@@ -45,7 +56,7 @@ Both are properties of the canonical C build, and the port reproduces them on pu
 
 - Dependencies: `cargo tree --edges all --target all --all-features` and `cargo metadata` show one package, `rbirds`, with no dependencies, and the manifest has no dependency tables.
 - Linkage: the macOS release binary links only `/usr/lib/libSystem.B.dylib`. The Linux one links only `libc.so.6`, `libm.so.6`, `libgcc_s.so.1` (Rust's unwinder) and the dynamic loader.
-- `tools/verify.sh` passes on macOS arm64 and, in the container, on Linux arm64.
+- `tools/verify.sh` passes on macOS arm64, in the container on Linux arm64, and natively in CI on all four targets.
 - `unsafe` appears only under `src/platform/`, and each block states why it is sound.
 - `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` are clean.
 - `tests/inventory.rs` finds the 112 C test calls again and checks every mapping, and `tools/verify.sh` checks that each mapped test runs.
@@ -56,20 +67,20 @@ Both Linux targets run the whole suite in `tools/linux.sh`. The port is built in
 
 Three test harness problems showed up only on Linux and were fixed in the tests, not the port. An include ahead of `boids.c`'s feature-test macros hid `M_PI` from glibc in the suite observer. GCC 12 warns about the ABI probe's deliberate signedness comparison. And a Linux PTY buffers tens of kilobytes, so the blocked-quit case tells the reference's two quit paths apart by timing instead of by counting frames.
 
-Under x86_64 emulation, one lifecycle case (SIGTERM while output is blocked) ends with the process killed by the signal instead of exiting with 143 through the handler. This happens the same way for the C reference and the port. Natively (arm64 Linux and both macOS targets) both exit with 143 and restore the terminal, so it comes from the emulator's signal delivery during a blocking write.
+Under x86_64 emulation, one lifecycle case (SIGTERM while output is blocked) ends with the process killed by the signal instead of exiting with 143 through the handler. This happens the same way for the C reference and the port. On native x86_64 Linux in CI, and natively everywhere else, both exit with 143 and restore the terminal, so it comes from the emulator's signal delivery during a blocking write.
 
 ## Performance
 
-See [`perf-2026-09-26-macos-arm64.txt`](perf-2026-09-26-macos-arm64.txt). These are results from `tools/perf.sh` on the M4 Pro: ten interleaved C and Rust samples per workload after two warmups, with the C built with its canonical flags and Rust with `--release`.
+See [`perf-2026-09-26-macos-arm64.txt`](perf-2026-09-26-macos-arm64.txt), which lists every run with its raw samples. These are results from `tools/perf.sh` on the M4 Pro: ten interleaved C and Rust samples per workload after two warmups, each sample about 1.5 s of frames, with the C built with its canonical flags and Rust with `--release`.
 
 | Workload | Rust / C median frame time | Peak memory (C, Rust) |
 | --- | --- | --- |
 | kitty, 800 / 4096 birds | 0.77× / 0.86× | 1.9 / 2.9 MiB, 2.3 / 3.2 MiB |
-| braille 800 / 4096, sextants, blocks | 0.98× / 0.99×, 0.97×, 0.93× | about 19.5 MiB each, within 0.9 MiB |
-| busy (speed 12, 4 hawks, 3 flocks, depth, trails): 800 / 4096 / braille | 0.91× / 0.98× / 1.01× | within 0.5 MiB |
-| startup (`--bench 1 --render braille`, sprites included) | 1.11× | |
+| braille 800 / 4096, sextants, blocks | 0.98× / 0.99×, 0.97×, 0.93× | 17.8 to 18.5 MiB, within 0.9 MiB of each other |
+| busy (speed 12, 4 hawks, 3 flocks, depth, trails): 800 / 4096 / braille | 0.92× / 0.98× / 1.01× | within 0.4 MiB |
+| startup (`--bench 1 --render braille`, sprites included) | 1.10× | |
 
-Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.25×C, C+8 MiB)`), and the bytes per frame are the same for C and Rust in every workload. A steady-state live frame allocates nothing (`tests/steady_state_allocation.rs`). The release binary is 773 KB, against 183 KB for the C.
+Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.25×C, C+8 MiB)`), and the bytes per frame are the same for C and Rust in every workload. The host was running other work, so some runs had samples slowed by contention (both programs alike, with tight quartiles). Each workload was repeated until a run had a spread within 5% on both sides, and the table uses those runs. A steady-state live frame allocates nothing (`tests/steady_state_allocation.rs`). The release binary is 773 KB, against 183 KB for the C.
 
 ## Not yet done
 
