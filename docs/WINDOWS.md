@@ -90,15 +90,16 @@ composition; `.cast` always uses braille, as in the original application.
 
 The Windows module uses Win32 console APIs and the Microsoft C runtime, with no
 new crates. Input records become the bytes used by the shared key parser; resize
-uses the visible console window, not the scrollback buffer. Input/output modes
+and mouse positions use the visible console window, not the scrollback buffer. Input/output modes
 and code pages are saved and restored. These choices follow Microsoft's
 [SetConsoleMode documentation](https://learn.microsoft.com/en-us/windows/console/setconsolemode)
 and [VT sequence documentation](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences).
 
 A single writer thread holds at most one 64 KiB chunk so keys remain serviceable
 while output is blocked. Shutdown allows a short drain, then cancels a blocked
-write. If output cannot drain, it cannot carry screen-cleanup sequences; native
-console modes/code pages are still restored. Normal exit, handled Ctrl events,
+write, and gives up on a write that can't be cancelled after a second. If output
+cannot drain, it cannot carry screen-cleanup sequences; native console
+modes/code pages are still restored. Normal exit, handled Ctrl events,
 and Rust unwinding restore the terminal. Forced termination and closing the
 console are not restoration guarantees. Windows uses native math/CRT behavior;
 the Unix C differential guarantees are not extended across operating systems.

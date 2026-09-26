@@ -107,6 +107,27 @@ struct InputRecord {
     event: Event,
 }
 
+// The Win32 layouts these mirror (CONSOLE_SCREEN_BUFFER_INFO, KEY_EVENT_RECORD,
+// MOUSE_EVENT_RECORD and INPUT_RECORD in wincontypes.h), checked when compiling.
+const _: () = {
+    use std::mem::{align_of, offset_of, size_of};
+    assert!(size_of::<Coord>() == 4 && align_of::<Coord>() == 2);
+    assert!(size_of::<Rect>() == 8 && align_of::<Rect>() == 2);
+    assert!(size_of::<ScreenInfo>() == 22 && align_of::<ScreenInfo>() == 2);
+    assert!(offset_of!(ScreenInfo, cursor) == 4 && offset_of!(ScreenInfo, attributes) == 8);
+    assert!(offset_of!(ScreenInfo, window) == 10 && offset_of!(ScreenInfo, maximum) == 18);
+    assert!(size_of::<KeyEvent>() == 16 && align_of::<KeyEvent>() == 4);
+    assert!(offset_of!(KeyEvent, repeat) == 4 && offset_of!(KeyEvent, key) == 6);
+    assert!(offset_of!(KeyEvent, scan) == 8 && offset_of!(KeyEvent, character) == 10);
+    assert!(offset_of!(KeyEvent, controls) == 12);
+    assert!(size_of::<MouseEvent>() == 16 && align_of::<MouseEvent>() == 4);
+    assert!(offset_of!(MouseEvent, buttons) == 4 && offset_of!(MouseEvent, controls) == 8);
+    assert!(offset_of!(MouseEvent, flags) == 12);
+    assert!(size_of::<Event>() == 16 && align_of::<Event>() == 4);
+    assert!(size_of::<InputRecord>() == 20 && align_of::<InputRecord>() == 4);
+    assert!(offset_of!(InputRecord, event) == 4);
+};
+
 #[link(name = "kernel32")]
 unsafe extern "system" {
     fn GetStdHandle(which: u32) -> Handle;
@@ -246,6 +267,18 @@ pub fn window_size(fd: RawFd) -> io::Result<WinSize> {
         ..WinSize::default()
     })
 }
+/// The buffer cell at the visible window's top left. Mouse records give
+/// buffer positions, and the classic console's window can be scrolled down its
+/// buffer; Windows Terminal's buffer is the window, so this is (0, 0) there.
+fn window_origin() -> Coord {
+    let mut info = ScreenInfo::default();
+    let Ok(output) = handle(STDOUT_FILENO) else { return Coord::default() };
+    // SAFETY: info matches CONSOLE_SCREEN_BUFFER_INFO and is writable.
+    if unsafe { GetConsoleScreenBufferInfo(output, &mut info) } == 0 {
+        return Coord::default();
+    }
+    Coord { x: info.window.left, y: info.window.top }
+}
 pub fn window_size_or_zero(fd: RawFd) -> WinSize {
     window_size(fd).unwrap_or_default()
 }
@@ -352,7 +385,7 @@ impl Input {
             }
         }
     }
-    fn mouse(&mut self, mouse: MouseEvent) {
+    fn mouse(&mut self, mouse: MouseEvent, origin: Coord) {
         let down = mouse.buttons & 0xffff;
         let released = down == 0 && self.buttons != 0 && mouse.flags & 4 == 0;
         let mut button = if mouse.flags & 4 != 0 {
@@ -381,8 +414,8 @@ impl Input {
         self.bytes.extend(
             format!(
                 "\x1b[<{button};{};{}{}",
-                i32::from(mouse.position.x) + 1,
-                i32::from(mouse.position.y) + 1,
+                (i32::from(mouse.position.x) - i32::from(origin.x) + 1).max(1),
+                (i32::from(mouse.position.y) - i32::from(origin.y) + 1).max(1),
                 if released { 'm' } else { 'M' }
             )
             .bytes(),
@@ -418,11 +451,17 @@ pub fn read(fd: RawFd, data: &mut [u8]) -> io::Result<usize> {
             check(unsafe {
                 ReadConsoleInputW(handle(fd)?, records.as_mut_ptr(), count, &mut got)
             })?;
-            for record in &records[..got as usize] {
+            let records = &records[..got as usize];
+            let origin = if records.iter().any(|record| record.kind == 2) {
+                window_origin()
+            } else {
+                Coord::default()
+            };
+            for record in records {
                 // SAFETY: the discriminator determines the initialized union member.
                 match record.kind {
                     1 => input.key(unsafe { record.event.key }),
-                    2 => input.mouse(unsafe { record.event.mouse }),
+                    2 => input.mouse(unsafe { record.event.mouse }, origin),
                     _ => {}
                 }
             }
@@ -530,25 +569,32 @@ impl Writer {
             std::thread::sleep(Duration::from_millis(1));
         }
         // Cancellation is retried until the worker exits, covering the race
-        // between taking a job and entering the synchronous OS write.
-        while !self.thread.is_finished() {
+        // between taking a job and entering the synchronous OS write. A write
+        // that can't be cancelled is left behind after a second, so teardown
+        // still restores the console modes; the cleanup sequences are skipped,
+        // since they would queue behind it.
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while !self.thread.is_finished() && Instant::now() < deadline {
             // SAFETY: JoinHandle owns a live thread handle throughout this call.
             unsafe {
                 CancelSynchronousIo(self.thread.as_raw_handle());
             }
             std::thread::sleep(Duration::from_millis(1));
         }
-        drained
+        drained && self.thread.is_finished()
     }
 }
 pub fn write_nonblocking(fd: RawFd, data: &[u8]) -> io::Result<usize> {
     let writer = WRITER.get_or_init(Writer::new);
     let mut state = writer.state.0.lock().unwrap_or_else(|e| e.into_inner());
+    // Stopped, the writer takes no more work, and a write it had in hand may
+    // have been cancelled with ERROR_OPERATION_ABORTED, which is the EINTR
+    // alias here. Callers retry EINTR, so both report EIO instead.
+    if state.stop {
+        return Err(io::Error::from_raw_os_error(EIO));
+    }
     if let Some(result) = state.result.take() {
         return result.map_err(io::Error::from_raw_os_error);
-    }
-    if state.stop {
-        return Err(io::Error::from_raw_os_error(EINTR));
     }
     if !state.busy {
         let count = data.len().min(64 * 1024);

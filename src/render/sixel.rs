@@ -9,7 +9,11 @@ use crate::sprites::PICTURE_GROUND;
 #[derive(Debug, Default)]
 pub struct Sixel {
     bytes: Vec<u8>,
+    /// One row of six-pixel columns per palette colour. Each band clears the
+    /// rows it used, so the planes are all zero between bands.
     planes: Vec<u8>,
+    /// Whether an encode stopped partway through a band, leaving bits set.
+    dirty: bool,
 }
 
 fn palette(index: usize) -> [u8; 3] {
@@ -43,41 +47,59 @@ fn colour(pixel: &[u8]) -> usize {
     [0, cube, grey].into_iter().min_by_key(|&i| distance(rgb, palette(i))).unwrap()
 }
 
-impl Sixel {
-    fn put(&mut self, bytes: &[u8]) -> Result<(), KittyError> {
-        self.bytes.try_reserve(bytes.len()).map_err(|_| KittyError::Memory)?;
-        self.bytes.extend_from_slice(bytes);
+fn put(out: &mut Vec<u8>, bytes: &[u8]) -> Result<(), KittyError> {
+    out.try_reserve(bytes.len()).map_err(|_| KittyError::Memory)?;
+    out.extend_from_slice(bytes);
+    Ok(())
+}
+fn number(out: &mut Vec<u8>, mut value: usize) -> Result<(), KittyError> {
+    let mut digits = [0; 20];
+    let mut at = digits.len();
+    loop {
+        at -= 1;
+        digits[at] = b'0' + (value % 10) as u8;
+        value /= 10;
+        if value == 0 {
+            break;
+        }
+    }
+    put(out, &digits[at..])
+}
+fn run(out: &mut Vec<u8>, value: u8, count: usize) -> Result<(), KittyError> {
+    if count >= 4 {
+        put(out, b"!")?;
+        number(out, count)?;
+        put(out, &[value])
+    } else {
+        for _ in 0..count {
+            put(out, &[value])?;
+        }
         Ok(())
     }
-    fn number(&mut self, mut value: usize) -> Result<(), KittyError> {
-        let mut digits = [0; 20];
-        let mut at = digits.len();
-        loop {
-            at -= 1;
-            digits[at] = b'0' + (value % 10) as u8;
-            value /= 10;
-            if value == 0 {
+}
+/// The length of the run of `row[0]` at the start of `row`. Birds are sparse,
+/// so most runs are empty columns; those are skipped eight at a time.
+fn run_length(row: &[u8]) -> usize {
+    let value = row[0];
+    let mut length = 1;
+    if value == 0 {
+        let words = row[1..].chunks_exact(8);
+        for word in words {
+            if u64::from_ne_bytes(word.try_into().unwrap()) != 0 {
                 break;
             }
-        }
-        self.put(&digits[at..])
-    }
-    fn run(&mut self, value: u8, count: usize) -> Result<(), KittyError> {
-        if count >= 4 {
-            self.put(b"!")?;
-            self.number(count)?;
-            self.put(&[value])
-        } else {
-            for _ in 0..count {
-                self.put(&[value])?;
-            }
-            Ok(())
+            length += 8;
         }
     }
+    length + row[length..].iter().position(|&b| b != value).unwrap_or(row.len() - length)
+}
+
+impl Sixel {
     /// Encodes an RGBA image, flattening alpha onto the picture background.
     /// Colour definitions are sent in each image so it is self-contained.
     pub fn encode(&mut self, image: &Image) -> Result<&[u8], KittyError> {
-        self.bytes.clear();
+        let Sixel { bytes: out, planes, dirty } = self;
+        out.clear();
         let width = usize::try_from(image.width).map_err(|_| KittyError::Argument)?;
         let height = usize::try_from(image.height).map_err(|_| KittyError::Argument)?;
         if width == 0
@@ -87,25 +109,29 @@ impl Sixel {
             return Err(KittyError::Argument);
         }
         let plane_size = width.checked_mul(256).ok_or(KittyError::Memory)?;
-        self.planes
-            .try_reserve(plane_size.saturating_sub(self.planes.len()))
+        planes
+            .try_reserve(plane_size.saturating_sub(planes.len()))
             .map_err(|_| KittyError::Memory)?;
-        self.planes.resize(plane_size, 0);
+        if *dirty {
+            planes.fill(0);
+            *dirty = false;
+        }
+        planes.resize(plane_size, 0);
         // P2=1 leaves pixels outside the raster alone. Inside the raster,
         // every pixel (including background) is explicitly painted.
-        self.put(b"\x1bP0;1q\"1;1;")?;
-        self.number(width)?;
-        self.put(b";")?;
-        self.number(height)?;
+        put(out, b"\x1bP0;1q\"1;1;")?;
+        number(out, width)?;
+        put(out, b";")?;
+        number(out, height)?;
         let mut defined = [false; 256];
         for y in (0..height).step_by(6) {
-            self.planes.fill(0);
             let mut ends = [0; 256];
+            *dirty = true;
             for dy in 0..6.min(height - y) {
                 for x in 0..width {
                     let pixel = ((y + dy) * width + x) * 4;
                     let c = colour(&image.pixels[pixel..pixel + 4]);
-                    self.planes[c * width + x] |= 1 << dy;
+                    planes[c * width + x] |= 1 << dy;
                     ends[c] = ends[c].max(x + 1);
                 }
             }
@@ -116,36 +142,41 @@ impl Sixel {
                     continue;
                 }
                 if !first {
-                    self.put(b"$")?;
+                    put(out, b"$")?;
                 }
                 first = false;
-                self.put(b"#")?;
-                self.number(c)?;
+                put(out, b"#")?;
+                number(out, c)?;
                 if !defined[c] {
-                    self.put(b";2")?;
+                    put(out, b";2")?;
                     for component in palette(c) {
-                        self.put(b";")?;
-                        self.number((usize::from(component) * 100 + 127) / 255)?;
+                        put(out, b";")?;
+                        number(out, (usize::from(component) * 100 + 127) / 255)?;
                     }
                     defined[c] = true;
                 }
+                let row = &planes[c * width..c * width + end];
                 let mut x = 0;
                 while x < end {
-                    let value = self.planes[c * width + x];
-                    let mut next = x + 1;
-                    while next < end && self.planes[c * width + next] == value {
-                        next += 1;
-                    }
-                    self.run(value + b'?', next - x)?;
-                    x = next;
+                    let length = run_length(&row[x..]);
+                    run(out, row[x] + b'?', length)?;
+                    x += length;
                 }
             }
+            // A colour's bits all lie before its end, and only the colours in
+            // this band have any: clearing those rows leaves the planes zero.
+            for (c, &end) in ends.iter().enumerate() {
+                if end != 0 {
+                    planes[c * width..c * width + end].fill(0);
+                }
+            }
+            *dirty = false;
             if y + 6 < height {
-                self.put(b"-")?;
+                put(out, b"-")?;
             }
         }
-        self.put(b"\x1b\\")?;
-        Ok(&self.bytes)
+        put(out, b"\x1b\\")?;
+        Ok(out)
     }
     pub fn queue(&mut self, graphics: &mut KittyGraphics, image: &Image) -> Result<(), KittyError> {
         graphics.write_raw(self.encode(image)?)
