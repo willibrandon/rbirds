@@ -974,10 +974,24 @@ pub mod cases {
         let quit = outcome.event("wrote q").expect("q was typed");
         let flight = outcome.run_time.saturating_sub(quit.at);
         let after_quit = find_all(&outcome.transcript[quit.offset..], FRAME_BEGIN);
-        // The flight is drawn: about 40 frames at 60 Hz; the bound allows a
-        // slow host. Or the quit was read while output was blocked: at most
-        // the frame being written finishes.
-        let flew_out = flight >= Duration::from_millis(600) && after_quit >= 10;
+        // The flight out lasts 40/60 s of measured frame time with no clamp,
+        // so its frame count depends on how fast the host draws (a debug
+        // build on a small CI runner manages about 11 a second). Its length
+        // does not: from q to the exit it takes 40/60 s less at most the
+        // frame under way when q arrived, which is no longer than the longest
+        // gap between frames seen before q (plus some slack for reading).
+        // Or the quit was read while output was blocked, and at most the
+        // frame being written finishes.
+        let frames: Vec<Duration> = outcome
+            .events
+            .iter()
+            .filter(|e| e.what == "mark frame" && e.at <= quit.at)
+            .map(|e| e.at)
+            .collect();
+        let longest_gap = frames.windows(2).map(|w| w[1] - w[0]).max().unwrap_or_default();
+        let outro = Duration::from_secs(40) / 60;
+        let shortest_flight = outro.saturating_sub(longest_gap + Duration::from_millis(50));
+        let flew_out = flight >= shortest_flight && after_quit >= 2;
         let left_at_once = after_quit <= 1;
         assert!(
             flew_out || left_at_once,
