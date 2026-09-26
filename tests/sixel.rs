@@ -199,3 +199,63 @@ fn sixel_is_an_explicit_renderer_and_the_default_stays_braille() {
     assert_eq!(program.sim.render_mode, RenderMode::Sixel);
     assert_eq!(Sim::new().live_render_mode(), RenderMode::Braille);
 }
+
+/// Big-flock mode writes the bands on several threads (docs/DEVIATIONS.md
+/// D-006): the same bytes as one thread, for any count, any height (a short
+/// last band, or a single band) and an encoder whose storage was last used
+/// for a different image.
+#[test]
+fn every_thread_count_writes_the_same_image() {
+    use rbirds::render::compose::compose_onto;
+    use rbirds::simulation::{Bird, Sim};
+    let mut state = 0x2545_f491_u32;
+    let mut next = || {
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        state
+    };
+    let mut images = Vec::new();
+    for (width, height) in [(1, 1), (7, 5), (64, 6), (33, 13), (200, 61), (320, 180)] {
+        let mut image = Image::alloc(width, height).unwrap();
+        for pixel in image.pixels.chunks_exact_mut(4) {
+            let r = next();
+            // Mostly background, some one flat colour, the rest anything.
+            match r % 4 {
+                0 | 1 => pixel.copy_from_slice(&[18, 18, 23, 255]),
+                2 => pixel.copy_from_slice(&[250, 160, 40, 255]),
+                _ => pixel.copy_from_slice(&r.to_le_bytes()),
+            }
+        }
+        images.push(image);
+    }
+    // And a frame of a flock, as queue_sixel_frame composes it.
+    let mut sim = Sim::new();
+    sim.config.birds = 3000;
+    sim.config.palette = 1;
+    sim.config.trails = true;
+    sim.settle_the_bird_size();
+    sim.apply_notches();
+    sim.apply_screen_size(100, 30, 800, 480);
+    let mut frames = rbirds::sprites::empty_catalogue();
+    sim.rasterise_sprites(&mut frames, None, b"rbirds").unwrap();
+    let mut birds = vec![Bird::default(); 3000];
+    sim.rng.seed(5);
+    sim.initialize_birds(&mut birds);
+    let mut canvas = Image::alloc(800, 480).unwrap();
+    compose_onto(&sim, &mut canvas, &frames, &birds, true);
+    images.push(canvas);
+
+    let serial: Vec<Vec<u8>> =
+        images.iter().map(|image| Sixel::default().encode(image).unwrap().to_vec()).collect();
+    for threads in [2, 3, 4, 7, 16] {
+        let mut encoder = Sixel::default();
+        // Largest first, then smaller and larger again, reusing the storage.
+        for (image, expected) in images.iter().zip(&serial).rev().chain(images.iter().zip(&serial))
+        {
+            let bytes = encoder.encode_in_parallel(threads, image).unwrap();
+            assert_eq!(bytes, &expected[..], "{}x{} on {threads}", image.width, image.height);
+        }
+    }
+    assert_eq!(decode(&serial[3]).0, 33);
+}

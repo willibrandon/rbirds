@@ -8,6 +8,7 @@ use super::cells::{Cells, CellsStyle};
 use super::kitty::{KittyError, KittyGraphics, Placement};
 use crate::config::*;
 use crate::image::{Image, png};
+use crate::parallel;
 use crate::simulation::{Bird, RenderMode, Sim, set_image_id};
 use crate::sprites::PICTURE_GROUND;
 
@@ -53,51 +54,112 @@ pub fn bird_placement(sim: &Sim, bird: &Bird) -> Option<Placement> {
     })
 }
 
+/// Rows `top..top + rows` of a canvas `width` pixels wide: the whole canvas,
+/// or the share of it one thread draws in big-flock mode.
+struct Band<'a> {
+    pixels: &'a mut [u8],
+    width: i32,
+    top: i32,
+    rows: i32,
+}
+
 /// `blend_sprite`: `mix` blends edges, which a picture wants; without it the
 /// more opaque pixel takes the place, which a text terminal wants.
 pub fn blend_sprite(canvas: &mut Image, sprite: &Image, at_x: i32, at_y: i32, mix: bool) {
-    for y in 0..sprite.height {
-        let cy = at_y + y;
-        if cy < 0 || cy >= canvas.height {
+    let (width, rows) = (canvas.width, canvas.height);
+    let mut band = Band { pixels: &mut canvas.pixels, width, top: 0, rows };
+    blend_into(&mut band, sprite, at_x, at_y, mix);
+}
+
+/// `blend_sprite` for the part of the sprite that falls in `band`. The C
+/// walks every pixel and skips those off the canvas; this walks only the ones
+/// on it, a row at a time, which writes the same pixels.
+fn blend_into(band: &mut Band, sprite: &Image, at_x: i32, at_y: i32, mix: bool) {
+    let (at_x, at_y) = (i64::from(at_x), i64::from(at_y));
+    let x0 = (-at_x).max(0);
+    let x1 = (i64::from(band.width) - at_x).min(i64::from(sprite.width));
+    let y0 = (i64::from(band.top) - at_y).max(0);
+    let y1 = (i64::from(band.top) + i64::from(band.rows) - at_y).min(i64::from(sprite.height));
+    if x0 >= x1 || y0 >= y1 {
+        return;
+    }
+    let sprite_row = sprite.width as usize * 4;
+    let band_row = band.width as usize * 4;
+    let length = (x1 - x0) as usize * 4;
+    for y in y0..y1 {
+        let from = y as usize * sprite_row + x0 as usize * 4;
+        let to = (at_y + y - i64::from(band.top)) as usize * band_row + (at_x + x0) as usize * 4;
+        let src = &sprite.pixels[from..from + length];
+        let dst = &mut band.pixels[to..to + length];
+        if mix {
+            over(dst, src);
+        } else {
+            opaquer(dst, src);
+        }
+    }
+}
+
+/// The more opaque pixel takes the place; a transparent one never does.
+/// Written as a choice between whole pixels, which the compiler can make
+/// for several pixels at a time.
+#[inline]
+fn opaquer(dst: &mut [u8], src: &[u8]) {
+    for (dst, src) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+        let from = u32::from_le_bytes([src[0], src[1], src[2], src[3]]);
+        let to = u32::from_le_bytes([dst[0], dst[1], dst[2], dst[3]]);
+        let kept = if from >> 24 > to >> 24 { from } else { to };
+        dst.copy_from_slice(&kept.to_le_bytes());
+    }
+}
+
+/// Straight alpha over: the colour underneath counts only for as much of it
+/// as is there.
+#[inline]
+fn over(dst: &mut [u8], src: &[u8]) {
+    for (dst, src) in dst.chunks_exact_mut(4).zip(src.chunks_exact(4)) {
+        let alpha = u32::from(src[3]);
+        if alpha == 0 {
             continue;
         }
-        for x in 0..sprite.width {
-            let cx = at_x + x;
-            if cx < 0 || cx >= canvas.width {
-                continue;
-            }
-            let from = sprite.offset(x, y);
-            let to = canvas.offset(cx, cy);
-            let src = &sprite.pixels[from..from + 4];
-            let alpha = u32::from(src[3]);
-            if alpha == 0 {
-                continue;
-            }
-            let dst = &mut canvas.pixels[to..to + 4];
-            if !mix {
-                if alpha > u32::from(dst[3]) {
-                    dst.copy_from_slice(src);
-                }
-                continue;
-            }
-            // Straight alpha over: the colour underneath counts only for as
-            // much of it as is there.
-            let under = u32::from(dst[3]) * (255 - alpha) / 255;
-            let out_alpha = alpha + under;
-            for c in 0..3 {
-                dst[c] =
-                    ((u32::from(src[c]) * alpha + u32::from(dst[c]) * under) / out_alpha) as u8;
-            }
-            dst[3] = out_alpha as u8;
+        // An opaque pixel covers: the formula gives the source exactly.
+        if alpha == 255 {
+            dst.copy_from_slice(src);
+            continue;
         }
+        // Over an opaque pixel, as all of a picture's ground is, `under` is
+        // 255 - alpha and the result is opaque, so every division is by 255.
+        if dst[3] == 255 {
+            let under = 255 - alpha;
+            for c in 0..3 {
+                dst[c] = ((u32::from(src[c]) * alpha + u32::from(dst[c]) * under) / 255) as u8;
+            }
+            continue;
+        }
+        let under = u32::from(dst[3]) * (255 - alpha) / 255;
+        let out_alpha = alpha + under;
+        for c in 0..3 {
+            dst[c] = ((u32::from(src[c]) * alpha + u32::from(dst[c]) * under) / out_alpha) as u8;
+        }
+        dst[3] = out_alpha as u8;
     }
 }
 
 /// `fill_ground`: opaque, so a picture looks like a terminal, not a cut out.
 pub fn fill_ground(canvas: &mut Image) {
-    for pixel in canvas.pixels.chunks_exact_mut(4) {
-        pixel.copy_from_slice(&[PICTURE_GROUND[0], PICTURE_GROUND[1], PICTURE_GROUND[2], 255]);
+    fill_ground_into(&mut canvas.pixels);
+}
+
+fn fill_ground_into(pixels: &mut [u8]) {
+    let pixel = [PICTURE_GROUND[0], PICTURE_GROUND[1], PICTURE_GROUND[2], 255];
+    // Sixteen pixels at a time. A canvas is whole pixels, so what is left
+    // over is too.
+    let pattern: [u8; 64] = std::array::from_fn(|i| pixel[i % 4]);
+    let mut chunks = pixels.chunks_exact_mut(pattern.len());
+    for chunk in &mut chunks {
+        chunk.copy_from_slice(&pattern);
     }
+    let rest = chunks.into_remainder();
+    rest.copy_from_slice(&pattern[..rest.len()]);
 }
 
 /// The birds a frame draws: `config.birds` of them, never past the array.
@@ -107,8 +169,14 @@ fn drawn<'a>(sim: &Sim, birds: &'a [Bird]) -> &'a [Bird] {
     &birds[..(sim.config.birds.max(0) as usize).min(birds.len())]
 }
 
+/// Bands a thread takes in turn: a few each, so a thread whose bands hold
+/// the flock does not keep the others waiting.
+const BANDS_PER_THREAD: usize = 3;
+
 /// `compose_onto`: tails, then the flock far to near, then the hawks, on a
-/// ground for a picture or on nothing for a text terminal.
+/// ground for a picture or on nothing for a text terminal. In big-flock mode
+/// each thread draws the whole order into bands of rows of its own, so every
+/// pixel is drawn over in the same order as on one thread.
 pub fn compose_onto(
     sim: &Sim,
     canvas: &mut Image,
@@ -116,11 +184,29 @@ pub fn compose_onto(
     birds: &[Bird],
     with_ground: bool,
 ) {
+    let width = canvas.width;
+    let row = width.max(0) as usize * 4;
+    if row == 0 || canvas.pixels.is_empty() {
+        return;
+    }
+    let rows = canvas.pixels.len() / row;
+    let threads = sim.threads.max(1);
+    let band_rows = rows.div_ceil(threads * BANDS_PER_THREAD);
+    let band_rows = if threads > 1 { band_rows } else { rows };
+    parallel::for_each_block(threads, &mut canvas.pixels, band_rows * row, |first, pixels| {
+        let rows = (pixels.len() / row) as i32;
+        let band = Band { pixels, width, top: (first / row) as i32, rows };
+        compose_band(sim, band, frames, birds, with_ground);
+    });
+}
+
+/// `compose_onto` for the rows of one band.
+fn compose_band(sim: &Sim, mut band: Band, frames: &[Image], birds: &[Bird], with_ground: bool) {
     let shades = sim.palette_shades();
     if with_ground {
-        fill_ground(canvas);
+        fill_ground_into(band.pixels);
     } else {
-        canvas.pixels.fill(0);
+        band.pixels.fill(0);
     }
     let birds = drawn(sim, birds);
     for layer in (0..LAYERS).rev() {
@@ -135,8 +221,8 @@ pub fn compose_onto(
                         + bird.frame % ROTATION_FRAMES)
                         as usize];
                     if !sprite.is_empty() {
-                        blend_sprite(
-                            canvas,
+                        blend_into(
+                            &mut band,
                             sprite,
                             bird.trail_x[age] as i32,
                             bird.trail_y[age] as i32,
@@ -159,7 +245,7 @@ pub fn compose_onto(
             if sprite.is_empty() {
                 continue;
             }
-            blend_sprite(canvas, sprite, bird.x as i32, bird.y as i32, with_ground);
+            blend_into(&mut band, sprite, bird.x as i32, bird.y as i32, with_ground);
         }
     }
     let offset = sim.hawk_draw_offset();
@@ -169,7 +255,8 @@ pub fn compose_onto(
         if sprite.is_empty() {
             continue;
         }
-        blend_sprite(canvas, sprite, hawk.x as i32 - offset, hawk.y as i32 - offset, with_ground);
+        let (x, y) = (hawk.x as i32 - offset, hawk.y as i32 - offset);
+        blend_into(&mut band, sprite, x, y, with_ground);
     }
 }
 
@@ -302,7 +389,7 @@ impl Renderer {
         }
         graphics.write_raw(b"\x1b[H")?;
         compose_onto(sim, &mut self.canvas, &self.sprites, birds, true);
-        self.sixel.queue(graphics, &self.canvas)?;
+        self.sixel.queue_in_parallel(graphics, sim.threads, &self.canvas)?;
         graphics.write_raw(b"\x1b[H")?;
         self.queue_legend(graphics, sim)?;
         graphics.end_synchronized_update()
@@ -331,7 +418,8 @@ impl Renderer {
         self.cells.keep_out_of(keep_cols, keep_rows);
 
         compose_onto(sim, &mut self.canvas, &self.sprites, birds, false);
-        self.cells.read(
+        self.cells.read_in_parallel(
+            sim.threads,
             text_style(sim.render_mode),
             &self.canvas,
             sim.screen.cell_width,

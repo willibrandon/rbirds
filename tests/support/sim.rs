@@ -521,7 +521,14 @@ impl World {
 
 /// Runs a whole script through the port.
 pub fn run_rust(script: &str) -> String {
+    run_rust_on(script, 1)
+}
+
+/// Runs a whole script through the port with `threads` threads a frame, as
+/// big-flock mode flies and draws (docs/DEVIATIONS.md D-006).
+pub fn run_rust_on(script: &str, threads: usize) -> String {
     let mut world = World::new();
+    world.sim.threads = threads;
     for line in script.lines() {
         world.command(line);
     }

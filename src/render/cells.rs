@@ -19,6 +19,7 @@ use std::fmt;
 
 use crate::fp::mul_add;
 use crate::image::Image;
+use crate::parallel;
 
 /// `cells_status_t` without `CELLS_OK`, which is `Ok(..)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -183,10 +184,12 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
     let y_end = (i64::from(y0) + i64::from(height)).min(i64::from(canvas.height)) as i32;
     let x_start = x0.max(0);
     let x_end = (i64::from(x0) + i64::from(width)).min(i64::from(canvas.width)) as i32;
-    for y in y_start..y_end {
-        for x in x_start..x_end {
-            let at = canvas.offset(x, y);
-            let px = &canvas.pixels[at..at + 4];
+    // A patch wholly off the canvas's right has no pixels, and no offset.
+    let length = (x_end - x_start).max(0) as usize * 4;
+    let rows = if length == 0 { 0..0 } else { y_start..y_end };
+    for y in rows {
+        let at = canvas.offset(x_start, y);
+        for px in canvas.pixels[at..at + length].chunks_exact(4) {
             let a = f64::from(px[3]);
             counted += 1;
             alpha_sum += a;
@@ -240,6 +243,48 @@ fn inked(patch: &Patch) -> bool {
     patch.coverage >= f64::from(INK_THRESHOLD)
 }
 
+/// `inked(&read_patch(..))` without the colour, which only a cell's whole
+/// patch is asked for. The alphas are whole numbers, so their sum is exact
+/// either way and the mean is the same double.
+fn patch_inked(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> bool {
+    let y_start = y0.max(0);
+    let y_end = (i64::from(y0) + i64::from(height)).min(i64::from(canvas.height)) as i32;
+    let x_start = x0.max(0);
+    let x_end = (i64::from(x0) + i64::from(width)).min(i64::from(canvas.width)) as i32;
+    let length = (x_end - x_start).max(0) as usize * 4;
+    if length == 0 || y_end <= y_start {
+        return false;
+    }
+    let mut alpha_sum: u64 = 0;
+    for y in y_start..y_end {
+        let at = canvas.offset(x_start, y);
+        for px in canvas.pixels[at..at + length].chunks_exact(4) {
+            alpha_sum += u64::from(px[3]);
+        }
+    }
+    if alpha_sum == 0 {
+        return false;
+    }
+    let counted = (length / 4) as u64 * (y_end - y_start) as u64;
+    alpha_sum as f64 / counted as f64 >= f64::from(INK_THRESHOLD)
+}
+
+/// Whether any pixel of the rectangle, clipped to the canvas, has ink. Every
+/// patch a cell reads lies inside the cell, so a cell without any is blank in
+/// every style, and most of a frame's cells are.
+fn any_ink(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> bool {
+    let y_start = y0.max(0);
+    let y_end = (i64::from(y0) + i64::from(height)).min(i64::from(canvas.height)) as i32;
+    let x_start = x0.max(0);
+    let x_end = (i64::from(x0) + i64::from(width)).min(i64::from(canvas.width)) as i32;
+    let length = (x_end - x_start).max(0) as usize * 4;
+    length != 0
+        && (y_start..y_end).any(|y| {
+            let at = canvas.offset(x_start, y);
+            canvas.pixels[at..at + length].chunks_exact(4).any(|px| px[3] != 0)
+        })
+}
+
 fn read_braille_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_height: i32) -> Cell {
     // Dots are the cell divided two by four; a cell narrower than two pixels
     // or shorter than four gets what it gets.
@@ -256,8 +301,7 @@ fn read_braille_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_hei
             if dy1 <= dy0 {
                 dy1 = dy0 + 1;
             }
-            let dot = read_patch(canvas, dx0, dy0, dx1 - dx0, dy1 - dy0);
-            if inked(&dot) {
+            if patch_inked(canvas, dx0, dy0, dx1 - dx0, dy1 - dy0) {
                 dots |= 1u32 << (column + row * 2);
             }
         }
@@ -288,8 +332,7 @@ fn read_sextant_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_hei
             if by1 <= by0 {
                 by1 = by0 + 1;
             }
-            let block = read_patch(canvas, bx0, by0, bx1 - bx0, by1 - by0);
-            if inked(&block) {
+            if patch_inked(canvas, bx0, by0, bx1 - bx0, by1 - by0) {
                 blocks |= 1u32 << (column + row * 2);
             }
         }
@@ -519,20 +562,44 @@ impl Cells {
     /// marking ink: transparent is sky. Pixels off the canvas are not counted.
     /// An empty canvas or an unsized grid reads nothing.
     pub fn read(&mut self, style: CellsStyle, canvas: &Image, cell_width: i32, cell_height: i32) {
+        self.read_in_parallel(1, style, canvas, cell_width, cell_height);
+    }
+
+    /// [`Cells::read`] on up to `threads` threads, which take bands of rows
+    /// in turn (big-flock mode). A cell is read from the canvas alone, so the
+    /// grid is the same on any number.
+    pub fn read_in_parallel(
+        &mut self,
+        threads: usize,
+        style: CellsStyle,
+        canvas: &Image,
+        cell_width: i32,
+        cell_height: i32,
+    ) {
         if canvas.is_empty() || self.now.is_empty() {
             return;
         }
         let cell_width = cell_width.max(1);
         let cell_height = cell_height.max(1);
-        for row in 0..self.rows {
-            for col in 0..self.cols {
-                let at = row as usize * self.cols as usize + col as usize;
-                if col < self.keep_cols && row < self.keep_rows {
-                    self.now[at] = Cell::default();
+        let cols = self.cols as usize;
+        let rows = self.rows as usize;
+        let (keep_cols, keep_rows) = (self.keep_cols, self.keep_rows);
+        let threads = threads.max(1);
+        let band_rows = if threads > 1 { rows.div_ceil(threads * 4) } else { rows };
+        parallel::for_each_block(threads, &mut self.now, band_rows * cols, |first, cells| {
+            for (offset, cell) in cells.iter_mut().enumerate() {
+                let at = first + offset;
+                let (row, col) = ((at / cols) as i32, (at % cols) as i32);
+                if col < keep_cols && row < keep_rows {
+                    *cell = Cell::default();
                     continue;
                 }
                 let (x0, y0) = (col * cell_width, row * cell_height);
-                self.now[at] = match style {
+                if !any_ink(canvas, x0, y0, cell_width, cell_height) {
+                    *cell = Cell::default();
+                    continue;
+                }
+                *cell = match style {
                     CellsStyle::Braille => {
                         read_braille_cell(canvas, x0, y0, cell_width, cell_height)
                     }
@@ -542,7 +609,7 @@ impl Cells {
                     CellsStyle::Blocks => read_block_cell(canvas, x0, y0, cell_width, cell_height),
                 };
             }
-        }
+        });
     }
 
     /// `cells_paint`: the last emitted grid painted the way a terminal shows

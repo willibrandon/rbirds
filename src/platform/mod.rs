@@ -88,9 +88,9 @@ pub use restore::write_all_quietly as write_text_all_quietly;
 pub use restore::{
     ALT_SCREEN_OFF, ALT_SCREEN_ON, CURSOR_HIDE, CURSOR_SHOW, KITTY_FREE_IMAGES, MOUSE_REPORT_OFF,
     MOUSE_REPORT_ON, SYNC_UPDATE_END, alt_screen_is_on, enable_sixel_mode, enter_alt_screen,
-    enter_terminal, is_restored, mark_alt_screen_on, mark_raw_acquired, mark_sprites_uploaded,
-    reset_terminal_state_for_tests, restore_terminal, sprites_uploaded, terminal_is_raw,
-    write_all_quietly,
+    enter_terminal, is_restored, mark_alt_screen_on, mark_answer_outstanding, mark_raw_acquired,
+    mark_sprites_uploaded, reset_terminal_state_for_tests, restore_terminal, sprites_uploaded,
+    terminal_is_raw, write_all_quietly,
 };
 pub use scan::scan_osc_rgb;
 pub use signals::{default_sigpipe, install_signal_handlers, send_signal};

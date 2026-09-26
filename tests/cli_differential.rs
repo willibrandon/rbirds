@@ -11,7 +11,8 @@
 //! places docs/COMPATIBILITY.md §1 allows: the tagline, examples and
 //! completion program name print `cbirds` where rbirds prints `rbirds`, and
 //! the version line names each product's own version. Expected help and choice
-//! listings also account for the ASCII tagline and Sixel support (D-004).
+//! listings also account for the ASCII tagline, Sixel support (D-004) and
+//! big-flock mode (D-006).
 
 mod support;
 
@@ -110,6 +111,21 @@ fn normalize_cli_changes(bytes: &[u8]) -> Vec<u8> {
         (
             "sprites, in Kitty or Ghostty\n",
             "sprites, in Kitty or Ghostty\n  rbirds --render sixel            pixels, in Windows Terminal 1.22+\n",
+        ),
+        // --big-flock (D-006): a row after --seed in the help and in every
+        // shell's completions.
+        (
+            "      --seed N                  the same seed gives the same flock\n",
+            "      --seed N                  the same seed gives the same flock\n      --big-flock COUNT         up to 65536 birds on several cores, instead of --birds\n",
+        ),
+        (" --seed --boundary ", " --seed --big-flock --boundary "),
+        (
+            "  '--seed[the same seed gives the same flock]:value:' \\\n",
+            "  '--seed[the same seed gives the same flock]:value:' \\\n  '--big-flock[up to 65536 birds on several cores, instead of --birds]:value:' \\\n",
+        ),
+        (
+            "complete -c rbirds -l seed -r -d \"the same seed gives the same flock\"\n",
+            "complete -c rbirds -l seed -r -d \"the same seed gives the same flock\"\ncomplete -c rbirds -l big-flock -r -d \"up to 65536 birds on several cores, instead of --birds\"\n",
         ),
     ] {
         let mut output = Vec::new();

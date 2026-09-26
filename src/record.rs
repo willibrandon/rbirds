@@ -236,7 +236,8 @@ pub fn run_cast_recording(
             f64::from(settings.record_fps),
         );
         compose_onto(sim, &mut renderer.canvas, &renderer.sprites, &birds, false);
-        renderer.cells.read(
+        renderer.cells.read_in_parallel(
+            sim.threads,
             CellsStyle::Braille,
             &renderer.canvas,
             sim.screen.cell_width,
@@ -385,7 +386,13 @@ pub fn run_recording(
         if as_text {
             compose_onto(sim, &mut canvas, &frames, &birds, false);
             let style = text_style(sim.render_mode);
-            cells.read(style, &canvas, sim.screen.cell_width, sim.screen.cell_height);
+            cells.read_in_parallel(
+                sim.threads,
+                style,
+                &canvas,
+                sim.screen.cell_width,
+                sim.screen.cell_height,
+            );
             let painted = match cells.emit() {
                 Ok(()) => cells.paint(
                     style,

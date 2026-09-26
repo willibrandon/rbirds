@@ -53,19 +53,26 @@ pub enum Stream {
     ClosedPipe,
 }
 
-/// An answer to a terminal query: each time `query` appears in the output,
-/// the fragments are written to the program, the first at once and each
-/// later one `gap` after the previous.
+/// An answer to a terminal query: each time `query` appears in the output
+/// (up to `limit` times, when there is one), the fragments are written to
+/// the program, the first at once and each later one `gap` after the
+/// previous.
 #[derive(Clone, Debug)]
 pub struct Reply {
     pub query: Vec<u8>,
     pub fragments: Vec<Vec<u8>>,
     pub gap: Duration,
+    pub limit: Option<usize>,
 }
 
 impl Reply {
     pub fn whole(query: &[u8], answer: &[u8]) -> Reply {
-        Reply { query: query.to_vec(), fragments: vec![answer.to_vec()], gap: Duration::ZERO }
+        Reply {
+            query: query.to_vec(),
+            fragments: vec![answer.to_vec()],
+            gap: Duration::ZERO,
+            limit: None,
+        }
     }
 }
 
@@ -239,6 +246,7 @@ struct Pending {
 
 struct ReplyState {
     scanned: usize,
+    answered: usize,
 }
 
 fn stdio_for(stream: Stream, slave: &OwnedFd, input: bool) -> std::io::Result<Stdio> {
@@ -332,6 +340,10 @@ impl Runner<'_> {
                     break;
                 };
                 self.replies[index].scanned = from + at + reply.query.len();
+                if reply.limit.is_some_and(|limit| self.replies[index].answered >= limit) {
+                    continue;
+                }
+                self.replies[index].answered += 1;
                 let now = Instant::now();
                 let fragments = reply.fragments.clone();
                 let gap = reply.gap;
@@ -434,7 +446,7 @@ pub fn run(spec: &Spec) -> Outcome {
         events: Vec::new(),
         pending: Vec::new(),
         order: 0,
-        replies: spec.replies.iter().map(|_| ReplyState { scanned: 0 }).collect(),
+        replies: spec.replies.iter().map(|_| ReplyState { scanned: 0, answered: 0 }).collect(),
         termios_during: Vec::new(),
         paused_until: None,
         last_data: started,

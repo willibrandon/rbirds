@@ -19,6 +19,7 @@ fn sixel_negotiates_virtual_pixels_renders_frames_and_restores_mode() {
                 query: b"\x1b[c".to_vec(),
                 fragments: vec![b"\x1b[?64;".to_vec(), b"4;22c".to_vec()],
                 gap: std::time::Duration::from_millis(10),
+                limit: None,
             })
             .reply(Reply::whole(b"\x1b[16t", b"\x1b[6;20;10t"))
             .reply(Reply::whole(b"\x1b[?80$p", mode));

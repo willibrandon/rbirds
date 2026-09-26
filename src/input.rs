@@ -196,10 +196,11 @@ impl Sim {
                     continue;
                 }
                 b'+' | b'=' => {
-                    if self.config.birds < MAX_BIRDS {
+                    let limit = self.bird_limit();
+                    if self.config.birds < limit {
                         self.config.birds += self.config.birds / 4 + 1;
-                        if self.config.birds > MAX_BIRDS {
-                            self.config.birds = MAX_BIRDS;
+                        if self.config.birds > limit {
+                            self.config.birds = limit;
                         }
                         self.population_changed = true;
                     }

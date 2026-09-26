@@ -173,6 +173,24 @@ impl SpatialGrid {
     /// The items of one cell, in item order.
     #[inline]
     pub fn cell_items(&self, cell: usize) -> &[i32] {
-        &self.indices[self.offsets[cell] as usize..self.offsets[cell + 1] as usize]
+        &self.indices[self.cells_slots(cell, cell)]
+    }
+
+    /// Where the items of cells `first` to `last` inclusive lie in
+    /// `indices`: the cells one after another, each in item order, as
+    /// walking them one at a time would give them.
+    #[inline]
+    pub fn cells_slots(&self, first: usize, last: usize) -> std::ops::Range<usize> {
+        self.offsets[first] as usize..self.offsets[last + 1] as usize
+    }
+
+    /// The items of the last build, cell by cell: `indices` as far as it
+    /// was filled, empty before the first prepare.
+    #[inline]
+    pub fn items(&self) -> &[i32] {
+        match self.offsets.get(self.cell_count.max(0) as usize) {
+            Some(&end) => &self.indices[..end as usize],
+            None => &[],
+        }
     }
 }

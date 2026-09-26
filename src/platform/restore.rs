@@ -21,10 +21,12 @@
 //! exercise this path for real; in-process tests may only use
 //! [`reset_terminal_state_for_tests`] around flag checks.
 
-use super::os::{AtomicTcflag, NCCS, TCSAFLUSH, Termios};
+use super::os::{AtomicTcflag, CLOCK_MONOTONIC, NCCS, POLLIN, TCSAFLUSH, Termios};
+use super::poll::PollFd;
 use super::termios::{tcgetattr, tcsetattr};
+use super::time::Timespec;
 use super::{EINTR, STDIN_FILENO, STDOUT_FILENO, errno, sys};
-use std::ffi::c_void;
+use std::ffi::{c_int, c_void};
 use std::io;
 use std::os::fd::RawFd;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
@@ -56,6 +58,7 @@ static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 static ALT_SCREEN_IS_ON: AtomicBool = AtomicBool::new(false);
 static SPRITES_UPLOADED: AtomicBool = AtomicBool::new(false);
 static SIXEL_MODE: AtomicU8 = AtomicU8::new(0);
+static ANSWER_OUTSTANDING: AtomicBool = AtomicBool::new(false);
 static SAVED_TERMIOS: SavedTermios = SavedTermios::new();
 
 /// `saved_termios`, one atomic per field.
@@ -163,6 +166,67 @@ pub fn enable_sixel_mode(was_enabled: bool) {
     write_all_quietly(STDOUT_FILENO, b"\x1b[?80h");
 }
 
+/// Records whether one of big-flock mode's device status requests is still
+/// unanswered (`crate::live::Pacing`, docs/DEVIATIONS.md D-006). While one
+/// is, a restore first reads the answer off standard input, so it does not
+/// reach whatever reads the terminal next.
+pub fn mark_answer_outstanding(outstanding: bool) {
+    ANSWER_OUTSTANDING.store(outstanding, Ordering::SeqCst);
+}
+
+/// The longest a restore waits for an outstanding answer.
+const ANSWER_DRAIN_MILLISECONDS: i64 = 250;
+
+/// Reads standard input until the answer `\e[0n` has come or
+/// ANSWER_DRAIN_MILLISECONDS have passed, discarding what it reads. Called
+/// while the terminal is still raw, so bytes arrive without waiting for a
+/// newline. Async-signal-safe: `clock_gettime`, `poll` and `read`, into the
+/// stack.
+fn drain_the_answer() {
+    const ANSWER: &[u8] = b"\x1b[0n";
+    let now = || {
+        let mut now = Timespec::default();
+        // SAFETY: `now` is a live, writable `Timespec` of the target's
+        // `struct timespec` layout (ABI probe); the call only writes it.
+        unsafe { sys::clock_gettime(CLOCK_MONOTONIC, &mut now) };
+        now
+    };
+    let start = now();
+    let mut matched = 0;
+    let mut buffer = [0_u8; 64];
+    loop {
+        let at = now();
+        let spent = (at.tv_sec - start.tv_sec) * 1000 + (at.tv_nsec - start.tv_nsec) / 1_000_000;
+        if spent >= ANSWER_DRAIN_MILLISECONDS {
+            return;
+        }
+        let mut ready = PollFd::new(STDIN_FILENO, POLLIN);
+        // SAFETY: `ready` is one live `PollFd` of the target's `struct pollfd`
+        // layout (ABI probe); poll writes only its `revents`.
+        let polled =
+            unsafe { sys::poll(&mut ready, 1, (ANSWER_DRAIN_MILLISECONDS - spent) as c_int) };
+        if polled == 0 || polled < 0 && errno() != EINTR {
+            return;
+        }
+        if polled < 0 {
+            continue;
+        }
+        // SAFETY: `buffer` is writable for its whole length during the call,
+        // and read(2) keeps no pointer to it.
+        let got = unsafe { sys::read(STDIN_FILENO, buffer.as_mut_ptr().cast(), buffer.len()) };
+        if got == 0 || got < 0 && errno() != EINTR {
+            return;
+        }
+        for &byte in buffer.get(..got.max(0) as usize).unwrap_or_default() {
+            matched =
+                if byte == ANSWER[matched] { matched + 1 } else { usize::from(byte == ANSWER[0]) };
+            if matched == ANSWER.len() {
+                return;
+            }
+        }
+    }
+}
+
 /// Whether [`restore_terminal`] has run (`terminal_restored`).
 pub fn is_restored() -> bool {
     TERMINAL_RESTORED.load(Ordering::SeqCst)
@@ -193,6 +257,7 @@ pub fn reset_terminal_state_for_tests() {
     ALT_SCREEN_IS_ON.store(false, Ordering::SeqCst);
     SPRITES_UPLOADED.store(false, Ordering::SeqCst);
     SIXEL_MODE.store(0, Ordering::SeqCst);
+    ANSWER_OUTSTANDING.store(false, Ordering::SeqCst);
     SAVED_TERMIOS.store(&Termios::default());
 }
 
@@ -232,6 +297,11 @@ pub fn restore_terminal() {
         return;
     }
     TERMINAL_RESTORED.store(true, Ordering::SeqCst);
+    // Only in big-flock mode, before the attributes go back (docs/DEVIATIONS.md
+    // D-006).
+    if ANSWER_OUTSTANDING.swap(false, Ordering::SeqCst) && TERMINAL_IS_RAW.load(Ordering::Acquire) {
+        drain_the_answer();
+    }
     if SIXEL_MODE.swap(0, Ordering::SeqCst) == 2 {
         write_all_quietly(STDOUT_FILENO, b"\x1b[?80l");
     }

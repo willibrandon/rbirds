@@ -1,0 +1,3 @@
+blocks-800       C    2.583 ms  Rust    1.300 ms  x0.504 PASS | peak C  18560 KiB Rust  18632 KiB PASS | bytes/frame 21374 PASS | spread C 0.7% Rust 2.2%, IQR C 0.3% Rust 0.9%
+startup          C   0.2063 s   Rust   0.2248 s   x1.089 PASS | spread C 0.9% Rust 2.2%, IQR C 0.3% Rust 1.1%
+binary size: C 183272 bytes, Rust 857472 bytes

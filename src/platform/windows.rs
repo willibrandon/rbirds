@@ -683,9 +683,44 @@ pub fn enter_alt_screen() {
     write_all_quietly(1, CURSOR_HIDE);
     write_all_quietly(1, MOUSE_REPORT_ON);
 }
+static ANSWER_OUTSTANDING: AtomicBool = AtomicBool::new(false);
+
+/// Records whether one of big-flock mode's device status requests is still
+/// unanswered (docs/DEVIATIONS.md D-006). While one is, a restore first
+/// reads the answer from the console input, so it does not reach the shell.
+pub fn mark_answer_outstanding(outstanding: bool) {
+    ANSWER_OUTSTANDING.store(outstanding, Ordering::SeqCst);
+}
+
+/// Reads console input until the answer `\e[0n` has come or 250 ms have
+/// passed, discarding what it reads.
+fn drain_the_answer() {
+    const ANSWER: &[u8] = b"\x1b[0n";
+    let start = Instant::now();
+    let mut matched = 0;
+    let mut buffer = [0_u8; 64];
+    while let Some(left) = Duration::from_millis(250).checked_sub(start.elapsed()) {
+        let mut ready = [PollFd::new(STDIN_FILENO, POLLIN)];
+        if !matches!(poll(&mut ready, left.as_millis() as i32), Ok(n) if n > 0) {
+            return;
+        }
+        let Ok(got) = read(STDIN_FILENO, &mut buffer) else { return };
+        for &byte in &buffer[..got] {
+            matched =
+                if byte == ANSWER[matched] { matched + 1 } else { usize::from(byte == ANSWER[0]) };
+            if matched == ANSWER.len() {
+                return;
+            }
+        }
+    }
+}
+
 pub fn restore_terminal() {
     if RESTORED.swap(true, Ordering::AcqRel) {
         return;
+    }
+    if ANSWER_OUTSTANDING.swap(false, Ordering::SeqCst) && RAW.load(Ordering::Acquire) {
+        drain_the_answer();
     }
     let drained = WRITER.get().is_none_or(Writer::stop);
     if SIXEL_MODE.swap(0, Ordering::AcqRel) == 2 && drained {

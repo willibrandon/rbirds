@@ -118,6 +118,14 @@ fn query_until(
     reply
 }
 
+/// Whether the terminal answers a device status request, as big-flock mode's
+/// pacing needs it to (`crate::live::Pacing`). Only asked in that mode, so
+/// cbirds' startup traffic is unchanged.
+pub fn answers_status() -> bool {
+    let reply = query_until(crate::live::STATUS_REQUEST, 64, 250, Some(b'n'));
+    reply.windows(crate::live::STATUS_ANSWER.len()).any(|s| s == crate::live::STATUS_ANSWER)
+}
+
 /// Only probe when Sixel is explicitly requested. The ordinary renderer's
 /// startup traffic remains identical to the reference.
 pub fn prepare_sixel() -> io::Result<(u16, u16)> {

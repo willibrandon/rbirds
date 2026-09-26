@@ -25,6 +25,7 @@ use crate::palette::{PALETTES, Palette, Rgb, Theme};
 use crate::rng::Rng;
 use crate::spatial_grid::SpatialGrid;
 
+pub use flock::Neighbours;
 pub use formation::{FORMATION_MAX_TARGETS, Formation};
 
 /// `vector_t`.
@@ -224,6 +225,15 @@ pub struct Sim {
     pub last_drift_at: f64,
     pub konami: Konami,
     pub requested_preset: i32,
+    /// The neighbour search's copy of the snapshot, kept between steps so
+    /// gathering it allocates only when the flock outgrows it.
+    pub neighbours: Neighbours,
+    /// --big-flock: up to BIG_FLOCK_BIRDS birds, and threads to fly and
+    /// draw them (docs/DEVIATIONS.md D-006). Off, everything is as in cbirds.
+    pub big_flock: bool,
+    /// Threads a frame may use; one unless big-flock mode asks for more. The
+    /// flock and the frame come out the same on any number.
+    pub threads: usize,
 }
 
 impl Default for Sim {
@@ -303,6 +313,9 @@ impl Sim {
             last_drift_at: 0.0,
             konami: Konami::default(),
             requested_preset: -1,
+            neighbours: Neighbours::default(),
+            big_flock: false,
+            threads: 1,
         }
     }
 
@@ -374,6 +387,11 @@ impl Sim {
         }
         let scaled = self.turning_notch_radians() * f64::from(FRAME_RATE) * self.flight_seconds();
         if scaled > 2.0 * PI { 2.0 * PI } else { scaled }
+    }
+
+    /// The most birds `+` can make: cbirds' cap, or big-flock mode's.
+    pub fn bird_limit(&self) -> i32 {
+        if self.big_flock { BIG_FLOCK_BIRDS } else { MAX_BIRDS }
     }
 
     // ----- the screen and the panel ---------------------------------------

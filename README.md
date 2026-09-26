@@ -43,6 +43,25 @@ emulators that do. Braille remains the default on every platform. `blocks` and
 Sixel support is negotiated when requested, and an unsupported terminal produces
 an error with guidance. See [Windows and Sixel](docs/WINDOWS.md) for details.
 
+## Big flocks
+
+cbirds stops at 4096 birds and flies them on one thread. `--big-flock` takes up
+to 65536 and flies them on half the cores:
+
+```sh
+./target/release/rbirds --big-flock 30000
+./target/release/rbirds --big-flock 65536 --preset murmuration --size 12
+```
+
+`+` grows the flock up to 65536. The same seed gives the same flock on any
+number of cores, and up to 4096 birds it is the flock `--birds` gives. Each
+frame waits until the terminal has read the one before, so a big flock never
+gets ahead of the terminal and doesn't stall. Under a pseudoterminal on a
+12-core M4 Pro, 65536 birds arrive at 55 to 59 frames a second. Braille, sextants, blocks and Sixel send at
+most a screenful a frame, however big the flock. Kitty sends a placement for
+every bird, about 38 bytes each, every frame. See
+[D-006](docs/DEVIATIONS.md#d-006-big-flock-mode).
+
 There are no crate dependencies. Native bindings use system libraries: libc /
 libSystem on Unix and Win32 / the Microsoft C runtime on Windows. Builds use
 the Rust version pinned in `rust-toolchain.toml`; normal builds need no C source
@@ -50,7 +69,7 @@ compilation or reference checkout.
 
 ## Compatibility with cbirds
 
-The port follows cbirds at commit [`cc446fc`](https://github.com/clainstone/cbirds/tree/cc446fc3cb80733371c62676533adcac2fc10002). On the documented Linux and macOS targets, the compatibility suite compares simulation, terminal output, GIF and cast files with cbirds built using its canonical flags. Differences include product identity, the explicit Sixel renderer and native Windows support, and the undefined-C-behavior cases in [DEVIATIONS.md](docs/DEVIATIONS.md). Windows has native behavioral tests; byte-identical output across different operating systems' math libraries is not promised.
+The port follows cbirds at commit [`cc446fc`](https://github.com/clainstone/cbirds/tree/cc446fc3cb80733371c62676533adcac2fc10002). On the documented Linux and macOS targets, the compatibility suite compares simulation, terminal output, GIF and cast files with cbirds built using its canonical flags. Differences include product identity, the explicit Sixel renderer, native Windows support, big-flock mode, a frame delay that ends on time, and the undefined-C-behavior cases in [DEVIATIONS.md](docs/DEVIATIONS.md). Windows has native behavioral tests; byte-identical output across different operating systems' math libraries is not promised.
 
 On Apple Silicon, matching the C build takes two things the source doesn't show. Apple clang fuses 92 `a*b+c` expressions into FMA instructions, and it replaces each sin/cos pair with `__sincos_stret`, which can differ from separate calls in the last bit. The port does the same on that target. See section 5 of [DESIGN.md](docs/DESIGN.md).
 
@@ -59,7 +78,7 @@ On Apple Silicon, matching the C build takes two things the source doesn't show.
 On Linux and macOS, the test suite builds the C reference and compares the two programs directly:
 
 - All 112 cbirds C tests, translated to Rust.
-- Scripted simulations run through both programs, comparing every floating point value.
+- Scripted simulations run through both programs, comparing every floating point value, and run again on several threads the way big-flock mode runs them.
 - Recordings, PNG and GIF codec output, renderer escape sequences and CLI output, compared exactly.
 - Terminal handling (raw mode, signals, resizes, blocked output) checked under a pseudoterminal.
 - The GIFs and cast that cbirds publishes, made again with the commands in its `docs/README.md`. On Linux they come out exactly as published.
@@ -68,7 +87,9 @@ On Linux and macOS, the test suite builds the C reference and compares the two p
 tools/reference.sh   # fetch the pinned cbirds source into .reference/
 tools/verify.sh      # run all checks; --all-local adds x86_64 macOS and Linux (Docker)
 tools/perf.sh        # compare speed and memory with the C build
+tools/pacing.py ./target/release/rbirds --big-flock 30000   # how frames arrive at a terminal
 tools/vhs/live.sh    # both programs through the same VHS tape, side by side
+tools/vhs/stalls.sh './rbirds --big-flock 65536'   # does the flock ever stand still
 ```
 
 The Unix comparison tests need a C compiler. Set `RBIRDS_NO_ORACLE=1` to allow

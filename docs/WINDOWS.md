@@ -111,7 +111,7 @@ PowerShell scripts require **PowerShell 7 or newer** (`pwsh`).
 | --- | --- | --- |
 | `tools/verify.sh` | `tools/verify.ps1` | Native format, check, Clippy, debug/release tests, release build, dependency/unsafe/import audits, install/uninstall |
 | `tools/reference.sh` | `tools/reference.ps1` | Isolated pinned C checkout, clean-tree and all 43 SHA-256 checks; existing mismatches fail without checkout/reset |
-| `tools/perf.sh` | `tools/perf.ps1` | Native samples, median/range, encoded byte count, sampled OS peak working set, raw reports and environment metadata; includes Sixel |
+| `tools/perf.sh` | `tools/perf.ps1` | Native samples, median/range, encoded byte count, sampled OS peak working set, raw reports and environment metadata; includes Sixel, and `-BigFlock` measures big-flock mode (D-006) |
 | Unix C performance comparison | `tools/perf.ps1 -CompareReference` | Runs `perf.sh` in WSL; C has no Sixel workload |
 | Whole Unix verification | `tools/verify.ps1 -AllLocal -Distribution Debian` | Native Windows gates plus WSL Unix gates |
 | Docker architectures / VHS | `tools/unix.ps1 linux` / `tools/unix.ps1 vhs` | Existing Unix workflows in WSL, with their original prerequisites |

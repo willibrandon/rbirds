@@ -1,7 +1,9 @@
 # Deviations
 
 D-001 through D-003 are proposed changes. D-004 and D-005 describe the accepted
-Sixel and Windows additions. Test results are in [the evidence index](evidence/README.md).
+Sixel and Windows additions. D-006 is big-flock mode, which changes nothing unless
+`--big-flock` is given, and D-007 is how the frame delay sleeps. Test results are
+in [the evidence index](evidence/README.md).
 
 The first three entries cover C behavior that is undefined, and so can't be reproduced
 without reproducing memory corruption or an implementation-defined accident.
@@ -94,3 +96,99 @@ Reference for every entry: cbirds 1.4.0, commit
 - Claim affected: Windows has its own tests. C comparisons, Unix ABI checks and
   POSIX signal tests run on Unix. Windows ARM64 and appearance in real terminals
   still need testing. Forced termination may prevent terminal cleanup.
+
+## D-006: big-flock mode
+
+- Reference: cbirds 1.4.0 at the pinned commit above; all supported targets.
+- Input: `--big-flock COUNT`, help, completions, and a live session started
+  with it.
+- Reference behavior: `--birds` stops at 4096, `+` stops there too, and there
+  is no `--big-flock`. One thread flies and draws the flock, and frames are
+  written as soon as they are built.
+- rbirds behavior / first divergence:
+  - `--big-flock COUNT` takes 1 to 65536 birds and overrides `--birds`
+    wherever either appears. `--birds` keeps its range and its messages, so
+    `--birds 5000` is still refused. `+` grows the flock to 65536.
+  - A frame uses half the cores the system reports
+    (`std::thread::available_parallelism`, at least one) for the neighbour
+    search and the rest of each bird's step, composition, reading the canvas
+    into cells, and Sixel encoding. Wing beats run afterwards on one thread
+    in bird order, because a glide is the only random draw in a step. Each
+    parallel step writes each bird, band of pixel rows or Sixel band from
+    inputs no other thread writes, so the result doesn't depend on the
+    thread count. For N up to 4096, `--big-flock N` flies and draws exactly
+    the flock `--birds N` does.
+  - At startup the terminal is sent a device status request (`\e[5n`). If it
+    answers (`\e[0n`) within 250 ms, every frame is followed by the same
+    request, and the next frame is built while the terminal reads but not
+    written until the answer is in. The request is counted before the frame
+    is written, so an answer read while it is written still counts. The
+    terminal is then never more than a frame behind, however much a frame
+    holds. Answers are taken out of the input before keys are read from it,
+    so they don't count as keys or reset the idle clock, and no other byte
+    is dropped. Keys read while a frame waits are acted on at once, as keys
+    read while output is blocked are, and a q then leaves at once as it does
+    there; however much is typed, the frame still waits. While an answer is due, putting the terminal back first
+    reads it (for at most 250 ms, on the normal and the signal path alike),
+    so it doesn't reach the shell. A terminal that doesn't answer at startup
+    gets its frames as in cbirds. One that stops answering holds up one
+    frame for a second, and after that its frames go out as in cbirds.
+  - `--bench` prints a `threads` line after `render`.
+  - Threads are started for each parallel step, and starting a thread
+    allocates. In this mode a steady-state frame therefore allocates, which
+    docs/PORTING.md §7 otherwise rules out. Buffers are still reused from
+    frame to frame.
+- Reason: real starling murmurations run to tens of thousands of birds, and
+  past a few thousand one core can't fly and draw them 60 times a second.
+  Using every core and writing frames as fast as they are built made the
+  flock stop in flight: in VHS's terminal it stood still for up to 709 ms at
+  65536 birds, because the terminal fell behind and was short of CPU to
+  catch up. With half the cores and the pacing there were no stills
+  ([evidence](evidence/README.md#live-pacing)).
+- Affected requirements: C01 (option table, help, completions), C05
+  (population past 4096), C13 (the startup request), C14 (the `+` limit,
+  answers in the input), C15 (reading an outstanding answer before
+  restoring), C17 (bench report and steady-state allocation).
+- Regression tests: `tests/big_flock.rs` (6000 birds in every renderer and a
+  flock grown past 4096 with `+`, each on 1, 2, 5 and 12 threads; 65536 birds
+  on 1, 3 and 12; answers taken out of the keys, and counted when read while
+  their frame is written; `--birds` and `--big-flock`
+  giving the same bench frames, GIFs and cast; limits and messages), the
+  pacing cases in `tests/pty_rbirds.rs` (a request after every frame, frames
+  no faster than a slow terminal answers, even while input pours in, a key
+  after a burst of keys, no stall, a terminal that doesn't answer or stops
+  answering, a signal while an answer is due), the threaded runs in
+  `tests/sim_oracle.rs` (every scenario on 2 and 5 threads against the C),
+  `tests/sixel.rs::every_thread_count_writes_the_same_image`, the
+  neighbour-gathering and Sixel band cases in `tests/allocation_failure.rs`,
+  and the extended CLI normalization in `tests/cli_differential.rs`.
+- Decision: accepted, including the help and completion changes.
+- Claim affected: none without `--big-flock`. With it, up to 4096 birds the
+  frames are cbirds' (checked against the C on several threads). Past 4096
+  there is no C to compare with, so each thread count is compared with one
+  thread instead.
+
+## D-007: the frame delay ends on time
+
+- Reference: cbirds 1.4.0 at the pinned commit above; seen on macOS.
+- Input: any live run.
+- Reference behavior: after a frame, `nanosleep` for the rest of the
+  sixtieth of a second. macOS lets a sleep end up to about a third of its
+  length late, so a 14 ms sleep ends 5 to 7 ms late. cbirds draws a frame
+  every 18 to 21 ms on the M4 Pro (49 to 55 a second across runs, measured),
+  and the faster a frame is built, the longer the sleep and the later the
+  next frame.
+- rbirds behavior / first divergence: the same deadline, slept towards a
+  millisecond at a time (`live::sleep_until`), which ends within half a
+  millisecond of it. rbirds draws a frame every 17 ms (59 a second). The
+  frames and the time each one flies are unchanged.
+- Reason: rbirds builds a frame two to three times faster than cbirds, so
+  one long sleep made its frames later than cbirds', 49 a second against 52
+  in the same run. Sleeping to the deadline means a faster frame can never make the next
+  one late. On Linux, where sleeps end on time, nothing changes.
+- Affected requirements: C07 (time), C13 (live frames).
+- Regression tests: `tests/big_flock.rs::the_frame_delay_ends_on_time`,
+  `tests/pty_rbirds.rs::the_default_flock_is_not_paced_and_never_stalls`.
+- Decision: accepted.
+- Claim affected: none. Live frame times are measured, not compared exactly
+  (docs/COMPATIBILITY.md §1).

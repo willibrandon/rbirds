@@ -17,7 +17,7 @@ use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Program, frame_delay_after};
 use crate::config::*;
 use crate::image::{Image, PngError, png};
 use crate::input::InputParser;
-use crate::platform::{self, STDIN_FILENO, Timespec, WinSize};
+use crate::platform::{self, PollFd, STDIN_FILENO, Timespec, WinSize};
 use crate::render::Renderer;
 use crate::render::compose::{compose_onto, text_style, upload_sprite_sets};
 use crate::render::kitty::{KittyError, KittyGraphics};
@@ -36,6 +36,167 @@ pub fn read_keys(sim: &mut Sim, parser: &mut InputParser) -> bool {
     match platform::read(STDIN_FILENO, &mut input) {
         Ok(length) => sim.handle_input(parser, Some(&input[..length])),
         Err(_) => sim.handle_input(parser, None),
+    }
+}
+
+/// Big-flock mode's check that the terminal has caught up (docs/DEVIATIONS.md
+/// D-006). A frame ends with a device status request, and the next frame is
+/// worked out while the terminal reads this one but is not written until the
+/// terminal has answered. However much a frame holds and however slowly the
+/// terminal reads, it is never more than a frame behind, so frames arrive as
+/// fast as it can take them and no faster. The answers are taken out of the
+/// input before the keys are read from it.
+#[derive(Clone, Debug)]
+pub struct Pacing {
+    /// Whether the terminal answered at startup. Without that, frames go out
+    /// as they do in cbirds.
+    pub on: bool,
+    /// Whether frames wait for answers: until one takes longer than
+    /// ANSWER_MILLISECONDS, after which the terminal is taken not to answer
+    /// any more, and frames go out as in cbirds. Answers are still taken
+    /// out of the input.
+    waits: bool,
+    /// Requests counted and not yet answered.
+    unanswered: u32,
+    /// When the last request had been written.
+    sent_at: Timespec,
+    /// How much of an answer the input read so far ended with.
+    held: usize,
+}
+
+/// Device status report: "are you there?"
+pub const STATUS_REQUEST: &[u8] = b"\x1b[5n";
+/// "Yes", sent once everything before the request has been read.
+pub const STATUS_ANSWER: &[u8] = b"\x1b[0n";
+/// How long to wait for an answer before sending the next frame anyway.
+const ANSWER_MILLISECONDS: i64 = 1000;
+/// Room for the keys of one read of INPUT_BUFFER_SIZE bytes and the start of
+/// an answer held from the read before, which may turn out to be keys.
+pub const KEYS_ROOM: usize = INPUT_BUFFER_SIZE + STATUS_ANSWER.len() - 1;
+
+impl Pacing {
+    /// Pacing that is `on` or not.
+    pub fn new(on: bool) -> Pacing {
+        Pacing { on, waits: on, unanswered: 0, sent_at: Timespec::default(), held: 0 }
+    }
+
+    /// Sorts one read's `input`, at most INPUT_BUFFER_SIZE bytes, into
+    /// answers, which are counted off, and keys, which go into `keys`;
+    /// returns how many keys. An answer split across reads is still one
+    /// answer, and bytes that start one and then don't finish it are keys
+    /// after all, so no byte read is lost.
+    pub fn keys_from(&mut self, input: &[u8], keys: &mut [u8; KEYS_ROOM]) -> usize {
+        assert!(input.len() <= INPUT_BUFFER_SIZE, "one read at a time");
+        let mut length = 0;
+        for &byte in input {
+            if byte == STATUS_ANSWER[self.held] {
+                self.held += 1;
+                if self.held == STATUS_ANSWER.len() {
+                    self.held = 0;
+                    self.unanswered = self.unanswered.saturating_sub(1);
+                    platform::mark_answer_outstanding(self.unanswered > 0);
+                }
+                continue;
+            }
+            for &started in &STATUS_ANSWER[..self.held] {
+                keys[length] = started;
+                length += 1;
+            }
+            self.held = 0;
+            if byte == STATUS_ANSWER[0] {
+                self.held = 1;
+            } else {
+                keys[length] = byte;
+                length += 1;
+            }
+        }
+        length
+    }
+
+    /// Counts a request about to go out, before anything that writes it can
+    /// also read its answer.
+    pub fn requested(&mut self) {
+        self.unanswered = self.unanswered.saturating_add(1);
+        platform::mark_answer_outstanding(true);
+    }
+
+    /// The frame and its request have been written: the wait for the answer
+    /// starts now.
+    pub fn sent(&mut self, at: Timespec) {
+        self.sent_at = at;
+    }
+
+    /// Whether a request is still unanswered.
+    pub fn waiting(&self) -> bool {
+        self.unanswered > 0
+    }
+
+    /// Reads until every request is answered, handling the keys as they are
+    /// read, as keys read while output is blocked are. `false` is a q, which
+    /// leaves at once as it does then, or a request to exit. Stops waiting,
+    /// for good, once an answer is ANSWER_MILLISECONDS late, and for now when
+    /// the terminal has gone.
+    pub fn wait(&mut self, sim: &mut Sim, parser: &mut InputParser) -> bool {
+        while self.waits && self.unanswered > 0 {
+            if platform::exit_requested() {
+                return false;
+            }
+            let spent = elapsed_microseconds(&self.sent_at, &platform::monotonic_now()) / 1000;
+            if spent >= ANSWER_MILLISECONDS {
+                self.waits = false;
+                return true;
+            }
+            let mut ready = [PollFd::new(STDIN_FILENO, platform::POLLIN)];
+            match platform::poll(&mut ready, (ANSWER_MILLISECONDS - spent) as i32) {
+                Err(error) if error.raw_os_error() == Some(platform::EINTR) => continue,
+                Err(_) => return true,
+                Ok(_) => {}
+            }
+            let mut input = [0_u8; INPUT_BUFFER_SIZE];
+            let Ok(got) = platform::read(STDIN_FILENO, &mut input) else { return true };
+            if got == 0 && ready[0].revents & !platform::POLLIN != 0 {
+                // Hung up: the frame's write will say so.
+                return true;
+            }
+            let mut keys = [0_u8; KEYS_ROOM];
+            let length = self.keys_from(&input[..got], &mut keys);
+            if !sim.handle_input(parser, Some(&keys[..length])) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+/// `read_keys` with the terminal's answers taken out first.
+fn read_keys_paced(sim: &mut Sim, parser: &mut InputParser, pacing: &mut Pacing) -> bool {
+    if platform::exit_requested() {
+        return false;
+    }
+    let mut input = [0_u8; INPUT_BUFFER_SIZE];
+    let Ok(got) = platform::read(STDIN_FILENO, &mut input) else {
+        return sim.handle_input(parser, None);
+    };
+    let mut keys = [0_u8; KEYS_ROOM];
+    let length = pacing.keys_from(&input[..got], &mut keys);
+    sim.handle_input(parser, Some(&keys[..length]))
+}
+
+/// Sleeps until `microseconds` after `from`, a millisecond at a time. One
+/// long sleep can end several milliseconds late: macOS lets a timer fire up
+/// to about a third of its length after it was due, so the remainder of a
+/// fast frame, 14 ms, would end 5 to 7 ms late and the next frame with it.
+/// Slices of a millisecond end within half a millisecond of the time.
+pub fn sleep_until(from: &Timespec, microseconds: i64) {
+    loop {
+        if platform::exit_requested() {
+            return;
+        }
+        let left = microseconds - elapsed_microseconds(from, &platform::monotonic_now());
+        if left <= 0 {
+            return;
+        }
+        let _ = platform::nanosleep(&Timespec { tv_sec: 0, tv_nsec: left.min(1000) * 1000 });
     }
 }
 
@@ -232,6 +393,7 @@ fn flush_frame(
     parser: &mut InputParser,
     graphics: &mut KittyGraphics,
     name: &[u8],
+    pacing: &mut Pacing,
 ) -> Result<bool, i32> {
     let mut running = true;
     while running && !graphics.is_empty() {
@@ -244,7 +406,11 @@ fn flush_frame(
                         errno_of(&error),
                     )));
                 }
-                running = read_keys(sim, parser);
+                running = if pacing.on {
+                    read_keys_paced(sim, parser, pacing)
+                } else {
+                    read_keys(sim, parser)
+                };
             }
             Err(KittyError::Io(errno)) => {
                 // Whatever the renderer; a reader that went away is the
@@ -338,6 +504,8 @@ fn run_live(
     }
     sim.set_frame_seconds(1.0 / f64::from(FRAME_RATE));
     sim.hawk_sets_built = true;
+    // A big flock is paced by the terminal, if it answers.
+    let mut pacing = Pacing::new(sim.big_flock && terminal::answers_status());
 
     let count = sim.config.birds.max(0) as usize;
     let mut birds: Vec<Bird> = Vec::new();
@@ -376,6 +544,7 @@ fn run_live(
 
     let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
     let mut input = [0_u8; INPUT_BUFFER_SIZE];
+    let mut paced_keys = [0_u8; KEYS_ROOM];
     loop {
         if platform::exit_requested() {
             return Ok(130);
@@ -386,7 +555,13 @@ fn run_live(
             platform::window_size_or_zero(platform::STDOUT_FILENO),
             sixel_cell,
         );
-        let keys = keys.map(|length| &input[..length]);
+        let keys = match keys {
+            Some(length) if pacing.on => {
+                let length = pacing.keys_from(&input[..length], &mut paced_keys);
+                Some(&paced_keys[..length])
+            }
+            keys => keys.map(|length| &input[..length]),
+        };
         // The clock is read after the keys, as the C reads it; the window a
         // moment later, which no step in between depends on.
         let drawn = live.frame(
@@ -404,8 +579,25 @@ fn run_live(
             break;
         }
         let frame_bytes = graphics.len();
-        if !flush_frame(sim, &mut live.parser, &mut graphics, &name)? {
+        if pacing.on {
+            // The request goes after the frame; the frame waits for the
+            // answer to the one before it. A q while it waits leaves at once.
+            if let Err(error) = graphics.write_raw(STATUS_REQUEST) {
+                return Err(fail(
+                    format!("Cannot queue terminal output: {}\n", kitty_status(error)).as_bytes(),
+                ));
+            }
+            if !pacing.wait(sim, &mut live.parser) {
+                break;
+            }
+            // Counted before the write, which may read the answer itself.
+            pacing.requested();
+        }
+        if !flush_frame(sim, &mut live.parser, &mut graphics, &name, &mut pacing)? {
             break;
+        }
+        if pacing.on {
+            pacing.sent(platform::monotonic_now());
         }
         if settings.frame_limit > 0 && sim.clock.frame >= i64::from(settings.frame_limit) {
             break;
@@ -420,10 +612,7 @@ fn run_live(
         let remaining =
             frame_delay_after(settings.unlock_fps, elapsed_microseconds(&frame_start, &frame_end));
         if remaining > 0 {
-            let _ = platform::nanosleep(&Timespec {
-                tv_sec: remaining / 1_000_000,
-                tv_nsec: (remaining % 1_000_000) * 1000,
-            });
+            sleep_until(&frame_end, remaining);
         }
     }
     // A Ctrl event may also interrupt a blocked frame flush, which exits the

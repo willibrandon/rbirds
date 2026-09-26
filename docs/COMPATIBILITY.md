@@ -4,7 +4,9 @@ Status: every requirement has test evidence on the four targets, except where th
 
 The results below cover Linux and macOS. Windows has native tests described in
 [WINDOWS.md](WINDOWS.md). Sixel and Windows have no cbirds equivalent; D-004 and
-D-005 list those differences. Results for this branch are in the evidence index.
+D-005 list those differences. Big-flock mode (D-006) is off unless `--big-flock` is
+given. D-007 is how the frame delay sleeps. Results for this branch are in the
+evidence index.
 
 Reference: [cbirds 1.4.0, commit cc446fc3cb80733371c62676533adcac2fc10002](https://github.com/clainstone/cbirds/tree/cc446fc3cb80733371c62676533adcac2fc10002). Inspect that revision, not a moving upstream branch. [The manifest](reference-manifest.json) pins its tracked file hashes.
 
@@ -26,6 +28,7 @@ Allowed normalized fields are limited to:
 3. Harness-generated absolute temporary paths, only where the fixture declares a path field.
 4. Measured durations, derived FPS, and live performance-panel statistics. Validate their field format and meaning separately. Output byte counts remain exact for the same deterministic frames.
 5. Sixel's added help text, example, completion choices and invalid-render diagnostic (D-004). `tests/cli_differential.rs` applies those literal additions to expected C output. The rest of the output must match.
+6. The `--big-flock` row in the full help and in each shell's completions (D-006), applied the same way.
 
 OS-provided error text is compared against the same-target C execution; cross-OS wording need not match. Freeze the environment for each comparison and preserve behavior under additional environments as separate cases. Do not strip all stderr, ANSI sequences, whitespace, metadata, or numeric fields to obtain a match.
 
@@ -51,16 +54,17 @@ A completed row links to automated test cases and their evidence through [the ev
 | C14 | Keys, fragmented escape sequences, mouse reports, malformed input, hidden sequence | Parser oracle + PTY input scripts; `tests/sim_oracle.rs` (keys, split sequences, mouse, Konami), input tests in `tests/c_boids.rs` | passing |
 | C15 | Terminal setup/cleanup, partial setup, signals, panic/error paths, blocked/closed output | ABI probes + failure injection + subprocess/PTY checks; `tests/abi.rs`, `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs` | passing (see D-001) |
 | C16 | GIF/cast recording, snapshots, headless defaults, mode selection and diagnostics | End-to-end files and decoded frames; `tests/headless_differential.rs`, recording tests in `tests/c_boids.rs`, PTY snapshot cases | passing |
-| C17 | Bench output, configuration, byte counts, release performance and allocation behavior | Same-host C/Rust measurements; `tests/headless_differential.rs` (bench output, byte counts) | passing; budgets met on macOS arm64 |
+| C17 | Bench output, configuration, byte counts, release performance and allocation behavior | Same-host C/Rust measurements; `tests/headless_differential.rs` (bench output, byte counts) | passing; budgets met on macOS arm64 (see D-006 for big-flock mode) |
 | C18 | Offline/no-dependency build, supported targets, clean install/uninstall and provenance | Dependency audit, native CI and packaging smoke checks; `tools/verify.sh` (dependency graph, linkage, install), Rosetta and Docker runs | passing, natively in CI on all four targets |
 
 ## 3. CLI surface
 
-The option table in `boids.c` is authoritative. This inventory includes its 29 rows and the parser's special options.
+The option table in `boids.c` is authoritative. This inventory includes its 29 rows and the parser's special options, plus rbirds' `--big-flock` (D-006).
 
 | Option | Range, choices, default, or special behavior |
 | --- | --- |
 | `-n`, `--birds` | 1–4096; default 800 |
+| `--big-flock` | rbirds only (D-006): 1–65536 birds in place of `--birds`, on half the cores, paced by the terminal |
 | `-s`, `--size` | 4–64 pixels; default 30 |
 | `-g`, `--flocks`, `--groups` | 1–3; default 1; `groups` is a hidden alias |
 | `-k`, `--hawks` | 0–4; default 0 |

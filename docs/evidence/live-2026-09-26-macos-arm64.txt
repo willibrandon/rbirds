@@ -1,0 +1,76 @@
+Live frame pacing on an Apple M4 Pro (12 cores: 8 performance, 4
+efficiency; macOS 26.5.2), 2026-09-26 UTC. rbirds 0.1.1 release build with
+big-flock mode (D-006) and the deadline sleep (D-007). "rbirds before" is
+the same version without them (commit 2fa8167). C: the pinned cbirds built
+with Apple clang 17.0.0, -std=c99 -O3 -g. All runs --color ember --seed 1.
+
+tools/pacing.py: each program live under a pseudoterminal for 10 s, output
+read as fast as it comes, device status requests answered as a terminal
+does. Gaps are between the starts of successive frames, leaving out the
+first second. "cores" is the program's CPU time over the run's wall time.
+
+The host was also running other work (load average 3 to 6). In 30 s runs
+side by side, cbirds had 2 and 20 gaps over 25 ms and rbirds 1 and 1; the
+longest gap in each was 26 to 39 ms, for both. An earlier version of the
+harness could answer a request twice when a read ended on it; these runs
+are with the fixed one.
+
+cbirds       --birds 800    200x50   54.2 fps | gap ms p50  18.5 p90  20.4 p99  23.2 max   24.7 | over 25 ms 0, over 50 ms 0 of 487 |   526 KiB/s | 0.38 cores
+cbirds       --birds 4096   200x50   55.6 fps | gap ms p50  18.0 p90  18.7 p99  19.9 max   19.9 | over 25 ms 0, over 50 ms 0 of 499 |  1178 KiB/s | 0.56 cores
+rbirds before --birds 800    200x50   54.1 fps | gap ms p50  18.6 p90  20.3 p99  24.0 max   24.9 | over 25 ms 0, over 50 ms 0 of 486 |   545 KiB/s | 0.38 cores
+rbirds before --birds 4096   200x50   55.5 fps | gap ms p50  18.0 p90  18.9 p99  20.3 max   21.2 | over 25 ms 0, over 50 ms 0 of 499 |  1171 KiB/s | 0.55 cores
+rbirds       --birds 800    200x50   59.2 fps | gap ms p50  16.8 p90  19.0 p99  22.3 max   39.7 | over 25 ms 2, over 50 ms 0 of 531 |   583 KiB/s | 0.30 cores
+rbirds       --birds 4096   200x50   59.5 fps | gap ms p50  16.8 p90  17.8 p99  19.8 max   26.7 | over 25 ms 1, over 50 ms 0 of 535 |  1273 KiB/s | 0.39 cores
+rbirds       --big-flock 4096   200x50   59.4 fps | gap ms p50  16.8 p90  19.2 p99  22.0 max   27.4 | over 25 ms 2, over 50 ms 0 of 534 |  1176 KiB/s | 0.75 cores
+rbirds       --big-flock 16384  200x50   59.5 fps | gap ms p50  16.8 p90  17.6 p99  21.1 max   23.3 | over 25 ms 0, over 50 ms 0 of 534 |  1969 KiB/s | 1.55 cores
+rbirds       --big-flock 32768  200x50   59.6 fps | gap ms p50  16.8 p90  17.1 p99  20.7 max   23.6 | over 25 ms 0, over 50 ms 0 of 535 |  2447 KiB/s | 2.01 cores
+rbirds       --big-flock 65536  200x50   55.3 fps | gap ms p50  17.9 p90  19.8 p99  20.9 max   26.3 | over 25 ms 1, over 50 ms 0 of 497 |  2834 KiB/s | 3.95 cores
+rbirds       --big-flock 4096   216x65   59.5 fps | gap ms p50  16.9 p90  19.9 p99  23.3 max   28.0 | over 25 ms 2, over 50 ms 0 of 534 |   951 KiB/s | 1.20 cores
+rbirds       --big-flock 16384  216x65   59.5 fps | gap ms p50  16.8 p90  17.4 p99  20.8 max   22.9 | over 25 ms 0, over 50 ms 0 of 535 |  1506 KiB/s | 1.76 cores
+rbirds       --big-flock 32768  216x65   59.6 fps | gap ms p50  16.8 p90  17.0 p99  17.5 max   22.3 | over 25 ms 0, over 50 ms 0 of 536 |  1847 KiB/s | 2.05 cores
+rbirds       --big-flock 65536  216x65   59.2 fps | gap ms p50  16.8 p90  17.1 p99  18.7 max   36.5 | over 25 ms 2, over 50 ms 0 of 533 |  2237 KiB/s | 3.49 cores
+
+tools/vhs/stalls.sh: each command live in VHS 0.12.1's terminal (ttyd and
+xterm.js in headless Chrome), 1400x800, recorded at 25 frames a second. A
+still is a video frame that differs from the one before by less than 8 in
+every pixel; only 4 s to 12 s of the flight counts, so the intro and the
+flight out after q are left out.
+
+./cbirds --color ember --seed 7                    25.1 video fps | still frames 0 of 201 | longest still 0 ms
+./rbirds --color ember --seed 7                    25.1 video fps | still frames 0 of 201 | longest still 0 ms
+./cbirds -n 4096 --color ember --seed 7            25.1 video fps | still frames 0 of 201 | longest still 0 ms
+./rbirds -n 4096 --color ember --seed 7            25.1 video fps | still frames 0 of 201 | longest still 0 ms
+./rbirds --big-flock 16384 --color ember --seed 7  25.1 video fps | still frames 0 of 201 | longest still 0 ms
+./rbirds --big-flock 32768 --color ember --seed 7  25.1 video fps | still frames 0 of 201 | longest still 0 ms
+./rbirds --big-flock 65536 --color ember --seed 7  25.1 video fps | still frames 1 of 201 | longest still 39 ms
+./rbirds --big-flock 65536 --preset murmuration --size 12 --seed 7 25.1 video fps | still frames 0 of 201 | longest still 0 ms
+./rbirds --big-flock 30000 --render sextants --seed 7 25.1 video fps | still frames 0 of 201 | longest still 0 ms
+
+Repeated at 65536 birds while the host was busy (load average up to 12):
+two of four runs had one video frame the same as the one before (39 ms),
+and none two in a row.
+
+What the design was chosen from, measured the same way in VHS (longest
+still between 4 s and 12 s, capture rate in brackets when it fell):
+
+  every core, no pacing, birds drawn smaller as the flock grew:
+    30000 birds (11 px)   80 ms       65536 birds (7 px)   709 ms (19.8 fps)
+  one thread, no pacing:
+    8192, 16384, 32768    none
+  no pacing, 30 px birds:        4 threads   6 threads   12 threads
+    16384                        none        none        none
+    32768                        none        none        159 ms
+    65536                        none        550 ms (23.6 fps)   650 ms (20.0 fps)
+  pacing, 30 px birds:
+    32768                        none        none        none
+    65536                        none        none        565 ms (23.0 fps)
+
+Without pacing, a terminal that falls behind the frames shows it as a
+still, and on more threads it also runs short of CPU (the capture rate fell
+with it). Pacing keeps the terminal at most a frame behind, and half the
+cores leaves it the CPU. Drawing birds smaller more than doubled the bytes a
+frame (97 KB against 43 KB at 65536 birds, --bench) and was dropped.
+
+Sleep overshoot on the same Mac (std::thread::sleep, 60 sleeps each):
+  2 ms: 0.95 ms late    7 ms: 1.96    10 ms: 3.19    14 ms: 5.08    16 ms: 4.96 (medians)
+  slept towards a 7 ms or 14 ms deadline a millisecond at a time: 0.45 and 0.21 ms late

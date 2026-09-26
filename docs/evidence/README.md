@@ -44,7 +44,7 @@ Both are properties of the canonical C build, and the port reproduces them on pu
 
 | Area | Test | Compared | Corpus |
 | --- | --- | --- | --- |
-| Simulation, controls, time | `tests/sim_oracle.rs` | every RNG word, config field, bird, hawk, flock, formation target and grid digest as IEEE bits, and every queued frame's bytes, after every step | 17 scenarios: seeds 0, 1, 2, 5, 33, 42, 2147483647; 1 to 4096 birds; 1 to 3 flocks with avoidance 0 to 12; 0 to 4 hawks; pace 0 to 12 (substeps); all 13 notches of all 7 sliders and the presets; depth, trails, matrix; viewports from 40×14 to 400×120; 7 recording rates; a 68 s recording (autopilot); live sessions with keys, mouse reports, Konami, resizes, the panel, zero, late and 240 Hz frames, the intro release, a minute of autopilot and the flight out, in every renderer and palette |
+| Simulation, controls, time | `tests/sim_oracle.rs` | every RNG word, config field, bird, hawk, flock, formation target and grid digest as IEEE bits, and every queued frame's bytes, after every step, flown on one thread and again on 2 and 5 as big-flock mode flies them (D-006) | 17 scenarios: seeds 0, 1, 2, 5, 33, 42, 2147483647; 1 to 4096 birds; 1 to 3 flocks with avoidance 0 to 12; 0 to 4 hawks; pace 0 to 12 (substeps); all 13 notches of all 7 sliders and the presets; depth, trails, matrix; viewports from 40×14 to 400×120; 7 recording rates; a 68 s recording (autopilot); live sessions with keys, mouse reports, Konami, resizes, the panel, zero, late and 240 Hz frames, the intro release, a minute of autopilot and the flight out, in every renderer and palette |
 | C tests | `tests/c_*.rs` | all 112 C tests with the same names, assertions and tolerances; the boids tests start from the C suite's own entry state | [inventory](../c-test-inventory.csv) |
 | CLI | `tests/cli_differential.rs`, `tests/options_oracle.rs` | exit status, stdout and stderr of the two programs; parser state and messages | about 90 argument vectors end to end (help, version, completions, errors, numeric syntax, invalid bytes, sprite failures, warnings, `argv[0]`); about 36,000 parser cases |
 | Recording | `tests/headless_differential.rs` | GIF files exactly; casts exactly apart from the header timestamp and title; summaries and diagnostics | every `--record-fps` from 2 to 120 as GIF and cast; shapes, custom sprite, text renderers, matrix, presets, sizes; `.cast` naming; write failures |
@@ -54,7 +54,8 @@ Both are properties of the canonical C build, and the port reproduces them on pu
 | Cells, Kitty | `tests/cells_oracle.rs`, `tests/kitty_oracle.rs` | emitted bytes, cell state, painted pixels, protocol stream | 90 cell scenarios; uploads across every chunk boundary |
 | Terminal lifecycle | `tests/pty_reference.rs`, `tests/pty_rbirds.rs` | byte sequences, termios before, during and after, exit codes | theme queries answered, fragmented and absent; raw mode; `q` on both quit paths; all 8 handled signals; blocked and broken output; SIGPIPE; Kitty upload and release; stdin that isn't a terminal; tiny windows and resizes; snapshots; a terminal that goes away; a panic |
 | OS bindings | `tests/abi.rs` | every struct size, alignment, field offset, constant and prototype against the system headers | 165 to 167 lines per target, the same on all four targets |
-| Failure recovery | `tests/allocation_failure.rs` | the C's recovery points under an allocator that refuses | flock growth, images, codecs, grid, cells, output buffer, GIF writer |
+| Big-flock mode (D-006) | `tests/big_flock.rs`, `tests/sixel.rs`, `tests/pty_rbirds.rs` | the same transcript on one thread and on up to 12 past 4096 birds; `--big-flock N` and `--birds N` give the same bench frames, GIFs and cast; Sixel bands on 2 to 16 threads; a status request after every frame, frames no faster than the terminal answers, no stall, nothing left for the shell after a signal | 6000 birds in 3 flocks with hawks, trails and depth in every renderer; a live flock grown past 4096 with `+`; 65536 birds; live runs under a PTY that answers quickly, slowly or not at all |
+| Failure recovery | `tests/allocation_failure.rs` | the C's recovery points under an allocator that refuses | flock growth, images, codecs, grid, cells, output buffer, GIF writer; the neighbour search's gathered copy and Sixel bands, which the C doesn't have |
 
 ## Checks
 
@@ -92,18 +93,40 @@ A 4 s recording with 2 hawks, 2 flocks, depth and trails (`--seed 42`) as a GIF,
 - The GIFs have the same bytes. ffprobe 9.0.2, ImageMagick and Pillow 11.3 all read 100 frames of 40 ms, 4.0 s, 768×416, looping forever.
 - The casts have the same events. `asciinema convert` (asciinema 3.1.0) reads them, and agg 1.7.0 renders 101 frames over 7.0 s (the 4 s recording and agg's 3 s hold on the last frame) showing the braille flock in colour.
 
+## Live pacing
+
+See [`live-2026-09-26-macos-arm64.txt`](live-2026-09-26-macos-arm64.txt). `--bench` times building frames with no terminal. These time the frames as a terminal receives them: `tools/pacing.py` under a pseudoterminal that answers status requests, and `tools/vhs/stalls.sh` in VHS's terminal (xterm.js), which looks for a flock standing still in flight.
+
+| Run | Frames a second, gap p99, longest gap | CPU cores |
+| --- | --- | --- |
+| cbirds, default / 4096 birds | 54.2 / 55.6, 23.2 / 19.9 ms, 24.7 / 19.9 ms | 0.38 / 0.56 |
+| rbirds before, default / 4096 birds | 54.1 / 55.5, 24.0 / 20.3 ms, 24.9 / 21.2 ms | 0.38 / 0.55 |
+| rbirds, default / 4096 birds | 59.2 / 59.5, 22.3 / 19.8 ms, 39.7 / 26.7 ms | 0.30 / 0.39 |
+| rbirds `--big-flock` 16384 / 32768 / 65536, 200x50 cells | 59.5 / 59.6 / 55.3, at most 21.1 ms p99, 26.3 ms longest | 1.6 / 2.0 / 4.0 |
+| the same at 216x65 cells, 3456x2210 pixels | 59.5 / 59.6 / 59.2, at most 20.8 ms p99, 36.5 ms longest | 1.8 / 2.1 / 3.5 |
+
+The host was running other work, so every program had the odd late frame. In 30 s runs side by side, cbirds had 2 and 20 gaps over 25 ms and rbirds 1 and 1. No run had a gap over 50 ms. cbirds' frames are 18 to 21 ms apart on macOS because its sleep ends late ([D-007](../DEVIATIONS.md#d-007-the-frame-delay-ends-on-time)). rbirds builds frames faster, which made that sleep longer, so before D-007 its frames came later than cbirds'. In VHS no run stood still between the intro and the flight out: cbirds and rbirds at 800 and 4096 birds, and big-flock mode at 16384, 32768 and 65536 birds (and at 65536 with 12-pixel birds). At 65536 birds on a busy host, two of four runs had a single video frame (39 ms) the same as the one before, never two in a row. Before the pacing and the limit to half the cores, the flock stood still for up to 709 ms at 65536 birds; the file lists what each change did.
+
 ## Performance
 
-See [`perf-2026-09-26-macos-arm64.txt`](perf-2026-09-26-macos-arm64.txt), which lists every run with its raw samples. These are results from `tools/perf.sh` on the M4 Pro: ten interleaved C and Rust samples per workload after two warmups, each sample about 1.5 s of frames, with the C built with its canonical flags and Rust with `--release`.
+See [`perf-2026-09-26-big-flock-macos-arm64.txt`](perf-2026-09-26-big-flock-macos-arm64.txt), which lists every run with its raw samples. These are results from `tools/perf.sh` on the M4 Pro: ten interleaved C and Rust samples per workload after two warmups, each timing `--bench`, which builds frames with no terminal. The C is built with its canonical flags and Rust with `--release`. The run before big-flock mode and the faster drawing is [`perf-2026-09-26-macos-arm64.txt`](perf-2026-09-26-macos-arm64.txt).
 
 | Workload | Rust / C median frame time | Peak memory (C, Rust) |
 | --- | --- | --- |
-| kitty, 800 / 4096 birds | 0.77× / 0.86× | 1.9 / 2.9 MiB, 2.3 / 3.2 MiB |
-| braille 800 / 4096, sextants, blocks | 0.98× / 0.99×, 0.97×, 0.93× | 17.8 to 18.5 MiB, within 0.9 MiB of each other |
-| busy (speed 12, 4 hawks, 3 flocks, depth, trails): 800 / 4096 / braille | 0.92× / 0.98× / 1.01× | within 0.4 MiB |
-| startup (`--bench 1 --render braille`, sprites included) | 1.10× | |
+| kitty, 800 / 4096 birds | 0.52× / 0.50× | 1.9 / 2.9 MiB, 2.3 / 3.3 MiB |
+| braille 800 / 4096, sextants, blocks | 0.44× / 0.39×, 0.43×, 0.50× | 17.8 to 18.5 MiB, within 0.6 MiB of each other |
+| busy (speed 12, 4 hawks, 3 flocks, depth, trails): 800 / 4096 / braille | 0.62× / 0.56× / 0.48× | within 0.9 MiB |
+| startup (`--bench 1 --render braille`, sprites included) | 1.09× | |
 
-Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.25×C, C+8 MiB)`), and the bytes per frame are the same for C and Rust in every workload. The host was running other work, so some runs had samples slowed by contention (both programs alike, with tight quartiles). Each workload was repeated until a run had a spread within 5% on both sides, and the table uses those runs. A steady-state live frame allocates nothing (`tests/steady_state_allocation.rs`). The release binary is 773 KB, against 183 KB for the C.
+Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.25×C, C+8 MiB)`), and the bytes per frame are the same for C and Rust in every workload. The neighbour search reads a copy of the snapshot in grid order, and composition, cell reading and Sixel encoding skip work that changes no pixel or cell. The frames are the same bytes as before. A steady-state live frame allocates nothing in any renderer (`tests/steady_state_allocation.rs`). The release binary is 857 KB, against 183 KB for the C.
+
+Big-flock mode (D-006) on its 6 threads, where the C has nothing to compare:
+
+| Workload | Median frame time | Bytes a frame |
+| --- | --- | --- |
+| 4096 birds: kitty / braille / busy | 0.51 / 1.10 / 1.54 ms, 3.5× / 3.9× / 3.9× faster than one thread | the same as on one thread |
+| 16384 birds: braille / sixel | 3.6 / 5.3 ms | 46 KB / 394 KB |
+| 65536 birds: kitty / braille / sixel | 18.7 / 21.1 / 25.2 ms | 2.4 MB / 68 KB / 460 KB |
 
 ## Not yet done
 

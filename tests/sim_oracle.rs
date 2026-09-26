@@ -9,7 +9,9 @@
 //! injected time, input and window sizes. Every double is compared as its
 //! IEEE bits and every queued frame as its bytes: there is no tolerance. On a
 //! mismatch the scenario is re-run with full dumps around the first differing
-//! digest and the first differing field is reported.
+//! digest and the first differing field is reported. A scenario that matches
+//! is run again on several threads, as big-flock mode flies and draws it
+//! (docs/DEVIATIONS.md D-006), and must still match.
 
 mod support;
 
@@ -17,7 +19,7 @@ use std::fmt::Write as _;
 use std::process::{Command, Stdio};
 
 use support::oracle;
-use support::sim::run_rust;
+use support::sim::{run_rust, run_rust_on};
 
 const SOURCES: &[&str] =
     &["cells.c", "font.c", "gif.c", "kitty_graphics.c", "options.c", "png.c", "spatial_grid.c"];
@@ -84,11 +86,26 @@ fn first_difference(expected: &str, actual: &str) -> Option<String> {
     unreachable!()
 }
 
+/// Thread counts big-flock mode's parallel steps are held to the reference
+/// with: an even split and an odd one.
+const THREADS: [usize; 2] = [2, 5];
+
 fn compare(name: &str, script: &str) {
     let Some(exe) = oracle::build("sim_oracle", "sim_oracle.c", SOURCES) else { return };
     let expected = run_c(&exe, script);
     let actual = run_rust(script);
     if expected == actual {
+        // The same flock and the same frames on several threads
+        // (docs/DEVIATIONS.md D-006).
+        for threads in THREADS {
+            let threaded = run_rust_on(script, threads);
+            if threaded != expected {
+                panic!(
+                    "scenario {name} on {threads} threads diverges from the C reference\n{}",
+                    first_difference(&expected, &threaded).unwrap_or_default()
+                );
+            }
+        }
         return;
     }
     // Locate the first differing digest and replace it, and the one before

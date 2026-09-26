@@ -46,6 +46,8 @@ pub struct Settings {
     pub unlock_fps: bool,
     pub requested_perception: i32,
     pub requested_seed: i32,
+    /// --big-flock's count; zero when not asked for.
+    pub big_flock_birds: i32,
     pub sprite_path: Option<OsString>,
     /// `render_mode` as the option table stores it: an index, -1 unset.
     pub render_request: i32,
@@ -69,6 +71,7 @@ impl Default for Settings {
             unlock_fps: false,
             requested_perception: DEFAULT_VISION_RADIUS,
             requested_seed: -1,
+            big_flock_birds: 0,
             sprite_path: None,
             render_request: RenderMode::Unset as i32,
             program_name: PRODUCT.as_bytes().to_vec(),
@@ -108,7 +111,7 @@ const fn row(
 
 /// The option table: the parser, the help and the completions all come off
 /// this, in this order.
-pub static OPTIONS: [OptionSpec<Program>; 29] = [
+pub static OPTIONS: [OptionSpec<Program>; 30] = [
     row(
         Some(b'n'),
         "birds",
@@ -170,6 +173,20 @@ pub static OPTIONS: [OptionSpec<Program>; 29] = [
         Kind::Int { target: |p| &mut p.settings.requested_seed, min: 0.0, max: 2147483647.0 },
         Some("N"),
         "the same seed gives the same flock",
+        FLOCK,
+        false,
+    ),
+    row(
+        None,
+        "big-flock",
+        None,
+        Kind::Int {
+            target: |p| &mut p.settings.big_flock_birds,
+            min: 1.0,
+            max: BIG_FLOCK_BIRDS as f64,
+        },
+        Some("COUNT"),
+        "up to 65536 birds on several cores, instead of --birds",
         FLOCK,
         false,
     ),
@@ -543,6 +560,11 @@ pub fn read_options(
 
     let sim = &mut program.sim;
     let settings = &mut program.settings;
+    if settings.big_flock_birds > 0 {
+        sim.big_flock = true;
+        sim.config.birds = settings.big_flock_birds;
+        sim.threads = crate::parallel::big_flock_threads();
+    }
     // A preset is expanded first so that a slider given after it still wins,
     // as far as the table can tell: only values off the shipped default are
     // put back.

@@ -67,6 +67,201 @@ rust_case!(stdin_dev_null_fails_raw_mode, |s| cases::stdin_not_a_terminal(s, pty
 rust_case!(stdin_pipe_fails_raw_mode, |s| cases::stdin_not_a_terminal(s, pty::Stream::ClosedPipe));
 rust_case!(tiny_window_and_resizes, cases::tiny_window_and_resizes);
 
+/// A live run of `args` with `frames` frames, each marked as it arrives, on
+/// a terminal that answers device status requests or doesn't.
+fn marked_run(args: &[&str], frames: usize, answers: bool) -> pty::Outcome {
+    use support::pty::{Action, Reply, Spec, Step};
+    let mut spec = Spec::new(&rbirds(), args);
+    for _ in 0..frames {
+        spec = spec.step(Step::after_output(cases::FRAME_BEGIN, Action::Mark("frame")));
+    }
+    if answers {
+        spec = spec.reply(Reply::whole(b"\x1b[5n", b"\x1b[0n"));
+    }
+    let outcome = pty::run(&spec);
+    cases::assert_clean_exit(&outcome, false);
+    cases::assert_frames(&outcome, frames);
+    outcome
+}
+
+/// No frame after the first second takes much longer than frames usually
+/// do: the flock never stops in flight. Relative to the run's own median, so
+/// a slow machine passes and a stall of a few hundred milliseconds does not.
+fn assert_no_stall(outcome: &pty::Outcome) {
+    let at: Vec<_> = outcome
+        .events
+        .iter()
+        .filter(|e| e.what == "mark frame" && e.at.as_secs_f64() > 1.0)
+        .map(|e| e.at)
+        .collect();
+    let mut gaps: Vec<_> = at.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(gaps.len() >= 20, "too few frames timed\n{}", outcome.describe());
+    gaps.sort();
+    let median = gaps[gaps.len() / 2];
+    let longest = *gaps.last().unwrap();
+    let allowed = median * 4 + std::time::Duration::from_millis(50);
+    assert!(longest <= allowed, "a {longest:?} frame against a {median:?} median");
+}
+
+/// Big-flock mode (docs/DEVIATIONS.md D-006) on a terminal that answers:
+/// every frame is followed by a device status request, the run never
+/// stalls, and it leaves the terminal as it found it.
+#[test]
+fn a_big_flock_is_paced_by_the_terminal_and_never_stalls() {
+    let _serial = serial();
+    let args = ["--big-flock", "6000", "--color", "ember", "--frames", "90", "--seed", "1"];
+    let outcome = marked_run(&args, 90, true);
+    // The one at startup, then one a frame.
+    assert_eq!(outcome.count(b"\x1b[5n"), 91, "{}", outcome.describe());
+    assert_no_stall(&outcome);
+}
+
+/// A terminal slow to answer gets frames no faster than it answers: here
+/// every answer comes 100 ms after the request.
+#[test]
+fn a_big_flock_waits_for_a_slow_terminal() {
+    use std::time::Duration;
+    use support::pty::{Action, Reply, Spec, Step};
+    let _serial = serial();
+    let args = ["--big-flock", "2000", "--color", "ember", "--frames", "15", "--seed", "1"];
+    let mut spec = Spec::new(&rbirds(), &args);
+    for _ in 0..15 {
+        spec = spec.step(Step::after_output(cases::FRAME_BEGIN, Action::Mark("frame")));
+    }
+    let slow = Reply {
+        query: b"\x1b[5n".to_vec(),
+        fragments: vec![Vec::new(), b"\x1b[0n".to_vec()],
+        gap: Duration::from_millis(100),
+        limit: None,
+    };
+    let outcome = pty::run(&spec.reply(slow));
+    cases::assert_clean_exit(&outcome, false);
+    let at: Vec<_> =
+        outcome.events.iter().filter(|e| e.what == "mark frame").map(|e| e.at).collect();
+    let mut gaps: Vec<_> = at.windows(2).map(|w| w[1] - w[0]).collect();
+    gaps.sort();
+    assert!(gaps[gaps.len() / 2] >= Duration::from_millis(90), "{gaps:?}");
+}
+
+/// Answers 100 ms after every request, as a slow terminal.
+fn slow_answers() -> support::pty::Reply {
+    support::pty::Reply {
+        query: b"\x1b[5n".to_vec(),
+        fragments: vec![Vec::new(), b"\x1b[0n".to_vec()],
+        gap: std::time::Duration::from_millis(100),
+        limit: None,
+    }
+}
+
+/// A burst of input while a frame waits for its answer (the pointer moved
+/// about: more than a read's worth of mouse reports) is read and acted on,
+/// and the next frame still waits for the answer.
+#[test]
+fn input_while_waiting_does_not_let_frames_ahead_of_the_terminal() {
+    use std::time::Duration;
+    use support::pty::{Action, Spec, Step};
+    let _serial = serial();
+    let args = ["--big-flock", "2000", "--color", "ember", "--frames", "12", "--seed", "1"];
+    let mut spec = Spec::new(&rbirds(), &args);
+    for k in 0..12 {
+        spec = spec.step(Step::after_output(cases::FRAME_BEGIN, Action::Mark("frame")));
+        if k == 3 {
+            let motion = b"\x1b[<35;40;12M".repeat(30);
+            spec = spec.step(Step::after(Duration::from_millis(20), Action::Input(motion)));
+        }
+    }
+    let outcome = pty::run(&spec.reply(slow_answers()));
+    cases::assert_clean_exit(&outcome, false);
+    let at: Vec<_> =
+        outcome.events.iter().filter(|e| e.what == "mark frame").map(|e| e.at).collect();
+    let shortest = at.windows(2).map(|w| w[1] - w[0]).min().unwrap();
+    assert!(shortest >= Duration::from_millis(80), "frames {shortest:?} apart");
+}
+
+/// Keys read while a frame waits are never dropped: a q after a burst of
+/// other keys still ends the run.
+#[test]
+fn a_key_after_a_burst_while_waiting_is_not_lost() {
+    use std::time::Duration;
+    use support::pty::{Action, Spec, Step};
+    let _serial = serial();
+    let args = ["--big-flock", "2000", "--color", "ember", "--seed", "1"];
+    let spec = Spec::new(&rbirds(), &args)
+        .step(Step::after_output(cases::FRAME_BEGIN, Action::Mark("frame")))
+        .step(Step::after_output(cases::FRAME_BEGIN, Action::Mark("frame")))
+        .step(Step::after(Duration::from_millis(10), Action::Input(vec![b'x'; 96])))
+        .step(Step::after(Duration::from_millis(30), Action::Input(b"xxxxq".to_vec())));
+    let spec = spec.reply(slow_answers());
+    let outcome = pty::run(&Spec { deadline: Duration::from_secs(8), ..spec });
+    assert!(!outcome.timed_out, "q was lost\n{}", outcome.describe());
+    cases::assert_clean_exit(&outcome, false);
+}
+
+/// A terminal that answers at startup and then stops holds up one frame
+/// for a second, and after that the frames go out as in cbirds.
+#[test]
+fn a_terminal_that_stops_answering_holds_up_one_frame_only() {
+    use std::time::Duration;
+    use support::pty::{Action, Reply, Spec, Step};
+    let _serial = serial();
+    let args = ["--big-flock", "2000", "--color", "ember", "--frames", "40", "--seed", "1"];
+    let mut spec = Spec::new(&rbirds(), &args);
+    for _ in 0..40 {
+        spec = spec.step(Step::after_output(cases::FRAME_BEGIN, Action::Mark("frame")));
+    }
+    // Only the request at startup is answered.
+    let once = Reply { limit: Some(1), ..Reply::whole(b"\x1b[5n", b"\x1b[0n") };
+    let outcome = pty::run(&spec.reply(once));
+    cases::assert_clean_exit(&outcome, false);
+    cases::assert_frames(&outcome, 40);
+    // One second's wait, then 40 frames at 60 a second.
+    assert!(outcome.run_time < Duration::from_secs(4), "{:?}", outcome.run_time);
+}
+
+/// A signal while an answer is still to come: the handler reads it before
+/// putting the terminal back, so it never reaches the shell, and the exit is
+/// 128 + signal as always.
+#[test]
+fn a_signal_while_an_answer_is_due_leaves_nothing_behind() {
+    use std::time::Duration;
+    use support::pty::{Action, Reply, Spec, Step};
+    let _serial = serial();
+    let args = ["--big-flock", "2000", "--color", "ember", "--seed", "1"];
+    let mut spec = Spec::new(&rbirds(), &args);
+    for _ in 0..5 {
+        spec = spec.step(Step::after_output(cases::FRAME_BEGIN, Action::Mark("frame")));
+    }
+    let spec = spec.step(Step::after(Duration::from_millis(20), Action::Signal(platform::SIGTERM)));
+    let slow = Reply {
+        query: b"\x1b[5n".to_vec(),
+        fragments: vec![Vec::new(), b"\x1b[0n".to_vec()],
+        gap: Duration::from_millis(100),
+        limit: None,
+    };
+    let outcome = pty::run(&spec.reply(slow));
+    cases::assert_signal_exit(&outcome, platform::SIGTERM, false);
+}
+
+/// A terminal that doesn't answer is asked once, and the frames go out as
+/// in cbirds.
+#[test]
+fn a_big_flock_on_a_terminal_that_does_not_answer_is_not_paced() {
+    let _serial = serial();
+    let args = ["--big-flock", "6000", "--color", "ember", "--frames", "40", "--seed", "1"];
+    let outcome = marked_run(&args, 40, false);
+    assert_eq!(outcome.count(b"\x1b[5n"), 1, "{}", outcome.describe());
+}
+
+/// Without --big-flock the terminal is never asked, and the default flock
+/// flies without a stall either.
+#[test]
+fn the_default_flock_is_not_paced_and_never_stalls() {
+    let _serial = serial();
+    let outcome = marked_run(&["--color", "ember", "--frames", "90", "--seed", "1"], 90, true);
+    assert_eq!(outcome.count(b"\x1b[5n"), 0, "{}", outcome.describe());
+    assert_no_stall(&outcome);
+}
+
 #[test]
 fn snapshot_is_written_after_restoring() {
     let _serial = serial();

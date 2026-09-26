@@ -99,9 +99,12 @@ pub fn run_benchmark(
     let frames = f64::from(settings.bench_frames);
     let per_frame = result.seconds / frames;
     let bytes = result.bytes;
+    // Big-flock mode says how many threads it flew on; cbirds has only one.
+    let threads =
+        if sim.big_flock { format!("threads      {}\n", sim.threads) } else { String::new() };
     let report = format!(
         "birds        {}\nflocks       {}\nhawks        {}\nviewport     {}x{} px\n\
-         render       {}\nframes       {}\nframe time   {} ms\nceiling      {} fps\n\
+         render       {}\n{}frames       {}\nframe time   {} ms\nceiling      {} fps\n\
          bytes/frame  {} ({} KB)\nat {} fps    {} MB/s\n",
         sim.config.birds,
         sim.config.flocks,
@@ -109,6 +112,7 @@ pub fn run_benchmark(
         sim.screen.width,
         sim.screen.height,
         sim.render_mode.name(),
+        threads,
         settings.bench_frames,
         cfmt::fixed(per_frame * 1000.0, 3),
         cfmt::fixed(1.0 / per_frame, 0),

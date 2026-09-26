@@ -16,6 +16,13 @@
 #
 # Naming workloads (the first column below, or "startup") repeats only those,
 # for a workload whose samples met contention in a full run.
+#
+# Big-flock mode (docs/DEVIATIONS.md D-006) has no C equivalent, so its
+# workloads (named big-*) are measured for Rust alone, on its threads. Where
+# cbirds could fly the same flock, the frames must be the bytes of the
+# single-thread workload named beside it (with the same frame count, since
+# the bytes are an average), and the time is compared with it. These time
+# building frames; tools/pacing.py measures how they reach a terminal.
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root"
@@ -91,6 +98,52 @@ blocks-800 --bench 550 --render blocks
 busy-800 --bench 1250 --speed 12 --hawks 4 --flocks 3 --depth --trails
 busy-4096 --bench 140 -n 4096 --speed 12 --hawks 4 --flocks 3 --depth --trails
 busy-braille --bench 320 --render braille --speed 12 --hawks 4 --flocks 3 --depth --trails
+EOF
+
+# Big-flock mode: Rust alone. "same" names the one-thread workload above
+# with the same flock, or "-" past cbirds' 4096 birds.
+while read -r name same args; do
+    [ -z "$name" ] && continue
+    wanted "$name" || continue
+    : > "$out/$name.rust.ms"; : > "$out/$name.rust.kb"; : > "$out/$name.rust.bytes"
+    for i in 0 1; do "$rust" $args > /dev/null; done
+    i=0
+    while [ "$i" -lt "$samples" ]; do
+        kb=$(peak "$rust" $args)
+        awk '/^frame time/ {print $3}' "$out/stdout.txt" >> "$out/$name.rust.ms"
+        awk '/^bytes\/frame/ {print $2}' "$out/stdout.txt" >> "$out/$name.rust.bytes"
+        echo "$kb" >> "$out/$name.rust.kb"
+        i=$((i + 1))
+    done
+    threads=$(awk '/^threads/ {print $2}' "$out/stdout.txt")
+    rm_=$(median < "$out/$name.rust.ms"); rk=$(median < "$out/$name.rust.kb")
+    rs=$(spread < "$out/$name.rust.ms"); ri=$(iqr < "$out/$name.rust.ms")
+    bytes=$(sort -u "$out/$name.rust.bytes")
+    bytes_ok=PASS
+    [ "$(printf '%s\n' "$bytes" | wc -l | tr -d ' ')" = 1 ] || { bytes_ok=FAIL; bytes=differ; }
+    against=""
+    if [ "$same" != - ]; then
+        if [ -s "$out/$same.rust.bytes" ]; then
+            [ "$(sort -u "$out/$same.rust.bytes")" = "$bytes" ] || bytes_ok=FAIL
+            one=$(median < "$out/$same.rust.ms")
+            against=$(awk -v b="$rm_" -v o="$one" -v s="$same" 'BEGIN {printf " | %s on 1 thread %.3f ms, x%.2f faster", s, o, o / b}')
+        else
+            against=" | run $same too to compare"
+        fi
+    fi
+    noisy=$(awk -v a="$rs" 'BEGIN {print (a > 5) ? " (spread over 5%: repeat on a quieter host)" : ""}')
+    printf '%-17s Rust %8.3f ms on %s threads | peak %6d KiB | bytes/frame %s %s%s | spread %s%%, IQR %s%%%s\n' \
+        "$name" "$rm_" "$threads" "$rk" "$bytes" "$bytes_ok" "$against" "$rs" "$ri" "$noisy" | tee -a "$out/summary.txt"
+    [ "$bytes_ok" = PASS ] || verdicts=1
+done <<EOF
+big-4096          kitty-4096   --bench 450 --big-flock 4096
+big-braille-4096  braille-4096 --bench 120 --render braille --big-flock 4096
+big-busy-4096     busy-4096    --bench 140 --big-flock 4096 --speed 12 --hawks 4 --flocks 3 --depth --trails
+big-braille-16384 -            --bench 200 --render braille --big-flock 16384
+big-sixel-16384   -            --bench 200 --render sixel --big-flock 16384
+big-65536         -            --bench 120 --big-flock 65536
+big-braille-65536 -            --bench 120 --render braille --big-flock 65536
+big-sixel-65536   -            --bench 120 --render sixel --big-flock 65536
 EOF
 
 # Startup: the whole process for one frame, sprite construction included.

@@ -63,6 +63,7 @@ The modules as built. Keep modules small enough to test independently, without i
 | `record.rs`, `bench.rs` | recording and benchmark entry points | GIF/cast clocks, snapshots, statistics and summaries. |
 | `terminal.rs`, `platform/` | termios, signals, polling, writes, `sscanf`, `strtod`, `__sincos_stret` | Safe terminal interface over OS bindings; Windows selects its own console/input/writer module. The only module with `unsafe`. |
 | `render/sixel.rs` | No C equivalent | Encodes full frames in 256-color Sixel; `terminal.rs` queries terminal support and cell size. |
+| `parallel.rs` | No C equivalent | Hands blocks of birds, pixel rows, cells or Sixel bands to scoped threads in big-flock mode (D-006). |
 
 Expose a library for integration tests and a thin binary. Embed the verified sprite bytes with `include_bytes!`; match the compiled C asset, not merely an assumed equivalent PNG. Compare `matrix.png` with `sprite_png.h` before choosing the canonical asset. Preserve the embedded bitmap font exactly.
 
@@ -74,7 +75,9 @@ Use owned structs for configuration, simulation, render state, input parsing, an
 
 `Simulation` owns birds, hawks, formation state, flock statistics, animation state, and the RNG. Keep a reusable snapshot of birds. Preserve the C ordering: build the grid from the snapshot, run hawk hunting, update birds from the snapshot, repeat required speed substeps, then derive sprite headings and render. Do not replace this with in-place neighbor updates or parallel iteration.
 
-Application time is an explicit input. Preserve the distinction between elapsed wall time, frame duration, flight time, and encoded recording time. Live execution measures a monotonic clock; tests inject durations and event timing. Recording advances its encoded clock independently of machine speed. Do not add a new fixed-step accumulator, frame-delta cap, or pause policy during the port.
+Big-flock mode (`--big-flock`, [D-006](DEVIATIONS.md#d-006-big-flock-mode)) is the only time the simulation or drawing uses threads, and it keeps that order. `update_birds` runs the C's loop body in two passes. The first writes each bird from the snapshot and the grid alone and can run on any number of threads. The second beats the wings one bird at a time in the C's order, because a glide is a step's only random draw. Composition gives each thread bands of canvas rows, and each band replays the whole draw order. Cells and Sixel bands are read or written independently, and the Sixel bands are joined in order. None of these reads what another thread writes, so the output is the same on any number of threads. The mode uses half the cores, and it doesn't write a frame until the terminal has answered a status request sent after the one before, so the terminal keeps the CPU it needs and never falls more than a frame behind. The neighbour search, in every mode, reads a copy of the snapshot gathered in grid order (`Neighbours`): the same values in the same order, laid out so a row of cells is one run of memory.
+
+Application time is an explicit input. Preserve the distinction between elapsed wall time, frame duration, flight time, and encoded recording time. Live execution measures a monotonic clock; tests inject durations and event timing. Recording advances its encoded clock independently of machine speed. Do not add a new fixed-step accumulator, frame-delta cap, or pause policy during the port. The frame delay is the C's, the rest of a sixtieth, but it is slept towards a millisecond at a time so it ends on time ([D-007](DEVIATIONS.md#d-007-the-frame-delay-ends-on-time)).
 
 Use `Vec`/slices for contiguous storage and preserve iteration order. Reuse grid, sprite, canvas, cell, and output buffers. Preallocate before steady-state drawing where practical. Population changes and resizes can allocate; failures must preserve the C recovery behavior where it is defined. Avoid unordered containers in any path that affects numerical accumulation, random draws, palette ordering, or protocol output.
 
@@ -88,7 +91,7 @@ Use explicit wrapping operations only where the C code intentionally performs un
 
 Keep the RNG algorithm, warmup, seed-zero behavior, signed seed conversion, output range, and call sequence. Test internal seeds across all `u32` values represented by the C fixtures even though the public CLI permits only `0..=2147483647`.
 
-Retain the spatial grid's cell scan order and the order of birds within each cell. Preserve the existing trig lookup, motion limits, substep formula, palette quantization, and sprite sampling. Avoid introducing explicit fused multiply-add, approximate math, SIMD, or multithreading during parity work.
+Retain the spatial grid's cell scan order and the order of birds within each cell. Preserve the existing trig lookup, motion limits, substep formula, palette quantization, and sprite sampling. Avoid introducing explicit fused multiply-add, approximate math, SIMD, or multithreading during parity work. Big-flock mode's threads (§4) split work between birds and pixels. They don't reorder any sum or change any operation.
 
 Two properties of the canonical C build are part of the reference's arithmetic and are reproduced, not introduced:
 

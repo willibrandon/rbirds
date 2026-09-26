@@ -46,6 +46,8 @@ pub const SPRITE_WORK_MAX: i32 = 256;
 pub const MIN_BIRD_SIZE: i32 = 4;
 pub const MAX_BIRD_SIZE: i32 = 64;
 pub const MAX_BIRDS: i32 = 4096;
+/// --big-flock's cap: a murmuration's tens of thousands.
+pub const BIG_FLOCK_BIRDS: i32 = 65536;
 pub const INPUT_BUFFER_SIZE: usize = 100;
 pub const DEFAULT_COLS: i32 = 80;
 pub const DEFAULT_ROWS: i32 = 24;

@@ -114,6 +114,50 @@ fn sixel_plane_allocation_failure_preserves_output_and_can_recover() {
     assert!(output.buffer().ends_with(b"\x1b\\"));
 }
 
+/// Big-flock mode's bands (docs/DEVIATIONS.md D-006) are storage of its
+/// own; when they cannot be had, the frame is refused as the planes are.
+#[test]
+fn sixel_bands_that_cannot_be_allocated_preserve_output_and_can_recover() {
+    use rbirds::render::kitty::{KittyError, KittyGraphics};
+    use rbirds::render::sixel::Sixel;
+    let image = Image::alloc(8, 600).unwrap();
+    let serial = Sixel::default().encode(&image).unwrap().to_vec();
+    let mut encoder = Sixel::default();
+    let mut output = KittyGraphics::new(1).unwrap();
+    output.write_raw(b"previous").unwrap();
+    // A hundred band records are over 8 KiB (two buffers and two palette
+    // sets each); the planes of an image 8 wide are 2 KiB a thread.
+    assert!(refusing(8192, || Sixel::default().encode(&image).is_ok()), "one thread fits");
+    let result = refusing(8192, || encoder.queue_in_parallel(&mut output, 4, &image));
+    assert_eq!(result, Err(KittyError::Memory));
+    assert_eq!(output.buffer(), b"previous");
+    output.clear();
+    encoder.queue_in_parallel(&mut output, 4, &image).unwrap();
+    assert_eq!(output.buffer(), &serial[..]);
+}
+
+/// The neighbour search's gathered copy of the snapshot is storage the C
+/// does not have; without room for it, the birds are read from the snapshot
+/// itself, and the flock flies the same.
+#[test]
+fn a_flock_that_cannot_gather_its_neighbours_flies_the_same() {
+    let mut sim = Sim::new();
+    sim.config.bird_size = 30;
+    let (mut birds, mut snapshot) = flock(&mut sim, 300);
+    let mut grid = SpatialGrid::new(12).expect("grid");
+    grid.prepare(800, 480, 300).expect("prepare");
+    sim.snapshot_and_build(&birds, &mut snapshot, &mut grid).expect("build");
+    let mut without = sim.clone();
+    let mut their_birds = birds.clone();
+    sim.update_birds(&mut birds, &snapshot, &grid);
+    // Three hundred positions are 4800 bytes; the step needs nothing that
+    // large otherwise.
+    refusing(300 * 16, || without.update_birds(&mut their_birds, &snapshot, &grid));
+    assert!(without.neighbours.is_empty() && sim.neighbours.len() == 300);
+    assert_eq!(their_birds, birds);
+    assert_eq!(without.rng, sim.rng);
+}
+
 /// The live loop's side of it: `config.birds = live_birds`.
 #[test]
 fn the_live_loop_puts_the_count_back_when_growing_fails() {

@@ -86,6 +86,8 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     let mut renderer = Renderer::default();
     if sim.drawing_with_text() {
         renderer.prepare_text_renderer(&mut sim, None, b"rbirds").expect("sprites");
+    } else if render == RenderMode::Sixel {
+        sim.rasterise_sprites(&mut renderer.sprites, None, b"rbirds").expect("sprites");
     }
     let mut grid = SpatialGrid::new(12).expect("grid");
     grid.prepare(800, 480, 300).expect("prepare");
@@ -133,4 +135,9 @@ fn a_text_frame_allocates_nothing_in_steady_state() {
     for render in [RenderMode::Braille, RenderMode::Sextants, RenderMode::Blocks] {
         assert_eq!(steady_state_allocations(render), 0, "{render:?}");
     }
+}
+
+#[test]
+fn a_sixel_frame_allocates_nothing_in_steady_state() {
+    assert_eq!(steady_state_allocations(RenderMode::Sixel), 0);
 }

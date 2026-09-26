@@ -4,10 +4,126 @@
 
 use std::f64::consts::PI;
 
-use super::{Bird, Sim, Vector, direction_frame, normalized_angle, trig_lookup, turn_towards};
+use super::{
+    Bird, Sim, TrigEntry, Vector, direction_frame, normalized_angle, trig_lookup, turn_towards,
+};
 use crate::config::*;
 use crate::fp::{self, mul_add};
+use crate::parallel;
 use crate::spatial_grid::SpatialGrid;
+
+/// Blocks of birds a thread takes in turn: enough that the fast cores end up
+/// flying more of them than the slow ones, and never fewer birds a block
+/// than are worth the handing out.
+const STEERING_BLOCKS_PER_THREAD: usize = 8;
+const STEERING_BLOCK_MIN: usize = 32;
+
+/// What the neighbour search reads of a bird past its position.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Neighbour {
+    /// `trig_lookup(direction)`.
+    pub heading: TrigEntry,
+    /// Its place in the snapshot.
+    pub index: u32,
+    pub flock: i32,
+    pub layer: i32,
+}
+
+impl Neighbour {
+    /// Bird `index` of the snapshot.
+    #[inline]
+    fn of(bird: &Bird, index: i32) -> Neighbour {
+        Neighbour {
+            heading: trig_lookup(bird.direction),
+            index: index as u32,
+            flock: bird.flock,
+            layer: bird.layer,
+        }
+    }
+}
+
+/// Where the neighbour search reads the birds in the grid's slots from.
+trait Seen {
+    /// The position of the bird in `slot`.
+    fn position(&self, slot: usize) -> (f64, f64);
+    /// The rest of it, read only once it is known to be in sight.
+    fn neighbour(&self, slot: usize) -> Neighbour;
+}
+
+/// Straight from the snapshot, through the grid's indices.
+struct InSnapshot<'a> {
+    birds: &'a [Bird],
+    grid: &'a SpatialGrid,
+}
+
+impl Seen for InSnapshot<'_> {
+    #[inline]
+    fn position(&self, slot: usize) -> (f64, f64) {
+        let bird = &self.birds[self.grid.indices[slot] as usize];
+        (bird.x, bird.y)
+    }
+
+    #[inline]
+    fn neighbour(&self, slot: usize) -> Neighbour {
+        let index = self.grid.indices[slot];
+        Neighbour::of(&self.birds[index as usize], index)
+    }
+}
+
+/// The snapshot gathered in the grid's order, a slot at a time: a row of
+/// cells is then one run of memory instead of birds scattered over the
+/// snapshot, the positions every candidate is tested by lie apart from the
+/// rest, and each heading is looked up once a step rather than once for every
+/// bird that sees it. The values are the snapshot's own, so the sums come out
+/// as they would reading the snapshot directly.
+#[derive(Clone, Debug, Default)]
+pub struct Neighbours {
+    positions: Vec<[f64; 2]>,
+    rest: Vec<Neighbour>,
+}
+
+impl Neighbours {
+    /// Fills the slots from the grid's last build of `birds`, reusing the
+    /// storage; `false`, with nothing gathered, when it cannot grow.
+    pub fn gather(&mut self, birds: &[Bird], grid: &SpatialGrid) -> bool {
+        let items = grid.items();
+        self.positions.clear();
+        self.rest.clear();
+        if self.positions.try_reserve_exact(items.len()).is_err()
+            || self.rest.try_reserve_exact(items.len()).is_err()
+        {
+            return false;
+        }
+        for &i in items {
+            let bird = &birds[i as usize];
+            self.positions.push([bird.x, bird.y]);
+            self.rest.push(Neighbour::of(bird, i));
+        }
+        true
+    }
+
+    /// How many birds the last gathering holds.
+    pub fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.positions.is_empty()
+    }
+}
+
+impl Seen for Neighbours {
+    #[inline]
+    fn position(&self, slot: usize) -> (f64, f64) {
+        let [x, y] = self.positions[slot];
+        (x, y)
+    }
+
+    #[inline]
+    fn neighbour(&self, slot: usize) -> Neighbour {
+        self.rest[slot]
+    }
+}
 
 impl Sim {
     /// `wind_vector`: straight down in the rain, nothing otherwise.
@@ -349,7 +465,19 @@ impl Sim {
     /// `flock_direction`: the heading one bird wants, from its neighbours in
     /// the snapshot through the grid, in the grid's own order.
     pub fn flock_direction(&self, birds: &[Bird], grid: &SpatialGrid, target_index: usize) -> f64 {
-        let target = &birds[target_index];
+        self.heading_among(&birds[target_index], target_index, grid, &InSnapshot { birds, grid })
+    }
+
+    /// `flock_direction`, reading the bird in each of the grid's slots from
+    /// `seen`: straight from the snapshot, or from the same snapshot gathered
+    /// into [`Neighbours`].
+    fn heading_among(
+        &self,
+        target: &Bird,
+        target_index: usize,
+        grid: &SpatialGrid,
+        seen: &impl Seen,
+    ) -> f64 {
         // Writing overrules flocking while it lasts.
         if let Some((want_x, want_y)) = self.formation.target_of(target_index as i32) {
             let to_x = want_x - target.x;
@@ -394,62 +522,65 @@ impl Sim {
         let radius_squared = f64::from(config.vision_radius_squared);
 
         for cell_y in min_y..=max_y {
-            for cell_x in min_x..=max_x {
-                let cell = (cell_y * grid.columns + cell_x) as usize;
-                for &i in grid.cell_items(cell) {
-                    let i = i as usize;
-                    if i == target_index {
-                        continue;
-                    }
-                    let other = &birds[i];
-                    let dx = target.x - other.x;
-                    let dy = target.y - other.y;
-                    // fma: boids.c:2060:29
-                    if mul_add(dx, dx, dy * dy) >= radius_squared {
-                        continue;
-                    }
-                    // The far layer is another sky.
-                    if other.layer != target.layer {
-                        continue;
-                    }
-                    // Separation is physical; alignment and cohesion are social.
-                    separation.x += dx;
-                    separation.y += dy;
-                    neighbors += 1;
-                    if other.flock != target.flock {
-                        if config.avoid_kinship > 0.0 {
-                            let heading = trig_lookup(other.direction);
-                            let kinship = config.avoid_kinship;
-                            // fma: boids.c:2076:37
-                            alignment.x = mul_add(kinship, f64::from(heading.cosine), alignment.x);
-                            // fma: boids.c:2077:37
-                            alignment.y = mul_add(kinship, f64::from(heading.sine), alignment.y);
-                            // fma: boids.c:2078:36
-                            cohesion.x = mul_add(kinship, other.x, cohesion.x);
-                            // fma: boids.c:2079:36
-                            cohesion.y = mul_add(kinship, other.y, cohesion.y);
-                            kin += kinship;
-                        }
-                        // Away from a stranger, hardest when it is nearest.
-                        if config.avoid_weight > 0.0 {
-                            // fma: boids.c:2086:56
-                            let distance = mul_add(dx, dx, dy * dy).sqrt();
-                            if distance > 1e-9 {
-                                let strength = 1.0 - distance / f64::from(config.vision_radius);
-                                wary.x += strength * dx / distance;
-                                wary.y += strength * dy / distance;
-                                strangers += 1;
-                            }
-                        }
-                        continue;
-                    }
-                    let heading = trig_lookup(other.direction);
-                    alignment.x += f64::from(heading.cosine);
-                    alignment.y += f64::from(heading.sine);
-                    cohesion.x += other.x;
-                    cohesion.y += other.y;
-                    kin += 1.0;
+            // The row's cells from min_x to max_x are one run of slots, in
+            // the order they would be walked one cell at a time.
+            let row = cell_y * grid.columns;
+            for slot in grid.cells_slots((row + min_x) as usize, (row + max_x) as usize) {
+                let (other_x, other_y) = seen.position(slot);
+                let dx = target.x - other_x;
+                let dy = target.y - other_y;
+                // fma: boids.c:2060:29
+                if mul_add(dx, dx, dy * dy) >= radius_squared {
+                    continue;
                 }
+                // Itself, which the C skips before measuring. At no distance
+                // it is always in sight, so skipping it here leaves the same
+                // birds.
+                let other = seen.neighbour(slot);
+                if other.index as usize == target_index {
+                    continue;
+                }
+                // The far layer is another sky.
+                if other.layer != target.layer {
+                    continue;
+                }
+                // Separation is physical; alignment and cohesion are social.
+                separation.x += dx;
+                separation.y += dy;
+                neighbors += 1;
+                if other.flock != target.flock {
+                    if config.avoid_kinship > 0.0 {
+                        let heading = other.heading;
+                        let kinship = config.avoid_kinship;
+                        // fma: boids.c:2076:37
+                        alignment.x = mul_add(kinship, f64::from(heading.cosine), alignment.x);
+                        // fma: boids.c:2077:37
+                        alignment.y = mul_add(kinship, f64::from(heading.sine), alignment.y);
+                        // fma: boids.c:2078:36
+                        cohesion.x = mul_add(kinship, other_x, cohesion.x);
+                        // fma: boids.c:2079:36
+                        cohesion.y = mul_add(kinship, other_y, cohesion.y);
+                        kin += kinship;
+                    }
+                    // Away from a stranger, hardest when it is nearest.
+                    if config.avoid_weight > 0.0 {
+                        // fma: boids.c:2086:56
+                        let distance = mul_add(dx, dx, dy * dy).sqrt();
+                        if distance > 1e-9 {
+                            let strength = 1.0 - distance / f64::from(config.vision_radius);
+                            wary.x += strength * dx / distance;
+                            wary.y += strength * dy / distance;
+                            strangers += 1;
+                        }
+                    }
+                    continue;
+                }
+                let heading = other.heading;
+                alignment.x += f64::from(heading.cosine);
+                alignment.y += f64::from(heading.sine);
+                cohesion.x += other_x;
+                cohesion.y += other_y;
+                kin += 1.0;
             }
         }
         if neighbors != 0 {
@@ -587,51 +718,81 @@ impl Sim {
     }
 
     /// `update_birds`: every bird from the snapshot.
+    ///
+    /// The C's loop body is flown in two passes. The first is everything but
+    /// the wings: each bird is written from the snapshot, the grid and the
+    /// frame's settings alone, so the birds can be done in any order and on
+    /// any number of threads (big-flock mode, docs/DEVIATIONS.md D-006). The
+    /// second beats the wings bird by bird in the C's order, because a glide
+    /// is the only random draw a step makes. Neither pass reads what the other
+    /// writes, so this is the C's result on one thread or many.
     pub fn update_birds(&mut self, birds: &mut [Bird], snapshot: &[Bird], grid: &SpatialGrid) {
         self.measure_flocks(snapshot);
-        for i in 0..self.config.birds as usize {
-            let mut direction = self.flock_direction(snapshot, grid, i);
-            // Banking is for flocking: a bird writing a letter, and a bird in
-            // the panel's turn zone, turn at once.
-            if self.formation.target_of(i as i32).is_none()
-                && !self.legend_turn_zone(snapshot[i].x, snapshot[i].y)
-            {
-                direction = turn_towards(snapshot[i].direction, direction, self.turn_limit());
+        let birds = &mut birds[..self.config.birds as usize];
+        let mut neighbours = std::mem::take(&mut self.neighbours);
+        let gathered = neighbours.gather(snapshot, grid);
+        let sim = &*self;
+        let threads = sim.threads.max(1);
+        let block = (birds.len() / (threads * STEERING_BLOCKS_PER_THREAD)).max(STEERING_BLOCK_MIN);
+        parallel::for_each_block(threads, birds, block, |first, block| {
+            for (offset, bird) in block.iter_mut().enumerate() {
+                let i = first + offset;
+                // Without room to gather them, the birds are read where they are.
+                let direction = if gathered {
+                    sim.heading_among(&snapshot[i], i, grid, &neighbours)
+                } else {
+                    sim.flock_direction(snapshot, grid, i)
+                };
+                sim.steer(bird, i, direction, snapshot);
             }
-            let bird = &mut birds[i];
-            bird.direction = direction;
-            // Never past the target: the last step is the distance left.
-            let mut step = self.config.speed * self.flock_pace(snapshot[i].flock);
-            if snapshot[i].layer > 0 {
-                step *= FAR_PACE;
-            }
-            if let Some((want_x, want_y)) = self.formation.target_of(i as i32) {
-                let dx = want_x - bird.x;
-                let dy = want_y - bird.y;
-                // fma: boids.c:2220:45
-                let remaining = mul_add(dx, dx, dy * dy).sqrt();
-                if remaining < step {
-                    step = remaining;
-                }
-            }
-            // fma: boids.c:2223:20
-            bird.x = mul_add(step, fp::cos(direction), bird.x);
-            // fma: boids.c:2224:20
-            bird.y = mul_add(step, fp::sin(direction), bird.y);
-            if self.rain {
-                self.wrap_position(bird);
-            }
-            bird.shade = self.shade_for(bird);
+        });
+        self.neighbours = neighbours;
+        for bird in birds {
             self.beat_wings(bird);
-            if self.config.trails && i as i32 % TRAIL_EVERY == 0 {
-                // Where it was, not where it is: a tail behind, never under.
-                let at = bird.trail_at as usize;
-                bird.trail_x[at] = snapshot[i].x;
-                bird.trail_y[at] = snapshot[i].y;
-                bird.trail_at = (bird.trail_at + 1) % TRAIL_LENGTH;
-                if bird.trail_held < TRAIL_LENGTH {
-                    bird.trail_held += 1;
-                }
+        }
+    }
+
+    /// One bird's step of `update_birds` towards the heading it wants, bar
+    /// the wings.
+    fn steer(&self, bird: &mut Bird, i: usize, mut direction: f64, snapshot: &[Bird]) {
+        // Banking is for flocking: a bird writing a letter, and a bird in
+        // the panel's turn zone, turn at once.
+        if self.formation.target_of(i as i32).is_none()
+            && !self.legend_turn_zone(snapshot[i].x, snapshot[i].y)
+        {
+            direction = turn_towards(snapshot[i].direction, direction, self.turn_limit());
+        }
+        bird.direction = direction;
+        // Never past the target: the last step is the distance left.
+        let mut step = self.config.speed * self.flock_pace(snapshot[i].flock);
+        if snapshot[i].layer > 0 {
+            step *= FAR_PACE;
+        }
+        if let Some((want_x, want_y)) = self.formation.target_of(i as i32) {
+            let dx = want_x - bird.x;
+            let dy = want_y - bird.y;
+            // fma: boids.c:2220:45
+            let remaining = mul_add(dx, dx, dy * dy).sqrt();
+            if remaining < step {
+                step = remaining;
+            }
+        }
+        // fma: boids.c:2223:20
+        bird.x = mul_add(step, fp::cos(direction), bird.x);
+        // fma: boids.c:2224:20
+        bird.y = mul_add(step, fp::sin(direction), bird.y);
+        if self.rain {
+            self.wrap_position(bird);
+        }
+        bird.shade = self.shade_for(bird);
+        if self.config.trails && i as i32 % TRAIL_EVERY == 0 {
+            // Where it was, not where it is: a tail behind, never under.
+            let at = bird.trail_at as usize;
+            bird.trail_x[at] = snapshot[i].x;
+            bird.trail_y[at] = snapshot[i].y;
+            bird.trail_at = (bird.trail_at + 1) % TRAIL_LENGTH;
+            if bird.trail_held < TRAIL_LENGTH {
+                bird.trail_held += 1;
             }
         }
     }
