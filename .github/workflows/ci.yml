@@ -1,0 +1,48 @@
+# Native runs of every gate on the four supported targets (docs/PORTING.md §6),
+# each Rust target compared with its own canonical C control: Apple clang on
+# macOS, GCC on Linux. The C reference is fetched at the pinned commit and
+# verified against docs/reference-manifest.json before anything is compared.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (pinned by rust-toolchain.toml)
+        run: rustup show active-toolchain || rustup toolchain install
+      - name: Environment
+        run: |
+          uname -a
+          cc --version
+          rustc -vV
+          cargo --version
+      - name: Pinned C reference
+        run: tools/reference.sh
+      - name: All local gates
+        run: tools/verify.sh
+
+  # Additional controls, characterized separately: they are not what the
+  # Rust port is compared with (docs/PORTING.md §2).
+  c-controls:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: tools/reference.sh
+      - name: The reference's suites under Clang
+        run: |
+          cp -r .reference/cbirds /tmp/clang && make -C /tmp/clang CC=clang test
+      - name: The reference's suites under ASan and UBSan
+        run: |
+          cp -r .reference/cbirds /tmp/sanitized
+          make -C /tmp/sanitized CC=clang \
+            CFLAGS="-O1 -g -fsanitize=address,undefined -fno-sanitize-recover=undefined" \
+            LDFLAGS="-fsanitize=address,undefined" test

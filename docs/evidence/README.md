@@ -6,10 +6,10 @@ What has been compared, where, and with what result. Every claim here names the 
 
 | Target | Host | C control | Rust suite | Result |
 | --- | --- | --- | --- | --- |
-| aarch64-apple-darwin | macOS 26.5.2, Apple M4 Pro, native | Apple clang 17.0.0 (clang-1700.6.4.2), `-std=c99 -O3 -g` | release and debug, Rust 1.96.0 | all pass |
+| aarch64-apple-darwin | macOS 26.5.2, Apple M4 Pro, native | Apple clang 17.0.0 (clang-1700.6.4.2), `-std=c99 -O3 -g` | release and debug (overflow checks on), Rust 1.96.0 | all pass |
 | x86_64-apple-darwin | same Mac, Rosetta 2 | Apple clang 17.0.0 `-arch x86_64`, same flags | release, `--target x86_64-apple-darwin` | all pass |
-| aarch64-unknown-linux-gnu | Docker `rust:1.96-bookworm`, native arm64 VM | GCC 12.2.0, glibc 2.36, same flags | release | see [Linux](#linux) |
-| x86_64-unknown-linux-gnu | Docker `rust:1.96-bookworm`, amd64 emulated | GCC 12.2.0, glibc 2.36, same flags | release | see [Linux](#linux) |
+| aarch64-unknown-linux-gnu | Docker `rust:1.96-bookworm`, native arm64 VM | GCC 12.2.0, glibc 2.36, same flags | release | all pass |
+| x86_64-unknown-linux-gnu | Docker `rust:1.96-bookworm`, amd64 emulated | GCC 12.2.0, glibc 2.36, same flags | release | all pass but one case that fails identically for the C under emulation ([Linux](#linux)) |
 
 The x86_64 macOS row runs under translation and the x86_64 Linux row under emulation; both are evidence of the bindings and arithmetic on those targets, not of native execution. PORTING.md §6 requires native CI runs of those two before a release claim.
 
@@ -51,11 +51,28 @@ Both are properties of the canonical C build that the port reproduces deliberate
 
 ## Linux
 
-Pending the runs in progress; recorded here when complete.
+Both Linux targets run the whole suite in `tools/linux.sh`: the Rust port built natively in the container, and every oracle and the reference executable built there with GCC, the canonical Linux control, which never contracts and whose `sincos` agrees with separate calls. The simulation traces, recordings, codecs and CLI match that control exactly, as they match Apple clang's on macOS: each target against its own control, as DESIGN.md §5 requires.
+
+Three harness issues surfaced only on Linux and were fixed in the tests, not the port: an include ahead of `boids.c`'s feature-test macros hid `M_PI` from glibc in the suite observer; GCC 12 warns on the ABI probe's deliberate signedness comparison; and a Linux PTY buffers tens of kilobytes, so the blocked-quit case tells the reference's two quit paths apart by timing rather than by counting frames.
+
+On x86_64 under emulation one lifecycle case, SIGTERM while output is blocked, ends with the process killed by the signal instead of exiting 143 through the handler — for the C reference and the port alike, identically. Natively (arm64 Linux, both macOS targets) both exit 143 with the terminal restored. It is the emulator's signal delivery during a blocking write, and needs a native x86_64 Linux run to close.
+
+## Performance
+
+[`perf-2026-09-26-macos-arm64.txt`](perf-2026-09-26-macos-arm64.txt): `tools/perf.sh` on the M4 Pro, ten interleaved C/Rust samples a workload after two warmups, canonical C flags and `--release`.
+
+| Workload | Rust / C median frame time | Peak memory (C, Rust) |
+| --- | --- | --- |
+| kitty, 800 / 4096 birds | 0.76× / 0.86× | 1.9 / 2.9 MiB, 2.3 / 3.2 MiB |
+| braille 800 / 4096, sextants, blocks | 0.99× / 0.99×, 1.02×, 0.93× | ~19.5 MiB each, within 0.4 MiB |
+| busy (speed 12, 4 hawks, 3 flocks, depth, trails): 800 / 4096 / braille | 0.91× / 0.97× / 1.01× | within 0.4 MiB |
+| startup (`--bench 1 --render braille`, sprites included) | 1.11× | |
+
+Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.25×C, C+8 MiB)`), and deterministic byte counts are identical by the headless tests. Most workloads' sample spread exceeds the 5% the process allows (the scheduler moves these short runs between performance and efficiency cores), so this is a measurement, not an acceptance. The release binary is 773 KB against the C's 183 KB. A steady-state live frame allocates nothing (`tests/steady_state_allocation.rs`).
 
 ## Not established
 
 - **Real terminals** (PORTING.md §6): Kitty, Ghostty, macOS Terminal, a Linux terminal and tmux need a person at the screen. The byte streams those terminals receive are identical to the reference's under the scripted PTY, which is necessary but not sufficient for visual fidelity.
 - **Native x86_64 runs** on macOS and Linux hardware, for the release claim.
-- **Performance budgets** (PORTING.md §7): see `tools/perf.sh`; results below when measured on a quiet host.
+- **Performance acceptance** (PORTING.md §7): see below; the medians pass every budget, but the samples' spread exceeds 5% on this host, so the gate is not accepted until repeated on a quieter one.
 - **Deviations** D-001 to D-003 await the owner's decision ([deviations](../DEVIATIONS.md)).

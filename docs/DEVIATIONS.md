@@ -29,7 +29,7 @@ Reference for every entry: cbirds 1.4.0, commit
 - **First divergence:** the first `birds[i]` read past the allocation.
 - **Reason:** never reproduce memory corruption (docs/COMPATIBILITY.md §6).
 - **Affected requirements:** C05, C15, C16.
-- **Regression test:** pending, in the PTY suite (blocked output, `+q`, snapshot).
+- **Regression test:** `tests/deviations.rs::d001_a_count_above_the_arrays_draws_the_birds_that_exist` (composition and Kitty placements with the count above the arrays).
 - **Claim affected:** none for defined inputs.
 
 ## D-002: integer overflow in cursor and paint arithmetic
