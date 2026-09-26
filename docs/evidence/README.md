@@ -44,7 +44,8 @@ Both are properties of the canonical C build that the port reproduces deliberate
 ## Gates
 
 - Dependency graph: `cargo tree --edges all --target all --all-features` and `cargo metadata` show one package, `rbirds`, with no dependencies; the manifest has no dependency tables.
-- Linkage: the macOS release binary links only `/usr/lib/libSystem.B.dylib`.
+- Linkage: the macOS release binary links only `/usr/lib/libSystem.B.dylib`; the Linux one only `libc.so.6`, `libm.so.6`, `libgcc_s.so.1` (Rust's unwinder) and the dynamic loader.
+- `tools/verify.sh` passes every gate it can run on macOS arm64 and, in the container, on Linux arm64.
 - `unsafe` appears only under `src/platform/`, each block with its safety argument.
 - `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` are clean.
 - `tests/inventory.rs` rediscovers the 112 C test calls and checks every mapping; `tools/verify.sh` checks each mapped test is run.

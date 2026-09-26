@@ -63,29 +63,23 @@ unsafe_confined() {
 }
 
 linkage() {
-    binary=target/release/rbirds
+    binary=${CARGO_TARGET_DIR:-target}/release/rbirds
+    [ -x "$binary" ] || { echo "no release binary at $binary"; return 1; }
     case "$(uname -s)" in
-        Darwin)
-            libraries=$(otool -L "$binary" | tail -n +2 | awk '{print $1}')
-            echo "$libraries"
-            for library in $libraries; do
-                case "$library" in
-                    /usr/lib/libSystem.B.dylib) ;;
-                    *) echo "unexpected library $library"; return 1 ;;
-                esac
-            done
-            ;;
-        Linux)
-            libraries=$(ldd "$binary" | awk '{print $1}')
-            echo "$libraries"
-            for library in $libraries; do
-                case "$library" in
-                    linux-vdso.so.*|libc.so.*|libm.so.*|libgcc_s.so.*|/lib*/ld-linux*|libpthread.so.*|libdl.so.*) ;;
-                    *) echo "unexpected library $library"; return 1 ;;
-                esac
-            done
-            ;;
+        Darwin) libraries=$(otool -L "$binary" | tail -n +2 | awk '{print $1}') ;;
+        Linux) libraries=$(ldd "$binary" 2>&1 | awk '{print $1}') ;;
+        *) echo "no linkage check for $(uname -s)"; return 1 ;;
     esac
+    echo "$libraries"
+    # Nothing found is a failure, not a pass: it means the check did not run.
+    [ -n "$libraries" ] || { echo "could not read the linkage of $binary"; return 1; }
+    for library in $libraries; do
+        case "$library" in
+            /usr/lib/libSystem.B.dylib) ;;
+            linux-vdso.so.*|libc.so.*|libm.so.*|libgcc_s.so.*|/lib*/ld-linux*|libpthread.so.*|libdl.so.*) ;;
+            *) echo "unexpected library $library"; return 1 ;;
+        esac
+    done
 }
 
 inventory_executed() {
