@@ -91,8 +91,13 @@ pub fn build_legend(sim: &Sim, stats: &Stats) -> Vec<Vec<u8>> {
     let mut lines = vec![Vec::new(); LEGEND_MAX_ROWS as usize];
 
     lines[0] = border("\u{256d}", "\u{256e}");
-    lines[1] =
-        legend_slider("boundary", config.boundary_notch, &legend_number(config.boundary, 2), b'b', b'B');
+    lines[1] = legend_slider(
+        "boundary",
+        config.boundary_notch,
+        &legend_number(config.boundary, 2),
+        b'b',
+        b'B',
+    );
     lines[2] = legend_slider(
         "separation",
         config.separation_notch,
@@ -124,8 +129,13 @@ pub fn build_legend(sim: &Sim, stats: &Stats) -> Vec<Vec<u8>> {
         b'P',
     );
     let pace = format!("{}\u{d7}", cfmt::fixed(config.pace, 1));
-    lines[6] =
-        legend_slider("speed", config.pace_notch, &truncated(pace.into_bytes(), value_size), b'v', b'V');
+    lines[6] = legend_slider(
+        "speed",
+        config.pace_notch,
+        &truncated(pace.into_bytes(), value_size),
+        b'v',
+        b'V',
+    );
     if config.flocks > 1 {
         let avoid = format!("{}\u{d7}", cfmt::fixed(f64::from(config.avoid_notch) / 4.0, 2));
         lines[7] = legend_slider(
@@ -170,7 +180,11 @@ impl Renderer {
     /// `queue_legend`: the panel's rows, or, once, the erase of the rows it
     /// held when a viewport shrank under it — never a screen erase, which
     /// would take the uploaded sprites with it.
-    pub fn queue_legend(&mut self, graphics: &mut KittyGraphics, sim: &Sim) -> Result<(), KittyError> {
+    pub fn queue_legend(
+        &mut self,
+        graphics: &mut KittyGraphics,
+        sim: &Sim,
+    ) -> Result<(), KittyError> {
         if sim.screen.legend_width == 0 {
             if !self.legend_drawn {
                 return Ok(());

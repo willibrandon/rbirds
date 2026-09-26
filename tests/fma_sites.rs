@@ -85,11 +85,11 @@ fn the_site_list_is_what_the_reference_produces() {
         panic!("no reference at {}", reference.display());
     }
     let script = oracle::repository().join("tools/oracle/fma-sites.sh");
-    let output = Command::new("sh").arg(&script).arg(&reference).output().expect("run fma-sites.sh");
+    let output =
+        Command::new("sh").arg(&script).arg(&reference).output().expect("run fma-sites.sh");
     assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
-    let generated: BTreeMap<String, usize> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .fold(BTreeMap::new(), |mut sites, line| {
+    let generated: BTreeMap<String, usize> =
+        String::from_utf8_lossy(&output.stdout).lines().fold(BTreeMap::new(), |mut sites, line| {
             *sites.entry(line.trim().to_owned()).or_insert(0) += 1;
             sites
         });

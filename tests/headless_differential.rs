@@ -34,7 +34,11 @@ fn run(exe: &Path, args: &[&str], dir: &Path) -> Outcome {
 
 /// The first differing byte of two files, as a report.
 fn byte_difference(expected: &[u8], actual: &[u8]) -> String {
-    let at = expected.iter().zip(actual).position(|(a, b)| a != b).unwrap_or(expected.len().min(actual.len()));
+    let at = expected
+        .iter()
+        .zip(actual)
+        .position(|(a, b)| a != b)
+        .unwrap_or(expected.len().min(actual.len()));
     format!(
         "lengths C {} Rust {}; first difference at byte {at}: C {:02x?} Rust {:02x?}",
         expected.len(),
@@ -54,7 +58,12 @@ fn record_both(name: &str, extra: &[&str]) {
     r_args.extend_from_slice(extra);
     let c = run(&reference, &c_args, &scratch.path);
     let r = run(&rust, &r_args, &scratch.path);
-    assert_eq!(c.code, r.code, "{name}: exit status; C stderr {}", String::from_utf8_lossy(&c.stderr));
+    assert_eq!(
+        c.code,
+        r.code,
+        "{name}: exit status; C stderr {}",
+        String::from_utf8_lossy(&c.stderr)
+    );
     // The summary names the file; the names differ only by c/r.
     let summary = String::from_utf8_lossy(&c.stdout).replacen("c.out", "r.out", 1);
     assert_eq!(summary.as_bytes(), r.stdout.as_slice(), "{name}: summary");
@@ -82,8 +91,14 @@ fn gif_recordings_are_the_references_bytes() {
     gif("default", &["--record-seconds", short]);
     gif("seed-0", &["--seed", "0", "--record-seconds", "1", "-n", "200"]);
     gif("seed-42-hawks", &["--seed", "42", "--hawks", "3", "--record-seconds", short, "-n", "300"]);
-    gif("flocks", &["--flocks", "3", "--avoidance", "10", "--color", "prism", "--record-seconds", "1"]);
-    gif("depth-trails", &["--depth", "--trails", "--hawks", "2", "--record-seconds", "1", "--color", "ice"]);
+    gif(
+        "flocks",
+        &["--flocks", "3", "--avoidance", "10", "--color", "prism", "--record-seconds", "1"],
+    );
+    gif(
+        "depth-trails",
+        &["--depth", "--trails", "--hawks", "2", "--record-seconds", "1", "--color", "ice"],
+    );
     gif("matrix", &["--matrix", "--record-seconds", "1", "--record-size", "60x20"]);
     gif("shapes", &["--shape", "arrow", "--record-seconds", "1", "-n", "150", "--size", "18"]);
     gif("dot-plane", &["--shape", "plane", "--record-seconds", "1", "-n", "100", "--size", "64"]);
@@ -91,13 +106,19 @@ fn gif_recordings_are_the_references_bytes() {
     gif("fps-7", &["--record-fps", "7", "--record-seconds", "2", "-n", "100"]);
     gif("fps-60", &["--record-fps", "60", "--record-seconds", "1", "-n", "100"]);
     gif("small", &["--record-size", "40x14", "--record-seconds", "1", "-n", "80", "--hawks", "4"]);
-    gif("preset", &["--preset", "murmuration", "--speed", "12", "--record-seconds", "1", "-n", "200"]);
+    gif(
+        "preset",
+        &["--preset", "murmuration", "--speed", "12", "--record-seconds", "1", "-n", "200"],
+    );
 }
 
 #[test]
 fn gif_recordings_of_text_renderers_are_the_references_bytes() {
     for render in ["braille", "sextants", "blocks"] {
-        gif(&format!("text-{render}"), &["--render", render, "--record-seconds", "1", "-n", "200", "--color", "aurora"]);
+        gif(
+            &format!("text-{render}"),
+            &["--render", render, "--record-seconds", "1", "-n", "200", "--color", "aurora"],
+        );
     }
 }
 
@@ -105,8 +126,14 @@ fn gif_recordings_of_text_renderers_are_the_references_bytes() {
 fn a_custom_sprite_records_as_the_reference_does() {
     let scratch_sprite = oracle::repository().join("assets/sprite.png");
     let path = scratch_sprite.to_str().unwrap().to_owned();
-    gif("custom-sprite", &["--sprite", &path, "--record-seconds", "1", "-n", "100", "--depth", "--hawks", "1"]);
-    gif("custom-sprite-text", &["--sprite", &path, "--render", "blocks", "--record-seconds", "1", "-n", "100"]);
+    gif(
+        "custom-sprite",
+        &["--sprite", &path, "--record-seconds", "1", "-n", "100", "--depth", "--hawks", "1"],
+    );
+    gif(
+        "custom-sprite-text",
+        &["--sprite", &path, "--render", "blocks", "--record-seconds", "1", "-n", "100"],
+    );
 }
 
 /// A cast's header carries the wall clock; that and the product title are
@@ -143,7 +170,10 @@ fn cast(name: &str, extra: &[&str]) {
     let c = run(&reference, &c_args, &scratch.path);
     let r = run(&rust, &r_args, &scratch.path);
     assert_eq!(c.code, r.code, "{name}: exit status");
-    assert_eq!(String::from_utf8_lossy(&c.stdout).replacen("c.cast", "r.cast", 1).as_bytes(), r.stdout.as_slice());
+    assert_eq!(
+        String::from_utf8_lossy(&c.stdout).replacen("c.cast", "r.cast", 1).as_bytes(),
+        r.stdout.as_slice()
+    );
     assert_eq!(c.stderr, r.stderr);
     let e = normalize_cast(&std::fs::read(scratch.file("c.cast")).expect("C cast"));
     let a = normalize_cast(&std::fs::read(scratch.file("r.cast")).expect("Rust cast"));
@@ -153,9 +183,18 @@ fn cast(name: &str, extra: &[&str]) {
 #[test]
 fn casts_are_the_references_bytes() {
     cast("default", &["--record-seconds", "2"]);
-    cast("hawks-flocks", &["--hawks", "2", "--flocks", "2", "--record-seconds", "1", "--record-fps", "120"]);
-    cast("kitty-requested", &["--render", "kitty", "--panel", "--record-seconds", "1", "-n", "300"]);
-    cast("theme", &["--color", "theme", "--record-seconds", "1", "--record-size", "400x120", "-n", "100"]);
+    cast(
+        "hawks-flocks",
+        &["--hawks", "2", "--flocks", "2", "--record-seconds", "1", "--record-fps", "120"],
+    );
+    cast(
+        "kitty-requested",
+        &["--render", "kitty", "--panel", "--record-seconds", "1", "-n", "300"],
+    );
+    cast(
+        "theme",
+        &["--color", "theme", "--record-seconds", "1", "--record-size", "400x120", "-n", "100"],
+    );
 }
 
 /// `.cast` selects a cast only as a suffix of a name longer than itself.
@@ -165,7 +204,11 @@ fn the_cast_suffix_rule_is_the_references() {
         let Some(reference) = oracle::reference_binary() else { return };
         let rust = oracle::rust_binary();
         let scratch = Scratch::new("cast-names");
-        let c = run(&reference, &["--record", name, "--record-seconds", "1", "-n", "20"], &scratch.path);
+        let c = run(
+            &reference,
+            &["--record", name, "--record-seconds", "1", "-n", "20"],
+            &scratch.path,
+        );
         let c_file = std::fs::read(scratch.file(name)).expect("C file");
         let r = run(&rust, &["--record", name, "--record-seconds", "1", "-n", "20"], &scratch.path);
         let r_file = std::fs::read(scratch.file(name)).expect("Rust file");
@@ -196,7 +239,11 @@ fn recording_failures_are_reported_as_the_reference_reports_them() {
         let r = run(&rust, &case, &scratch.path);
         assert_eq!(c.code, r.code, "{case:?}");
         assert_eq!(c.stdout, r.stdout, "{case:?}");
-        assert_eq!(String::from_utf8_lossy(&c.stderr), String::from_utf8_lossy(&r.stderr), "{case:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&c.stderr),
+            String::from_utf8_lossy(&r.stderr),
+            "{case:?}"
+        );
     }
 }
 
@@ -208,9 +255,12 @@ fn normalize_bench(stdout: &[u8]) -> String {
         .lines()
         .map(|line| {
             if line.starts_with("frame time") || line.starts_with("ceiling") {
-                let label: String = line.split_whitespace().take(2).collect::<Vec<_>>().join(" ");
-                let unit = line.split_whitespace().last().unwrap_or("");
-                format!("{label} <measured> {unit}")
+                // Only the numbers are measurements; the labels and units,
+                // and the spacing between them, are compared.
+                line.split(' ')
+                    .map(|word| if word.parse::<f64>().is_ok() { "<measured>" } else { word })
+                    .collect::<Vec<_>>()
+                    .join(" ")
             } else {
                 line.to_owned()
             }
@@ -226,7 +276,10 @@ fn benchmarks_report_what_the_reference_reports() {
     let scratch = Scratch::new("bench");
     for case in [
         vec!["--bench", "30"],
-        vec!["--bench", "20", "--hawks", "4", "--flocks", "3", "--depth", "--trails", "--speed", "12"],
+        vec![
+            "--bench", "20", "--hawks", "4", "--flocks", "3", "--depth", "--trails", "--speed",
+            "12",
+        ],
         vec!["--bench", "20", "--render", "braille", "--panel"],
         vec!["--bench", "10", "--render", "sextants", "-n", "4096"],
         vec!["--bench", "10", "--render", "blocks", "--matrix"],

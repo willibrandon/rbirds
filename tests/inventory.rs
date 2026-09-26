@@ -83,7 +83,10 @@ fn the_inventory_is_exactly_the_reference_suites() {
     for suite in SUITES {
         let source = fs::read_to_string(reference.join(suite)).expect("suite source");
         for call in main_calls(&source) {
-            assert!(discovered.insert((suite.to_owned(), call.clone())), "{suite} calls {call} twice");
+            assert!(
+                discovered.insert((suite.to_owned(), call.clone())),
+                "{suite} calls {call} twice"
+            );
         }
     }
     let mut listed = BTreeSet::new();

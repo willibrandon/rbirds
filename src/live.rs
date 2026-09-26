@@ -235,7 +235,10 @@ fn flush_frame(
             Ok(()) => {}
             Err(KittyError::Again) => {
                 if let Err(error) = terminal::wait_for_terminal_io() {
-                    return Err(fail(&platform::perror_message(b"Cannot wait for terminal output", errno_of(&error))));
+                    return Err(fail(&platform::perror_message(
+                        b"Cannot wait for terminal output",
+                        errno_of(&error),
+                    )));
                 }
                 running = read_keys(sim, parser);
             }
@@ -281,8 +284,9 @@ fn run_live(
     platform::install_signal_handlers();
 
     // The terminal is asked its questions before anything is built for it.
-    let mut terminal = Terminal::enter()
-        .map_err(|error| fail(&platform::perror_message(b"Can't enable raw mode", errno_of(&error))))?;
+    let mut terminal = Terminal::enter().map_err(|error| {
+        fail(&platform::perror_message(b"Can't enable raw mode", errno_of(&error)))
+    })?;
     sim.render_mode = sim.live_render_mode();
     sim.settle_the_bird_size();
     if sim.palette_follows_the_theme() && !terminal::learn_the_theme(&mut sim.theme) {

@@ -100,10 +100,8 @@ fn corpus(files: &Path) -> Vec<Vec<OsString>> {
         vec![b"--sprite=".to_vec()],
         vec![b"--record".to_vec(), b"x.gif".to_vec(), b"--record-size".to_vec(), b"10x10".to_vec()],
     ];
-    let mut all: Vec<Vec<OsString>> = owned
-        .into_iter()
-        .map(|list| list.into_iter().map(OsString::from_vec).collect())
-        .collect();
+    let mut all: Vec<Vec<OsString>> =
+        owned.into_iter().map(|list| list.into_iter().map(OsString::from_vec).collect()).collect();
     let fixed: &[&[&[u8]]] = &[
         &[],
         &[b"-h"],
@@ -213,8 +211,11 @@ fn every_argument_vector_behaves_as_the_reference() {
     for case in corpus(&scratch.path) {
         let c = run(&reference, &case, &scratch.path);
         let r = run(&rust, &case, &scratch.path);
-        let expected =
-            Run { status: c.status.clone(), stdout: normalize_identity(&c.stdout), stderr: c.stderr };
+        let expected = Run {
+            status: c.status.clone(),
+            stdout: normalize_identity(&c.stdout),
+            stderr: c.stderr,
+        };
         if expected != r {
             let shown: Vec<String> =
                 case.iter().map(|a| String::from_utf8_lossy(a.as_bytes()).into_owned()).collect();
@@ -229,7 +230,12 @@ fn every_argument_vector_behaves_as_the_reference() {
             ));
         }
     }
-    assert!(failures.is_empty(), "{} of the CLI corpus differ:\n{}", failures.len(), failures.join("\n"));
+    assert!(
+        failures.is_empty(),
+        "{} of the CLI corpus differ:\n{}",
+        failures.len(),
+        failures.join("\n")
+    );
 }
 
 /// argv[0] is every message's prefix, as invoked, bytes and all.

@@ -48,6 +48,7 @@ use linux as os;
 
 pub mod abi;
 mod errors;
+mod file;
 mod poll;
 pub mod pty;
 mod restore;
@@ -62,6 +63,7 @@ mod tty;
 mod tests;
 
 pub use errors::{exit_immediately, perror_message, strerror};
+pub use file::write_file;
 #[cfg(target_os = "linux")]
 pub use os::TIOCGPTN;
 pub use os::{
@@ -81,7 +83,7 @@ pub use restore::{
     write_all_quietly,
 };
 pub use scan::scan_osc_rgb;
-pub use signals::{install_signal_handlers, send_signal};
+pub use signals::{default_sigpipe, install_signal_handlers, send_signal};
 pub use termios::{RawModeView, tcgetattr, tcsetattr};
 pub use time::{Timespec, clock_gettime, monotonic_now, nanosleep, time_now};
 pub use trig::sin_cos;
@@ -95,6 +97,7 @@ pub const EINTR: c_int = 4;
 pub const EIO: c_int = 5;
 pub const EPIPE: c_int = 32;
 pub const ERANGE: c_int = 34;
+pub const ENOMEM: c_int = 12;
 #[cfg(target_os = "macos")]
 pub const EAGAIN: c_int = 35;
 #[cfg(target_os = "linux")]

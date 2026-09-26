@@ -390,10 +390,11 @@ impl World {
             "hawks" => self.sim.place_hawks(),
             "intro" => self.sim.begin_the_intro(),
             "grid" => {
-                let (w, h, n) = (self.sim.screen.width, self.sim.screen.height, self.sim.config.birds);
-                let grid = self
-                    .grid
-                    .get_or_insert_with(|| SpatialGrid::new(rbirds::config::SPATIAL_CELL_SIZE).unwrap());
+                let (w, h, n) =
+                    (self.sim.screen.width, self.sim.screen.height, self.sim.config.birds);
+                let grid = self.grid.get_or_insert_with(|| {
+                    SpatialGrid::new(rbirds::config::SPATIAL_CELL_SIZE).unwrap()
+                });
                 let code = grid_code(grid.prepare(w, h, n));
                 let _ = writeln!(self.out, "grid {code}");
             }

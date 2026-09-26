@@ -158,7 +158,12 @@ pub fn load_sprite(
         let too_large = buffer.len() > SPRITE_FILE_MAX;
         let unreadable = read.is_err();
         if too_large {
-            return Err(message(&[program, b": ", name, b" is over 4 MB, too large for a sprite\n"]));
+            return Err(message(&[
+                program,
+                b": ",
+                name,
+                b" is over 4 MB, too large for a sprite\n",
+            ]));
         }
         if unreadable {
             return Err(message(&[program, b": cannot read ", name, b"\n"]));
@@ -319,8 +324,9 @@ impl Sim {
 
         // Near birds: one geometry a wing phase, every shade off each.
         for wing in 0..WING_PHASES {
-            let sets: Vec<(i32, Tint)> =
-                (0..shades).map(|shade| (self.flock_set(shade, wing, 0), Tint::Flock(shade))).collect();
+            let sets: Vec<(i32, Tint)> = (0..shades)
+                .map(|shade| (self.flock_set(shade, wing, 0), Tint::Flock(shade)))
+                .collect();
             self.rasterise_geometry(
                 &source,
                 frames,

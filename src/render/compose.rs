@@ -85,7 +85,8 @@ pub fn blend_sprite(canvas: &mut Image, sprite: &Image, at_x: i32, at_y: i32, mi
             let under = u32::from(dst[3]) * (255 - alpha) / 255;
             let out_alpha = alpha + under;
             for c in 0..3 {
-                dst[c] = ((u32::from(src[c]) * alpha + u32::from(dst[c]) * under) / out_alpha) as u8;
+                dst[c] =
+                    ((u32::from(src[c]) * alpha + u32::from(dst[c]) * under) / out_alpha) as u8;
             }
             dst[3] = out_alpha as u8;
         }
@@ -108,7 +109,13 @@ fn drawn<'a>(sim: &Sim, birds: &'a [Bird]) -> &'a [Bird] {
 
 /// `compose_onto`: tails, then the flock far to near, then the hawks, on a
 /// ground for a picture or on nothing for a text terminal.
-pub fn compose_onto(sim: &Sim, canvas: &mut Image, frames: &[Image], birds: &[Bird], with_ground: bool) {
+pub fn compose_onto(
+    sim: &Sim,
+    canvas: &mut Image,
+    frames: &[Image],
+    birds: &[Bird],
+    with_ground: bool,
+) {
     let shades = sim.palette_shades();
     if with_ground {
         fill_ground(canvas);
@@ -125,7 +132,8 @@ pub fn compose_onto(sim: &Sim, canvas: &mut Image, frames: &[Image], birds: &[Bi
                 for step in 0..bird.trail_held {
                     let age = ((bird.trail_at - 1 - step + TRAIL_LENGTH) % TRAIL_LENGTH) as usize;
                     let sprite = &frames[(sim.trail_set(step) * ROTATION_FRAMES
-                        + bird.frame % ROTATION_FRAMES) as usize];
+                        + bird.frame % ROTATION_FRAMES)
+                        as usize];
                     if !sprite.is_empty() {
                         blend_sprite(
                             canvas,
@@ -256,8 +264,12 @@ impl Renderer {
         }
         let offset = f64::from(sim.hawk_draw_offset());
         for hawk in &sim.hawks[..sim.config.hawks as usize] {
-            let as_bird =
-                Bird { x: hawk.x - offset, y: hawk.y - offset, frame: hawk.frame, ..Bird::default() };
+            let as_bird = Bird {
+                x: hawk.x - offset,
+                y: hawk.y - offset,
+                frame: hawk.frame,
+                ..Bird::default()
+            };
             if let Some(mut placement) = bird_placement(sim, &as_bird) {
                 placement.image_id = sim.hawk_image_id(hawk);
                 graphics.place(&placement)?;

@@ -223,15 +223,8 @@ impl Drop for Scratch {
 /// canonical flags into `target/oracle/<arch>-<os>/cbirds` (never inside the reference
 /// checkout, whose own build products are not trusted).
 pub fn reference_binary() -> Option<PathBuf> {
-    let sources = [
-        "cells.c",
-        "font.c",
-        "gif.c",
-        "kitty_graphics.c",
-        "options.c",
-        "png.c",
-        "spatial_grid.c",
-    ];
+    let sources =
+        ["cells.c", "font.c", "gif.c", "kitty_graphics.c", "options.c", "png.c", "spatial_grid.c"];
     build_program("cbirds", "boids.c", &sources)
 }
 
@@ -250,7 +243,8 @@ pub fn build_program(name: &str, main_source: &str, others: &[&str]) -> Option<P
     let exe = out_dir.join(name);
     let mut inputs = vec![reference.join(main_source)];
     inputs.extend(others.iter().map(|s| reference.join(s)));
-    let newest = inputs.iter().filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok()).max();
+    let newest =
+        inputs.iter().filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok()).max();
     let built = fs::metadata(&exe).and_then(|m| m.modified()).ok();
     if let (Some(input), Some(built)) = (newest, built)
         && built >= input

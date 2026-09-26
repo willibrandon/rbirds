@@ -12,9 +12,9 @@ use crate::fp::{self, mul_add};
 impl Sim {
     /// `place_one_hawk`: one hawk, so a summoned one leaves the rest alone.
     pub fn place_one_hawk(&mut self, i: usize) {
-        let x = f64::from(self.screen.width) * (i as f64 + 1.0)
-            / (f64::from(self.config.hawks) + 1.0);
-        let y = f64::from(self.screen.height) * if i % 2 != 0 { 0.75 } else { 0.25 };
+        let x =
+            f64::from(self.screen.width) * (i as f64 + 1.0) / (f64::from(self.config.hawks) + 1.0);
+        let y = f64::from(self.screen.height) * if !i.is_multiple_of(2) { 0.75 } else { 0.25 };
         let direction = 2.0 * PI * self.rng.random_unit();
         self.hawks[i] = Hawk {
             x,
@@ -350,14 +350,16 @@ impl Sim {
             }
             if hawk.x < margin || hawk.x > last_x {
                 hawk.x = if hawk.x < margin { margin } else { last_x };
-                hawk.direction = normalized_angle(fp::sin(hawk.direction), -fp::cos(hawk.direction));
+                hawk.direction =
+                    normalized_angle(fp::sin(hawk.direction), -fp::cos(hawk.direction));
                 hawk.prey = -1;
                 hawk.commitment = 0.0;
                 hawk.passing = 0.0;
             }
             if hawk.y < margin || hawk.y > last_y {
                 hawk.y = if hawk.y < margin { margin } else { last_y };
-                hawk.direction = normalized_angle(-fp::sin(hawk.direction), fp::cos(hawk.direction));
+                hawk.direction =
+                    normalized_angle(-fp::sin(hawk.direction), fp::cos(hawk.direction));
                 hawk.prey = -1;
                 hawk.commitment = 0.0;
                 hawk.passing = 0.0;

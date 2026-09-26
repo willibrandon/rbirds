@@ -11,7 +11,8 @@ fn range_contains(grid: &SpatialGrid, cell: usize, value: i32) -> bool {
 
 #[test]
 fn test_layout_and_clamping() {
-    let points: [(f64, f64); 6] = [(0.0, 0.0), (11.9, 11.9), (12.0, 0.0), (24.9, 12.0), (-10.0, 5.0), (99.0, 99.0)];
+    let points: [(f64, f64); 6] =
+        [(0.0, 0.0), (11.9, 11.9), (12.0, 0.0), (24.9, 12.0), (-10.0, 5.0), (99.0, 99.0)];
     let mut grid = SpatialGrid::new(CELL_SIZE).expect("init");
     grid.prepare(25, 13, 6).expect("prepare");
     assert_eq!(grid.columns, 3);

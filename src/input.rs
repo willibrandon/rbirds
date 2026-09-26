@@ -118,10 +118,13 @@ impl Sim {
         if (konami.at as usize) < KONAMI_LENGTH {
             return;
         }
-        for i in 0..KONAMI_LENGTH {
-            if konami.seen[(konami.at as usize + i) % KONAMI_LENGTH] != KONAMI[i] {
-                return;
-            }
+        let start = konami.at as usize;
+        if KONAMI
+            .iter()
+            .enumerate()
+            .any(|(i, &key)| konami.seen[(start + i) % KONAMI_LENGTH] != key)
+        {
+            return;
         }
         konami.at = 0;
         konami.seen = [0; KONAMI_LENGTH];
@@ -271,13 +274,7 @@ impl Sim {
                 }
                 _ => continue,
             };
-            *notch += step;
-            if *notch < 0 {
-                *notch = 0;
-            }
-            if *notch > LEGEND_BAR_CELLS {
-                *notch = LEGEND_BAR_CELLS;
-            }
+            *notch = (*notch + step).clamp(0, LEGEND_BAR_CELLS);
             self.apply_notches();
         }
         true

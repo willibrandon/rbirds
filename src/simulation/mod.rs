@@ -368,8 +368,7 @@ impl Sim {
         if self.config.turning_notch >= LEGEND_BAR_CELLS {
             return 2.0 * PI;
         }
-        let scaled =
-            self.turning_notch_radians() * f64::from(FRAME_RATE) * self.flight_seconds();
+        let scaled = self.turning_notch_radians() * f64::from(FRAME_RATE) * self.flight_seconds();
         if scaled > 2.0 * PI { 2.0 * PI } else { scaled }
     }
 

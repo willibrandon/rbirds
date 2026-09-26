@@ -23,7 +23,12 @@ pub struct BenchResult {
 
 /// The simulation half of one benchmark frame: the snapshot and grid, a hunt,
 /// and `render_frame`'s flight, which hunts again.
-pub fn bench_step(sim: &mut Sim, birds: &mut [Bird], snapshot: &mut [Bird], grid: &mut SpatialGrid) {
+pub fn bench_step(
+    sim: &mut Sim,
+    birds: &mut [Bird],
+    snapshot: &mut [Bird],
+    grid: &mut SpatialGrid,
+) {
     let _ = sim.snapshot_and_build(birds, snapshot, grid);
     sim.hunt(snapshot);
     sim.advance(birds, snapshot, grid);
@@ -43,17 +48,17 @@ pub fn bench_frames(
         sim.render_mode = RenderMode::Kitty;
     }
     sim.settle_the_bird_size();
-    if sim.drawing_with_text() {
-        if let Err(error) = renderer.prepare_text_renderer(
+    if sim.drawing_with_text()
+        && let Err(error) = renderer.prepare_text_renderer(
             sim,
             settings.sprite_path.as_deref(),
             &settings.program_name,
-        ) {
-            if let crate::sprites::SpriteError::Fatal(message) = error {
-                eprint(&message);
-            }
-            return None;
+        )
+    {
+        if let crate::sprites::SpriteError::Fatal(message) = error {
+            eprint(&message);
         }
+        return None;
     }
     sim.set_frame_seconds(1.0 / f64::from(FRAME_RATE));
     let mut grid = SpatialGrid::new(SPATIAL_CELL_SIZE).ok()?;
@@ -80,7 +85,7 @@ pub fn bench_frames(
         bytes += graphics.len() as f64;
     }
     let finish = platform::monotonic_now();
-    Some(BenchResult { seconds: finish.seconds_since(&start), bytes })
+    Some(BenchResult { seconds: crate::live::elapsed_seconds(&start, &finish), bytes })
 }
 
 /// `run_benchmark`.

@@ -80,10 +80,10 @@ impl CFile {
     }
 
     fn put(&mut self, bytes: &[u8]) {
-        if self.error.is_none() {
-            if let Err(error) = self.writer.write_all(bytes) {
-                self.error = Some(error);
-            }
+        if self.error.is_none()
+            && let Err(error) = self.writer.write_all(bytes)
+        {
+            self.error = Some(error);
         }
     }
 
@@ -192,7 +192,14 @@ pub fn run_cast_recording(
     let mut out = match CFile::create(record_path) {
         Ok(out) => out,
         Err(error) => {
-            eprint(&cat(&[program, b": ", record_path.as_bytes(), b": ", &os_error_text(&error), b"\n"]));
+            eprint(&cat(&[
+                program,
+                b": ",
+                record_path.as_bytes(),
+                b": ",
+                &os_error_text(&error),
+                b"\n",
+            ]));
             return EXIT_FAILURE;
         }
     };
@@ -220,7 +227,14 @@ pub fn run_cast_recording(
     let mut bytes: i64 = 0;
     let mut line = Vec::new();
     for frame in 0..total {
-        record_step(sim, &mut birds, &mut snapshot, &mut grid, frame, f64::from(settings.record_fps));
+        record_step(
+            sim,
+            &mut birds,
+            &mut snapshot,
+            &mut grid,
+            frame,
+            f64::from(settings.record_fps),
+        );
         compose_onto(sim, &mut renderer.canvas, &renderer.sprites, &birds, false);
         renderer.cells.read(
             CellsStyle::Braille,
@@ -254,7 +268,14 @@ pub fn run_cast_recording(
     renderer.canvas.free();
     crate::sprites::free_sprites(&mut renderer.sprites);
     if let Err(error) = closed {
-        eprint(&cat(&[program, b": ", record_path.as_bytes(), b": ", &os_error_text(&error), b"\n"]));
+        eprint(&cat(&[
+            program,
+            b": ",
+            record_path.as_bytes(),
+            b": ",
+            &os_error_text(&error),
+            b"\n",
+        ]));
         return EXIT_FAILURE;
     }
     let mut summary = record_path.as_bytes().to_vec();
@@ -327,10 +348,22 @@ pub fn run_recording(
         }
     }
 
-    let mut gif = match GifWriter::open(record_path, sim.screen.width, sim.screen.height, delay) {
+    let mut gif = match GifWriter::open(
+        std::path::Path::new(record_path),
+        sim.screen.width,
+        sim.screen.height,
+        delay,
+    ) {
         Ok(gif) => gif,
         Err(error) => {
-            eprint(&cat(&[program, b": ", record_path.as_bytes(), b": ", error.as_str().as_bytes(), b"\n"]));
+            eprint(&cat(&[
+                program,
+                b": ",
+                record_path.as_bytes(),
+                b": ",
+                error.as_str().as_bytes(),
+                b"\n",
+            ]));
             return EXIT_FAILURE;
         }
     };
@@ -354,7 +387,12 @@ pub fn run_recording(
             let style = text_style(sim.render_mode);
             cells.read(style, &canvas, sim.screen.cell_width, sim.screen.cell_height);
             let painted = match cells.emit() {
-                Ok(()) => cells.paint(style, sim.screen.cell_width, sim.screen.cell_height, PICTURE_GROUND),
+                Ok(()) => cells.paint(
+                    style,
+                    sim.screen.cell_width,
+                    sim.screen.cell_height,
+                    PICTURE_GROUND,
+                ),
                 Err(_) => Err(crate::render::cells::CellsError::Memory),
             };
             match painted {
@@ -376,7 +414,14 @@ pub fn run_recording(
         gif_status = closed.status;
     }
     if let Err(error) = gif_status {
-        eprint(&cat(&[program, b": ", record_path.as_bytes(), b": ", error.as_str().as_bytes(), b"\n"]));
+        eprint(&cat(&[
+            program,
+            b": ",
+            record_path.as_bytes(),
+            b": ",
+            error.as_str().as_bytes(),
+            b"\n",
+        ]));
         return EXIT_FAILURE;
     }
     let written = closed.frames;

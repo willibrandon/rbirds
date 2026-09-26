@@ -202,8 +202,7 @@ impl Sim {
         if bird.y < turn_y {
             boundary.y = self.edge_push(turn_y - bird.y, turn_y);
         } else if bird.y > f64::from(s.height - s.turn_bottom) {
-            boundary.y =
-                -self.edge_push(bird.y - f64::from(s.height - s.turn_bottom), turn_bottom);
+            boundary.y = -self.edge_push(bird.y - f64::from(s.height - s.turn_bottom), turn_bottom);
         }
         boundary
     }
@@ -221,7 +220,9 @@ impl Sim {
     }
 
     /// `measure_flocks`: every flock's centre, leash and home, off the same
-    /// snapshot every bird reads.
+    /// snapshot every bird reads. The loops index several per-flock arrays at
+    /// once, in the C's order.
+    #[allow(clippy::needless_range_loop)]
     pub fn measure_flocks(&mut self, birds: &[Bird]) {
         const FLOCKS: usize = MAX_FLOCKS as usize;
         let mut counted = [0_i32; FLOCKS];
@@ -326,8 +327,11 @@ impl Sim {
         let dy = self.flock_home_y[flock] - bird.y;
         // fma: boids.c:2005:36
         let distance = mul_add(dx, dx, dy * dy).sqrt();
-        let width =
-            if self.flock_leash[flock] > 0.0 { self.flock_leash[flock] } else { f64::from(FLOCK_LEASH) };
+        let width = if self.flock_leash[flock] > 0.0 {
+            self.flock_leash[flock]
+        } else {
+            f64::from(FLOCK_LEASH)
+        };
         if distance <= width || distance < 1e-9 {
             return pull;
         }

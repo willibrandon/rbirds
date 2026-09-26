@@ -91,13 +91,10 @@ fn compare(name: &str, script: &str) {
     }
     // Locate the first differing digest and replace it, and the one before
     // it, with full dumps so the report names a field.
-    let digest_lines: Vec<usize> = script
-        .lines()
-        .enumerate()
-        .filter(|(_, l)| l.trim() == "digest")
-        .map(|(i, _)| i)
-        .collect();
-    let expected_digests: Vec<&str> = expected.lines().filter(|l| l.starts_with("digest ")).collect();
+    let digest_lines: Vec<usize> =
+        script.lines().enumerate().filter(|(_, l)| l.trim() == "digest").map(|(i, _)| i).collect();
+    let expected_digests: Vec<&str> =
+        expected.lines().filter(|l| l.starts_with("digest ")).collect();
     let actual_digests: Vec<&str> = actual.lines().filter(|l| l.starts_with("digest ")).collect();
     let mut detail = first_difference(&expected, &actual).unwrap_or_default();
     if let Some(k) = expected_digests.iter().zip(&actual_digests).position(|(e, a)| e != a) {
@@ -119,7 +116,10 @@ fn compare(name: &str, script: &str) {
     let kept = oracle::repository().join("target/scratch").join(format!("sim-{name}.script"));
     let _ = std::fs::create_dir_all(kept.parent().unwrap());
     let _ = std::fs::write(&kept, script);
-    panic!("scenario {name}: Rust diverges from the C reference\n{detail}\nscript kept at {}", kept.display());
+    panic!(
+        "scenario {name}: Rust diverges from the C reference\n{detail}\nscript kept at {}",
+        kept.display()
+    );
 }
 
 /// Recording parameters, as run_recording derives them.
@@ -179,16 +179,37 @@ impl Recording {
     fn script(&self) -> String {
         let mut s = String::new();
         let fps = actual_fps(self.fps);
-        let _ = writeln!(s, "set birds {}\nset flocks {}\nset hawks {}", self.birds, self.flocks, self.hawks);
-        let _ = writeln!(s, "set pace {}\nset avoid {}\nset palette {}", self.pace_notch, self.avoid_notch, self.palette);
-        let _ = writeln!(s, "set turning {}\nset deep {}\nset trails {}", self.turning, u8::from(self.depth), u8::from(self.trails));
+        let _ = writeln!(
+            s,
+            "set birds {}\nset flocks {}\nset hawks {}",
+            self.birds, self.flocks, self.hawks
+        );
+        let _ = writeln!(
+            s,
+            "set pace {}\nset avoid {}\nset palette {}",
+            self.pace_notch, self.avoid_notch, self.palette
+        );
+        let _ = writeln!(
+            s,
+            "set turning {}\nset deep {}\nset trails {}",
+            self.turning,
+            u8::from(self.depth),
+            u8::from(self.trails)
+        );
         s.push_str("notches\n");
         if self.matrix {
             s.push_str("set palette 4\nset trails 1\nset alignment 12\nset rain 1\nnotches\n");
         }
         let _ = writeln!(s, "seconds {}", bits(1.0 / fps));
         s.push_str("set legend 0\n");
-        let _ = writeln!(s, "screen {} {} {} {}", self.columns, self.rows, self.columns * 8, self.rows * 16);
+        let _ = writeln!(
+            s,
+            "screen {} {} {} {}",
+            self.columns,
+            self.rows,
+            self.columns * 8,
+            self.rows * 16
+        );
         s.push_str("grid\n");
         let _ = writeln!(s, "set size {}", self.size);
         let _ = writeln!(s, "seed {}\nalloc {}\ninit\nhawks\nintro\ndigest", self.seed, self.birds);
@@ -210,13 +231,17 @@ fn frames(release: i32, debug: i32) -> i32 {
 
 #[test]
 fn recording_default_flock_matches_the_reference() {
-    compare("record-default", &Recording { frames: frames(150, 90), ..Default::default() }.script());
+    compare(
+        "record-default",
+        &Recording { frames: frames(150, 90), ..Default::default() }.script(),
+    );
 }
 
 #[test]
 fn recording_seeds_match_the_reference() {
     for seed in [0, 2, 5, 33, 42, 2147483647] {
-        let script = Recording { seed, birds: 200, frames: frames(120, 40), ..Default::default() }.script();
+        let script =
+            Recording { seed, birds: 200, frames: frames(120, 40), ..Default::default() }.script();
         compare(&format!("record-seed-{seed}"), &script);
     }
 }
@@ -251,11 +276,14 @@ fn recording_flocks_and_avoidance_match_the_reference() {
 fn recording_speed_extremes_match_the_reference() {
     for pace_notch in [0, 4, 9, 12] {
         let script =
-            Recording { pace_notch, birds: 250, frames: frames(150, 40), ..Default::default() }.script();
+            Recording { pace_notch, birds: 250, frames: frames(150, 40), ..Default::default() }
+                .script();
         compare(&format!("record-pace-{pace_notch}"), &script);
     }
     for turning in [0, 12] {
-        let script = Recording { turning, birds: 150, frames: frames(100, 30), ..Default::default() }.script();
+        let script =
+            Recording { turning, birds: 150, frames: frames(100, 30), ..Default::default() }
+                .script();
         compare(&format!("record-turning-{turning}"), &script);
     }
 }
@@ -274,32 +302,64 @@ fn recording_depth_trails_and_matrix_match_the_reference() {
     }
     .script();
     compare("record-depth-trails", &script);
-    let script = Recording { matrix: true, birds: 300, frames: frames(150, 40), ..Default::default() }.script();
+    let script =
+        Recording { matrix: true, birds: 300, frames: frames(150, 40), ..Default::default() }
+            .script();
     compare("record-matrix", &script);
 }
 
 #[test]
 fn recording_extreme_sizes_match_the_reference() {
-    compare("record-one-bird", &Recording { birds: 1, hawks: 1, frames: frames(300, 100), ..Default::default() }.script());
+    compare(
+        "record-one-bird",
+        &Recording { birds: 1, hawks: 1, frames: frames(300, 100), ..Default::default() }.script(),
+    );
     compare(
         "record-tiny-viewport",
-        &Recording { columns: 40, rows: 14, birds: 120, hawks: 4, frames: frames(200, 60), ..Default::default() }.script(),
+        &Recording {
+            columns: 40,
+            rows: 14,
+            birds: 120,
+            hawks: 4,
+            frames: frames(200, 60),
+            ..Default::default()
+        }
+        .script(),
     );
     compare(
         "record-large-viewport",
-        &Recording { columns: 400, rows: 120, birds: 400, size: 64, frames: frames(60, 10), ..Default::default() }.script(),
+        &Recording {
+            columns: 400,
+            rows: 120,
+            birds: 400,
+            size: 64,
+            frames: frames(60, 10),
+            ..Default::default()
+        }
+        .script(),
     );
     compare(
         "record-4096",
-        &Recording { birds: 4096, flocks: 3, hawks: 4, frames: frames(30, 3), ..Default::default() }.script(),
+        &Recording {
+            birds: 4096,
+            flocks: 3,
+            hawks: 4,
+            frames: frames(30, 3),
+            ..Default::default()
+        }
+        .script(),
     );
-    compare("record-small-birds", &Recording { size: 4, birds: 300, frames: frames(100, 30), ..Default::default() }.script());
+    compare(
+        "record-small-birds",
+        &Recording { size: 4, birds: 300, frames: frames(100, 30), ..Default::default() }.script(),
+    );
 }
 
 #[test]
 fn recording_rates_match_the_reference() {
     for fps in [2, 7, 20, 41, 60, 120] {
-        let script = Recording { fps, birds: 120, frames: frames(90, 30), ..Default::default() }.script();
+        let script =
+            Recording { fps, birds: 120, frames: frames(90, 30), ..Default::default() }.script();
         compare(&format!("record-fps-{fps}"), &script);
     }
 }
@@ -307,7 +367,9 @@ fn recording_rates_match_the_reference() {
 /// Past a minute, the autopilot moves a slider every four seconds.
 #[test]
 fn a_long_recording_flies_itself_as_the_reference_does() {
-    let script = Recording { birds: 100, fps: 25, frames: frames(1700, 1600), ..Default::default() }.script();
+    let script =
+        Recording { birds: 100, fps: 25, frames: frames(1700, 1600), ..Default::default() }
+            .script();
     compare("record-autopilot", &script);
 }
 
@@ -356,9 +418,20 @@ fn hex(bytes: &[u8]) -> String {
 impl Live {
     fn script(&self) -> String {
         let mut s = String::new();
-        let _ = writeln!(s, "set birds {}\nset hawks {}\nset flocks {}", self.birds, self.hawks, self.flocks);
-        let _ = writeln!(s, "set palette {}\nset legend {}\nset trails {}", self.palette, u8::from(self.legend), u8::from(self.trails));
-        let _ = writeln!(s, "set deep {}\nset pace {}\nnotches", u8::from(self.depth), self.pace_notch);
+        let _ = writeln!(
+            s,
+            "set birds {}\nset hawks {}\nset flocks {}",
+            self.birds, self.hawks, self.flocks
+        );
+        let _ = writeln!(
+            s,
+            "set palette {}\nset legend {}\nset trails {}",
+            self.palette,
+            u8::from(self.legend),
+            u8::from(self.trails)
+        );
+        let _ =
+            writeln!(s, "set deep {}\nset pace {}\nnotches", u8::from(self.depth), self.pace_notch);
         // main: render mode, size, theme (not asked here), grid, seed, sizes.
         let _ = writeln!(s, "set render {}\nset size 30", self.render);
         let (w, h) = (self.columns * 8, self.rows * 16);
@@ -367,7 +440,11 @@ impl Live {
             s.push_str("sprites\nset truecolor 1\n");
         }
         let _ = writeln!(s, "seconds {}\nset hawk_sets 1", bits(1.0 / 60.0));
-        let _ = writeln!(s, "alloc {}\nscreen {} {} {w} {h}\ninit\nhawks\nintro", self.birds, self.columns, self.rows);
+        let _ = writeln!(
+            s,
+            "alloc {}\nscreen {} {} {w} {h}\ninit\nhawks\nintro",
+            self.birds, self.columns, self.rows
+        );
         let (mut sec, mut nsec) = (1000_i64, 0_i64);
         let _ = writeln!(s, "live_begin {sec} {nsec}");
         let mut columns = self.columns;
@@ -397,7 +474,12 @@ impl Live {
                     }
                 }
             }
-            let _ = writeln!(s, "live {keys} {sec} {nsec} {columns} {rows} {} {}", columns * 8, rows * 16);
+            let _ = writeln!(
+                s,
+                "live {keys} {sec} {nsec} {columns} {rows} {} {}",
+                columns * 8,
+                rows * 16
+            );
             s.push_str("digest\n");
         }
         s.push_str("dump\n");
@@ -446,7 +528,13 @@ fn live_text_renderers_match_the_reference() {
             trails: true,
             depth: true,
             legend: true,
-            events: vec![(10, "h"), (20, "gGG"), (30, "resize 40x14"), (40, "resize 90x30"), (50, "h")],
+            events: vec![
+                (10, "h"),
+                (20, "gGG"),
+                (30, "resize 40x14"),
+                (40, "resize 90x30"),
+                (50, "h"),
+            ],
             frames: frames(70, 55),
             ..Default::default()
         }
@@ -474,7 +562,8 @@ fn live_kitty_placements_match_the_reference() {
 #[test]
 fn live_palettes_and_shades_match_the_reference() {
     for palette in 1..10 {
-        let script = Live { palette, birds: 60, frames: frames(30, 12), ..Default::default() }.script();
+        let script =
+            Live { palette, birds: 60, frames: frames(30, 12), ..Default::default() }.script();
         compare(&format!("live-palette-{palette}"), &script);
     }
 }
@@ -499,9 +588,22 @@ fn keys_presets_and_population_match_the_reference() {
     s.push_str("screen 80 24 640 384\nset legend 1\nscreen 80 24 640 384\nnotches\nset size 30\nset hawk_sets 1\n");
     s.push_str("seed 3\nalloc 100\nset birds 100\ninit\ngrid\ndigest\n");
     for keys in [
-        "BBBBBBBBBBBBBB", "bbbbbbbbbbbbbbbbbbbbbbbb", "SsAaTtPpVvGg", "\t\t\t\t", "0",
-        "\x1b[<35;10;5M", "\x1b[<0;20;9m", "\x1b[<35;3;3MB", "\x1b[A\x1b[1;2B\x1bOP",
-        "kkkkkK", "AABBDCDCba", "AAABBDCDCba", "qwertyAABBDCDCba", "  ..", "h", "hh",
+        "BBBBBBBBBBBBBB",
+        "bbbbbbbbbbbbbbbbbbbbbbbb",
+        "SsAaTtPpVvGg",
+        "\t\t\t\t",
+        "0",
+        "\x1b[<35;10;5M",
+        "\x1b[<0;20;9m",
+        "\x1b[<35;3;3MB",
+        "\x1b[A\x1b[1;2B\x1bOP",
+        "kkkkkK",
+        "AABBDCDCba",
+        "AAABBDCDCba",
+        "qwertyAABBDCDCba",
+        "  ..",
+        "h",
+        "hh",
     ] {
         let _ = writeln!(s, "keys {}\ndigest", hex(keys.as_bytes()));
     }

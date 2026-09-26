@@ -3,8 +3,8 @@
 
 use super::errors::exit_immediately;
 use super::os::{
-    SA_RESETHAND, SIG_IGN, SIGABRT, SIGBUS, SIGFPE, SIGHUP, SIGINT, SIGPIPE, SIGQUIT, SIGSEGV,
-    SIGTERM, SigAction, pid_t,
+    SA_RESETHAND, SIG_DFL, SIG_IGN, SIGABRT, SIGBUS, SIGFPE, SIGHUP, SIGINT, SIGPIPE, SIGQUIT,
+    SIGSEGV, SIGTERM, SigAction, pid_t,
 };
 use super::restore::restore_terminal;
 use super::sys;
@@ -61,4 +61,18 @@ pub fn send_signal(pid: pid_t, signal: c_int) -> io::Result<()> {
     // SAFETY: kill takes two integers by value and touches no memory of ours.
     let result = unsafe { sys::kill(pid, signal) };
     if result < 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
+}
+
+/// SIGPIPE back to its default action, as a C program starts. Rust's runtime
+/// ignores SIGPIPE before `main`; cbirds does not, so outside the live run
+/// (which installs `SIG_IGN` itself) a vanished reader kills the process
+/// exactly as it kills the reference — `rbirds --help | true`, say.
+pub fn default_sigpipe() {
+    let mut action = SigAction { sa_handler: SIG_DFL, sa_flags: 0, ..SigAction::default() };
+    // SAFETY: `action.sa_mask` is a live, writable `sigset_t` of the target's
+    // layout (ABI probe); sigemptyset only clears it.
+    unsafe { sys::sigemptyset(&mut action.sa_mask) };
+    // SAFETY: a fully initialized `struct sigaction` with the default
+    // disposition; a null old-action pointer is permitted.
+    unsafe { sys::sigaction(SIGPIPE, &action, std::ptr::null_mut()) };
 }
