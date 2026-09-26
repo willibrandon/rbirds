@@ -6,9 +6,10 @@ rust-version = "1.96"
 authors = ["Brandon Williams"]
 description = "A Rust port of cbirds 1.4.0: a flock of birds in your terminal"
 license = "MIT"
-repository = "https://github.com/clainstone/cbirds"
+repository = "https://github.com/willibrandon/rbirds"
 readme = "README.md"
-publish = false
+keywords = ["boids", "flocking", "terminal", "animation", "braille"]
+categories = ["command-line-utilities", "simulation"]
 # Only the application sources ship; the reference, fixtures and tools do not.
 include = ["/src/**", "/assets/sprite.png", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/NOTICE.md", "/README.md"]
 

@@ -4,6 +4,16 @@ Rust port of [cbirds](https://github.com/clainstone/cbirds) 1.4.0, a flocking si
 
 This is a rescue operation. The birds couldn't be left living in an unsafe environment, so they were moved to Rust. The flock is beak-for-beak identical: same seed, same flight, same frames.
 
+## Install
+
+Binaries for Linux, macOS and Windows are on the [releases page](https://github.com/willibrandon/rbirds/releases/latest). Or build it with Cargo (Rust 1.96 or newer):
+
+```sh
+cargo install rbirds
+```
+
+The Linux binaries need glibc 2.35 or newer (Ubuntu 22.04, Debian 12). The macOS ones need macOS 11.
+
 ## Build and run
 
 ```sh

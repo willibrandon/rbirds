@@ -39,7 +39,7 @@ Initial release targets match the reference's CI architecture coverage:
 - `aarch64-unknown-linux-gnu`
 - `x86_64-unknown-linux-gnu`
 
-Windows uses `x86_64-pc-windows-msvc`. The bindings also permit `aarch64-pc-windows-msvc`, which has not been tested on hardware. Linux musl, BSD, GNU/MinGW Windows and 32-bit targets are unsupported. Unsupported targets must fail to compile. Minimum OS and libc versions still need to be recorded for release builds.
+Windows uses `x86_64-pc-windows-msvc`. The bindings also permit `aarch64-pc-windows-msvc`, which has not been tested on hardware. Linux musl, BSD, GNU/MinGW Windows and 32-bit targets are unsupported. Unsupported targets must fail to compile. Release builds need glibc 2.35 or later on Linux and macOS 11 or later. The Windows build links the C runtime statically.
 
 ## 3. Organization
 
