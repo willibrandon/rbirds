@@ -8,11 +8,6 @@
 //! and must print exactly the same transcript. Scenarios run in fresh oracle
 //! processes, and a mismatch reports the first divergent line.
 
-// The shared oracle harness is not this suite's to change, and as committed it
-// is neither rustfmt-clean nor free of clippy's collapsible_if; keep both
-// checks to this crate's own code.
-#[rustfmt::skip]
-#[allow(clippy::collapsible_if)]
 mod support;
 
 use std::fmt::Write as _;

@@ -36,6 +36,7 @@
 #undef main
 
 #include <fcntl.h>
+#include <stdarg.h>
 #include <inttypes.h>
 
 static char *out_text;

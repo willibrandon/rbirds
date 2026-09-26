@@ -9,11 +9,6 @@
 //! script runs here against the Rust translation and must print exactly the
 //! same transcript; bytes flushed to standard output must also be identical.
 
-// The shared oracle harness is not this suite's to change, and as committed it
-// is neither rustfmt-clean nor free of clippy's collapsible_if; keep both
-// checks to this crate's own code.
-#[rustfmt::skip]
-#[allow(clippy::collapsible_if)]
 mod support;
 
 use std::fmt::Write as _;
