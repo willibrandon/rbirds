@@ -6,10 +6,10 @@
 
 #![forbid(unsafe_code)]
 
+use crate::platform::OsStrExt;
 use std::f64::consts::PI;
 use std::ffi::OsStr;
 use std::io::Read;
-use std::os::unix::ffi::OsStrExt;
 
 use crate::config::*;
 use crate::fp::mul_add;

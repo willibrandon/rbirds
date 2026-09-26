@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Characterization of the C reference's terminal lifecycle under a scripted
 //! PTY (docs/PORTING.md §4.C), with the lifecycle cases of
 //! `support::pty::cases` run on `cbirds` built from the pinned sources with

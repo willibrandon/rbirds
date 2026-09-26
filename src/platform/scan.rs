@@ -7,6 +7,7 @@
 
 use std::ffi::{CString, c_char, c_int, c_uint};
 
+#[cfg_attr(windows, link(name = "legacy_stdio_definitions"))]
 unsafe extern "C" {
     fn sscanf(text: *const c_char, format: *const c_char, ...) -> c_int;
 }

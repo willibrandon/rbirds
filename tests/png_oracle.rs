@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Differential tests of `rbirds::image::png` against the pinned C `png.c`.
 //!
 //! Every comparison is exact: statuses, decoded pixels, encoded bytes and

@@ -240,6 +240,7 @@ fn args(list: &[&str]) -> Vec<OsString> {
 /// However the program ends, the terminal is put back, and a reader that goes
 /// away is one of the ways. The whole program runs on a terminal of its own,
 /// writing into a pipe that is closed under it after its first byte.
+#[cfg(unix)]
 #[test]
 fn test_a_closed_pipe_leaves_the_terminal_as_it_was() {
     use std::io::Read;

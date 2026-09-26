@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! The rbirds binary through the same scripted-PTY lifecycle cases the C
 //! reference is characterized with in tests/pty_reference.rs
 //! (docs/PORTING.md §4.C, docs/COMPATIBILITY.md C13–C15): theme queries and

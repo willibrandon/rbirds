@@ -27,7 +27,7 @@ out="target/perf/$(date -u +%Y%m%dT%H%M%SZ)"
 mkdir -p "$out"
 
 cargo build --release --locked --offline --quiet
-rust=target/release/rbirds
+rust=${CARGO_TARGET_DIR:-target}/release/rbirds
 # The reference, with the canonical flags (docs/PORTING.md §2).
 r=.reference/cbirds
 c="$out/cbirds"

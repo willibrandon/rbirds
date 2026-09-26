@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! The ABI gate for `rbirds::platform` (docs/DESIGN.md §6, PORTING.md §4.D):
 //! `tools/oracle/abi_probe.c`, compiled against this machine's native headers
 //! for the same target as this test binary, must print exactly the report the

@@ -48,7 +48,7 @@ pub fn bench_frames(
         sim.render_mode = RenderMode::Kitty;
     }
     sim.settle_the_bird_size();
-    if sim.drawing_with_text()
+    if (sim.drawing_with_text() || sim.render_mode == RenderMode::Sixel)
         && let Err(error) = renderer.prepare_text_renderer(
             sim,
             settings.sprite_path.as_deref(),

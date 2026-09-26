@@ -63,6 +63,15 @@ pub fn write_all(bytes: &[u8]) {
 /// terminator, a full buffer or the deadline. `reply_size` is the C buffer's
 /// size, NUL included.
 pub fn terminal_query(request: &[u8], reply_size: usize, milliseconds: i64) -> Vec<u8> {
+    query_until(request, reply_size, milliseconds, None)
+}
+
+fn query_until(
+    request: &[u8],
+    reply_size: usize,
+    milliseconds: i64,
+    terminator: Option<u8>,
+) -> Vec<u8> {
     let mut reply = Vec::new();
     if reply_size == 0 {
         return reply;
@@ -94,9 +103,11 @@ pub fn terminal_query(request: &[u8], reply_size: usize, milliseconds: i64) -> V
             Some(end) => &reply[..end],
             None => &reply[..],
         };
-        if reply.contains(&0x07)
-            || as_c_string.windows(2).any(|w| w == b"\x1b\\")
-            || reply.contains(&b'c')
+        if terminator.is_some_and(|end| reply.contains(&end))
+            || (terminator.is_none()
+                && (reply.contains(&0x07)
+                    || as_c_string.windows(2).any(|w| w == b"\x1b\\")
+                    || reply.contains(&b'c')))
         {
             break;
         }
@@ -105,6 +116,62 @@ pub fn terminal_query(request: &[u8], reply_size: usize, milliseconds: i64) -> V
         }
     }
     reply
+}
+
+/// Only probe when Sixel is explicitly requested. The ordinary renderer's
+/// startup traffic remains identical to the reference.
+pub fn prepare_sixel() -> io::Result<(u16, u16)> {
+    let capabilities = query_until(b"\x1b[c", 256, 250, Some(b'c'));
+    if !has_sixel(&capabilities) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "terminal did not advertise Sixel; use Windows Terminal 1.22+ or --render braille",
+        ));
+    }
+    let reply = query_until(b"\x1b[16t", 128, 250, Some(b't'));
+    let cell = parse_cell_size(&reply).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::Unsupported,
+            "terminal did not report its graphics cell size (CSI 16 t)",
+        )
+    })?;
+    let mode = query_until(b"\x1b[?80$p", 128, 100, Some(b'y'));
+    let was_enabled = mode.windows(9).any(|s| s == b"\x1b[?80;1$y")
+        || mode.windows(9).any(|s| s == b"\x1b[?80;3$y");
+    platform::enable_sixel_mode(was_enabled);
+    Ok(cell)
+}
+
+pub fn has_sixel(reply: &[u8]) -> bool {
+    reply
+        .windows(3)
+        .position(|s| s == b"\x1b[?")
+        .and_then(|at| {
+            let body = &reply[at + 3..];
+            body.iter()
+                .position(|&b| b == b'c')
+                .map(|end| body[..end].split(|&b| b == b';').skip(1).any(|s| s == b"4"))
+        })
+        .unwrap_or(false)
+}
+
+/// CSI 6 ; cell-height ; cell-width t. These may be virtual pixels, as in WT.
+pub fn parse_cell_size(reply: &[u8]) -> Option<(u16, u16)> {
+    let at = reply.windows(4).position(|s| s == b"\x1b[6;")?;
+    let body = &reply[at + 4..];
+    let end = body.iter().position(|&b| b == b't')?;
+    let text = std::str::from_utf8(&body[..end]).ok()?;
+    let (height, width) = text.split_once(';')?;
+    let (width, height) = (width.parse::<u16>().ok()?, height.parse::<u16>().ok()?);
+    (width > 0 && height > 0).then_some((width, height))
+}
+
+pub fn graphics_window(mut size: platform::WinSize, cell: Option<(u16, u16)>) -> platform::WinSize {
+    if let Some((width, height)) = cell {
+        size.xpixel = size.col.saturating_mul(width);
+        size.ypixel = size.row.saturating_mul(height);
+    }
+    size
 }
 
 /// `ask_colour`.

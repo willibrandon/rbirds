@@ -2,6 +2,10 @@
 
 Status: every requirement has test evidence on the four targets, except where the ledger says otherwise. See [the evidence index](evidence/README.md). Checks of how it looks in real terminals are still open.
 
+The results below cover Linux and macOS. Windows has native tests described in
+[WINDOWS.md](WINDOWS.md). Sixel and Windows have no cbirds equivalent; D-004 and
+D-005 list those differences. Results for this branch are in the evidence index.
+
 Reference: [cbirds 1.4.0, commit cc446fc3cb80733371c62676533adcac2fc10002](https://github.com/clainstone/cbirds/tree/cc446fc3cb80733371c62676533adcac2fc10002). Inspect that revision, not a moving upstream branch. [The manifest](reference-manifest.json) pins its tracked file hashes.
 
 ## 1. Comparison rules
@@ -17,10 +21,11 @@ Reference: [cbirds 1.4.0, commit cc446fc3cb80733371c62676533adcac2fc10002](https
 
 Allowed normalized fields are limited to:
 
-1. Product identity: command names in known help/completion/error locations, version product/version fields, and the cast header's title. Record the rbirds version actually used. Do not replace arbitrary substrings in user paths or file contents.
+1. Product identity: command names in known help/completion/error locations, version product/version fields, and the cast header's title. The help tagline uses a plain hyphen. Record the rbirds version actually used. Do not replace arbitrary substrings in user paths or file contents.
 2. The cast header's wall-clock `timestamp`. Recording event timestamps and output bytes remain exact.
 3. Harness-generated absolute temporary paths, only where the fixture declares a path field.
 4. Measured durations, derived FPS, and live performance-panel statistics. Validate their field format and meaning separately. Output byte counts remain exact for the same deterministic frames.
+5. Sixel's added help text, example, completion choices and invalid-render diagnostic (D-004). `tests/cli_differential.rs` applies those literal additions to expected C output. The rest of the output must match.
 
 OS-provided error text is compared against the same-target C execution; cross-OS wording need not match. Freeze the environment for each comparison and preserve behavior under additional environments as separate cases. Do not strip all stderr, ANSI sequences, whitespace, metadata, or numeric fields to obtain a match.
 
@@ -72,7 +77,7 @@ The option table in `boids.c` is authoritative. This inventory includes its 29 r
 | `-e`, `--trails` | Flag, initially off |
 | `--depth` | Flag, initially off |
 | `-l`, `--panel` | Flag, initially off |
-| `--render` | `braille`, `sextants`, `blocks`, `kitty`; preserve internal unset state until mode selection |
+| `--render` | `braille`, `sextants`, `blocks`, `kitty`, `sixel`; preserve internal unset state until mode selection |
 | `--matrix` | Enables rain, matrix palette, trails and alignment override |
 | `--bench`, `--frames` | 0–1000000; zero does not mean a one-frame run |
 | `--snapshot` | Output PNG path; requires a live run |
@@ -99,6 +104,11 @@ Important source-level cases that a conventional Rust CLI parser could change:
 ## 4. Interactive and rendering surface
 
 Keep the default live renderer braille regardless of terminal name. Kitty sprites are explicitly selected and retain the reference's terminal-support scope: Kitty and Ghostty. Do not claim new support for tmux passthrough or other graphics terminals as part of the port.
+
+Use `--render sixel` for Sixel on any supported OS. Startup checks terminal support
+and asks for the graphics cell size. Windows Terminal needs version 1.22 or newer.
+Each frame repaints its background using a 256-color palette. Snapshots and GIFs
+keep full color; casts use braille. See [WINDOWS.md](WINDOWS.md#sixel-output).
 
 Preserve the BOIDS intro, mouse repulsion, the approximately 40/60-second quit flight, and the idle behavior starting at 60 seconds. The actual implementation determines which input bytes clear the intro and reset idle time; mouse reports and escape sequences are not interchangeable with ordinary keys.
 

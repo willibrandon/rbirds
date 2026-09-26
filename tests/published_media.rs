@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! The recordings cbirds publishes in its README (`docs/*.gif` and
 //! `docs/demo.cast`), made again by rbirds with the commands listed in cbirds'
 //! own `docs/README.md`.

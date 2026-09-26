@@ -2,6 +2,10 @@
 
 Status: implementation contract, implemented. The port and its evidence are described in [the evidence index](evidence/README.md); open gates are listed in [the port process](PORTING.md).
 
+Windows uses a native console backend. Sixel provides pixel graphics in Windows
+Terminal and other compatible terminals. See [WINDOWS.md](WINDOWS.md) for setup
+and tests, and [DEVIATIONS.md](DEVIATIONS.md) for differences from cbirds.
+
 ## 1. Objective and reference
 
 Produce a Rust executable named `rbirds` with the behavior of cbirds 1.4.0 at commit `cc446fc3cb80733371c62676533adcac2fc10002`. Preserve the simulation, CLI, rendering, input, recording, failure behavior, and supported platforms. Establish compatibility before optimizing or adding features.
@@ -12,13 +16,13 @@ The initial reference contains 7,147 lines of C implementation, including the as
 
 ## 2. Dependency and platform policy
 
-The owner has agreed to permit Rust's standard library and system libraries. Apply that decision as follows:
+rbirds uses Rust's standard library and system libraries, with no external crates.
 
 | Area | Decision |
 | --- | --- |
 | Rust packages | One first-party Cargo package; no external runtime, build, development, optional, target-specific, Git, path, or vendored crate dependencies. |
 | Standard library | `std`, `core`, and `alloc` supplied by the selected Rust toolchain are allowed. This is not a `no_std` project. |
-| Native libraries | OS-provided libraries such as libc, libSystem, and libm are allowed through explicit bindings. The `libc` Cargo crate is not allowed. |
+| Native libraries | OS-provided libraries such as libc, libSystem, libm, Win32 and the Microsoft C runtime are allowed through explicit bindings. The `libc` Cargo crate is not allowed. |
 | Application implementation | Rust source, including the existing codec algorithms translated to Rust. Do not ship the C application behind a Rust entry point. |
 | Runtime tools | No subprocesses for raw mode, image conversion, compression, recording, or simulation. No runtime network access. |
 | Ordinary build | Rust/Cargo, the target standard library, and the platform linker/SDK. No C source compilation, code downloads, or generated bindings in the application build. |
@@ -35,7 +39,7 @@ Initial release targets match the reference's CI architecture coverage:
 - `aarch64-unknown-linux-gnu`
 - `x86_64-unknown-linux-gnu`
 
-Linux musl, Windows, BSD, and 32-bit targets are outside the initial support claim. Reject unsupported target combinations explicitly rather than using an unverified Unix ABI. Establish minimum OS/libc versions from the chosen release build environments and record them before release; a target triple alone does not define that minimum.
+Windows uses `x86_64-pc-windows-msvc`. The bindings also permit `aarch64-pc-windows-msvc`, which has not been tested on hardware. Linux musl, BSD, GNU/MinGW Windows and 32-bit targets are unsupported. Unsupported targets must fail to compile. Minimum OS and libc versions still need to be recorded for release builds.
 
 ## 3. Organization
 
@@ -57,7 +61,8 @@ The modules as built. Keep modules small enough to test independently, without i
 | `render/compose.rs`, `panel.rs` | composition and legend in `boids.c` | Draw order, trails, panel geometry and formatting. |
 | `input.rs` | `handle_input`, mouse and Konami parsing | Persistent byte parser and ordered actions. |
 | `record.rs`, `bench.rs` | recording and benchmark entry points | GIF/cast clocks, snapshots, statistics and summaries. |
-| `terminal.rs`, `platform/` | termios, signals, polling, writes, `sscanf`, `strtod`, `__sincos_stret` | Safe terminal interface over narrowly scoped, ABI-probed OS bindings; the only module with `unsafe`. |
+| `terminal.rs`, `platform/` | termios, signals, polling, writes, `sscanf`, `strtod`, `__sincos_stret` | Safe terminal interface over OS bindings; Windows selects its own console/input/writer module. The only module with `unsafe`. |
+| `render/sixel.rs` | No C equivalent | Encodes full frames in 256-color Sixel; `terminal.rs` queries terminal support and cell size. |
 
 Expose a library for integration tests and a thin binary. Embed the verified sprite bytes with `include_bytes!`; match the compiled C asset, not merely an assumed equivalent PNG. Compare `matrix.png` with `sprite_png.h` before choosing the canonical asset. Preserve the embedded bitmap font exactly.
 
@@ -126,4 +131,4 @@ Keep the C reference outside the shipped application. A C oracle adapter can inc
 
 The [port process](PORTING.md) specifies trace formats, test layers, platform coverage, performance budgets, and cutover requirements. No module is accepted solely because it resembles the C source or its own unit tests pass. Every module needs its mapped C tests and independent comparisons where behavior is observable.
 
-The intentional product change is identity: repository, executable, help examples, completion command names, version identity, and cast title become `rbirds`. The intro continues to say `BOIDS`. All other behavior stays within the compatibility contract. New renderers, improved parser semantics, new presets, and algorithm changes belong after the compatibility release.
+The repository, executable, help examples, completion commands, version and cast title use `rbirds`. The intro still says `BOIDS`. Native Windows support and the Sixel renderer are described in [WINDOWS.md](WINDOWS.md); their differences from cbirds are listed in [DEVIATIONS.md](DEVIATIONS.md).

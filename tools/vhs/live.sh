@@ -14,7 +14,7 @@ cargo build --release --locked --offline --quiet
 r=.reference/cbirds
 cc -std=c99 -O3 -g $r/boids.c $r/cells.c $r/font.c $r/gif.c $r/kitty_graphics.c \
     $r/options.c $r/png.c $r/spatial_grid.c -o "$out/cbirds" -lm
-cp target/release/rbirds "$out/rbirds"
+cp "${CARGO_TARGET_DIR:-target}/release/rbirds" "$out/rbirds"
 # Compares the terminal settings with the ones saved before a run. PENDIN
 # (0x20000000 in lflag) is kernel state, not a setting: it is set when a
 # program returns to canonical mode with input still queued, and cleared by

@@ -4,6 +4,7 @@
 #![allow(dead_code)]
 
 pub mod oracle;
+#[cfg(unix)]
 pub mod pty;
 pub mod sim;
 pub mod suite;

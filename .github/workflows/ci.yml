@@ -1,4 +1,4 @@
-# Native runs of every gate on the four supported targets (docs/PORTING.md §6),
+# Native runs of every gate on the four Unix targets (docs/PORTING.md §6),
 # each Rust target compared with its own canonical C control: Apple clang on
 # macOS, GCC on Linux. The C reference is fetched at the pinned commit and
 # verified against docs/reference-manifest.json before anything is compared.
@@ -6,10 +6,35 @@ name: ci
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain (pinned by rust-toolchain.toml)
+        shell: pwsh
+        run: |
+          rustup show active-toolchain
+          if ($LASTEXITCODE -ne 0) { rustup toolchain install }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          rustup component add rustfmt clippy
+      - name: Environment
+        shell: pwsh
+        run: |
+          rustc -vV
+          cargo --version
+          $PSVersionTable
+      - name: Native Windows gates
+        shell: pwsh
+        run: ./tools/verify.ps1
+
   verify:
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:

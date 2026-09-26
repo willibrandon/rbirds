@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Differential tests of `rbirds::image::gif` against the pinned C `gif.c`.
 //!
 //! The same frames go through `tools/oracle/gif_oracle.c` (the reference's

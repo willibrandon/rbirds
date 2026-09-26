@@ -10,11 +10,14 @@
 
 mod support;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
+#[cfg(unix)]
+use std::collections::BTreeSet;
 use std::fs;
 
 use support::oracle;
 
+#[cfg(unix)]
 const SUITES: [&str; 7] = [
     "tests/boids_test.c",
     "tests/cells_test.c",
@@ -26,6 +29,7 @@ const SUITES: [&str; 7] = [
 ];
 
 /// The `test_*();` statements inside a suite's `int main(void)`.
+#[cfg(unix)]
 fn main_calls(source: &str) -> Vec<String> {
     let Some(start) = source.find("int main(void)") else { return Vec::new() };
     let body = &source[start..];
@@ -71,6 +75,7 @@ fn inventory() -> Vec<Row> {
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
 fn the_inventory_is_exactly_the_reference_suites() {
     let reference = oracle::reference_dir();

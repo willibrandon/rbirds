@@ -1,0 +1,2 @@
+# Shell scripts must also run from Windows checkouts through WSL/Git Bash.
+*.sh text eol=lf

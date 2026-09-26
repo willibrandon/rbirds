@@ -225,6 +225,9 @@ impl Renderer {
         sim: &Sim,
         birds: &[Bird],
     ) -> Result<(), KittyError> {
+        if sim.render_mode == RenderMode::Sixel {
+            return self.queue_sixel_frame(graphics, sim, birds);
+        }
         if sim.drawing_with_text() {
             return self.queue_text_frame(graphics, sim, birds);
         }
@@ -275,6 +278,32 @@ impl Renderer {
                 graphics.place(&placement)?;
             }
         }
+        self.queue_legend(graphics, sim)?;
+        graphics.end_synchronized_update()
+    }
+
+    /// Paint a complete Sixel raster, followed by the ordinary text panel.
+    pub fn queue_sixel_frame(
+        &mut self,
+        graphics: &mut KittyGraphics,
+        sim: &Sim,
+        birds: &[Bird],
+    ) -> Result<(), KittyError> {
+        let resized =
+            self.canvas.width != sim.screen.width || self.canvas.height != sim.screen.height;
+        if resized {
+            self.canvas = Image::alloc(sim.screen.width, sim.screen.height)
+                .map_err(|_| KittyError::Memory)?;
+        }
+        graphics.begin_synchronized_update()?;
+        if resized || self.legend_drawn && sim.screen.legend_width == 0 {
+            graphics.write_raw(b"\x1b[2J")?;
+            self.legend_drawn = false;
+        }
+        graphics.write_raw(b"\x1b[H")?;
+        compose_onto(sim, &mut self.canvas, &self.sprites, birds, true);
+        self.sixel.queue(graphics, &self.canvas)?;
+        graphics.write_raw(b"\x1b[H")?;
         self.queue_legend(graphics, sim)?;
         graphics.end_synchronized_update()
     }

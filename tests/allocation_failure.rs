@@ -98,6 +98,22 @@ fn a_flock_that_cannot_grow_keeps_what_it_has() {
     assert_eq!(sim.rng, rng);
 }
 
+#[test]
+fn sixel_plane_allocation_failure_preserves_output_and_can_recover() {
+    use rbirds::render::kitty::{KittyError, KittyGraphics};
+    use rbirds::render::sixel::Sixel;
+    let image = Image::alloc(4096, 1).unwrap();
+    let mut encoder = Sixel::default();
+    let mut output = KittyGraphics::new(1).unwrap();
+    output.write_raw(b"previous").unwrap();
+    let result = refusing(4096, || encoder.queue(&mut output, &image));
+    assert_eq!(result, Err(KittyError::Memory));
+    assert_eq!(output.buffer(), b"previous");
+    encoder.queue(&mut output, &image).unwrap();
+    assert!(output.buffer().starts_with(b"previous\x1bP0;1q"));
+    assert!(output.buffer().ends_with(b"\x1b\\"));
+}
+
 /// The live loop's side of it: `config.birds = live_birds`.
 #[test]
 fn the_live_loop_puts_the_count_back_when_growing_fails() {

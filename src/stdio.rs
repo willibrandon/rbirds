@@ -4,7 +4,8 @@
 //!
 //! The difference is observable when both streams reach one file
 //! (`2>&1 > log`): the C writes a recording's diagnostic before its summary
-//! there. Rust's own `stdout` is always line buffered, so it is not used.
+//! there. Unix bypasses Rust's line buffering. Windows uses Rust's Unicode
+//! console output when these buffers are flushed to a console.
 
 #![forbid(unsafe_code)]
 
@@ -45,7 +46,7 @@ impl CStdout {
     /// never reports one.
     pub fn flush(&mut self) {
         if !self.buffer.is_empty() {
-            platform::write_all_quietly(platform::STDOUT_FILENO, &self.buffer);
+            platform::write_text_all_quietly(platform::STDOUT_FILENO, &self.buffer);
         }
         self.buffer.clear();
     }
@@ -64,7 +65,7 @@ impl Default for CStdout {
 
 /// `fprintf(stderr, ...)`: one unbuffered write, errors ignored.
 pub fn eprint(text: &[u8]) {
-    platform::write_all_quietly(platform::STDERR_FILENO, text);
+    platform::write_text_all_quietly(platform::STDERR_FILENO, text);
 }
 
 /// Concatenates byte pieces, for messages that splice in raw path bytes.

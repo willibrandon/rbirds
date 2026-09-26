@@ -104,7 +104,7 @@ fn no_sine_or_cosine_bypasses_the_fused_pair() {
     sources(&oracle::repository().join("src"), &mut files);
     let mut plain = Vec::new();
     for (path, text) in &files {
-        if path.ends_with("platform/trig.rs") {
+        if std::path::Path::new(path).ends_with(std::path::Path::new("platform").join("trig.rs")) {
             continue;
         }
         for (number, line) in text.lines().enumerate() {

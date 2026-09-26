@@ -55,6 +55,7 @@ static TERMINAL_IS_RAW: AtomicBool = AtomicBool::new(false);
 static TERMINAL_RESTORED: AtomicBool = AtomicBool::new(false);
 static ALT_SCREEN_IS_ON: AtomicBool = AtomicBool::new(false);
 static SPRITES_UPLOADED: AtomicBool = AtomicBool::new(false);
+static SIXEL_MODE: AtomicU8 = AtomicU8::new(0);
 static SAVED_TERMIOS: SavedTermios = SavedTermios::new();
 
 /// `saved_termios`, one atomic per field.
@@ -157,6 +158,11 @@ pub fn mark_sprites_uploaded() {
     SPRITES_UPLOADED.store(true, Ordering::SeqCst);
 }
 
+pub fn enable_sixel_mode(was_enabled: bool) {
+    SIXEL_MODE.store(if was_enabled { 1 } else { 2 }, Ordering::SeqCst);
+    write_all_quietly(STDOUT_FILENO, b"\x1b[?80h");
+}
+
 /// Whether [`restore_terminal`] has run (`terminal_restored`).
 pub fn is_restored() -> bool {
     TERMINAL_RESTORED.load(Ordering::SeqCst)
@@ -186,6 +192,7 @@ pub fn reset_terminal_state_for_tests() {
     TERMINAL_RESTORED.store(false, Ordering::SeqCst);
     ALT_SCREEN_IS_ON.store(false, Ordering::SeqCst);
     SPRITES_UPLOADED.store(false, Ordering::SeqCst);
+    SIXEL_MODE.store(0, Ordering::SeqCst);
     SAVED_TERMIOS.store(&Termios::default());
 }
 
@@ -225,6 +232,9 @@ pub fn restore_terminal() {
         return;
     }
     TERMINAL_RESTORED.store(true, Ordering::SeqCst);
+    if SIXEL_MODE.swap(0, Ordering::SeqCst) == 2 {
+        write_all_quietly(STDOUT_FILENO, b"\x1b[?80l");
+    }
     if TERMINAL_IS_RAW.load(Ordering::Acquire) {
         let saved = SAVED_TERMIOS.load();
         // Ignored, as in the C: there is nothing better to do on this path.

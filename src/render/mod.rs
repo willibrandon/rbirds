@@ -9,6 +9,7 @@ pub mod cells;
 pub mod compose;
 pub mod kitty;
 pub mod panel;
+pub mod sixel;
 
 use crate::image::Image;
 use crate::sprites::empty_catalogue;
@@ -31,6 +32,7 @@ pub struct Renderer {
     pub stats: Stats,
     /// The panel's rows, rebuilt in place each frame.
     pub legend: LegendBuffers,
+    pub sixel: sixel::Sixel,
 }
 
 impl Default for Renderer {
@@ -43,6 +45,7 @@ impl Default for Renderer {
             legend_drawn: false,
             stats: Stats::default(),
             legend: LegendBuffers::default(),
+            sixel: sixel::Sixel::default(),
         }
     }
 }

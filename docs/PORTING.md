@@ -2,13 +2,18 @@
 
 Status: P0–P5 complete, with evidence on all four targets, natively in CI; P6 partly complete; P7 pending. See [the phase status](#phase-status) and [the evidence index](evidence/README.md).
 
+The phases below cover the Linux and macOS port. For Windows setup, tests and
+PowerShell scripts, see [WINDOWS.md](WINDOWS.md). Run `tools/verify.ps1` on Windows;
+add `-AllLocal` to run the Unix checks in WSL too. CI runs Windows alongside Linux
+and macOS.
+
 Read [the design](DESIGN.md) and [the compatibility contract](COMPATIBILITY.md) first. Work one phase to its exit gate before treating downstream behavior as accepted. Small implementation changes may overlap in a branch, but an unmet prerequisite remains visible.
 
 ## 1. What this process guarantees
 
 It establishes an auditable release rule: **do not label or release rbirds as a faithful port until all declared acceptance gates pass against the pinned C reference on all declared targets**. It cannot prove equality for every input or future environment. The evidence must state exactly what was compared, what passed, and any accepted limitation.
 
-No silent fixture regeneration, skipped required tests, broad output normalization, or loosened numerical tolerances is permitted to make a failure disappear. A discovered difference is work to finish, not permission to reduce the requirement. If the owner accepts a changed requirement, record the actual change and qualify the resulting claim.
+Do not regenerate fixtures, skip required tests, strip output or loosen numerical tolerances to hide a failure. Investigate differences first. Document any change to a requirement and explain how it affects compatibility.
 
 ## 2. Establish the reference without changing cbirds
 
@@ -154,7 +159,7 @@ Check a fresh Cargo home with the pinned toolchain available to show no registry
 | P4 | complete | `tests/cells_oracle.rs`, `tests/kitty_oracle.rs`, `tests/headless_differential.rs` (every rate; GIFs and casts match the C output) |
 | P5 | complete | `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs`; debug and release agree; all 112 mappings executed |
 | P6 | partly complete | done: native CI on the four targets, the translated and emulated runs, installation and dependency audit, performance budgets (`tools/perf.sh`, macOS arm64), cbirds' published recordings made again exactly on Linux (`tests/published_media.rs`), exit and restore in a headless terminal (`tools/vhs/live.sh`), independent playback. Open: how it looks in real terminals (Kitty, Ghostty, macOS Terminal, tmux) |
-| P7 | pending | needs the owner's release identity and decisions on [the deviations](DEVIATIONS.md) |
+| P7 | pending | release version and decisions on D-001 through D-003 are still needed; see [the deviations](DEVIATIONS.md) |
 
 Each phase should consist of reviewable module-sized changes with its tests and updated mappings. Keep algorithm changes out of translation changes. Do not remove C reference access after the Rust executable first animates successfully.
 
@@ -171,6 +176,9 @@ Before compatibility release, record terminal application/version, OS, font, dim
 - Kitty and Ghostty: sprites plus all three text renderers, input, resize, panel, quit and signal recovery. Cover both Linux and macOS across the matrix, and both sprite terminals on each OS family.
 - macOS Terminal and a Linux terminal without Kitty sprite support: default braille and blocks; sextants with a font that contains the glyphs.
 - A tmux session: text rendering and cleanup only, matching the reference's support scope.
+- Windows Terminal 1.22+: native text and Sixel, negotiated virtual cell sizes,
+  panel/trails, input, resize, quit, Ctrl+C and shell restoration. Validate other
+  Sixel emulators separately; automated protocol checks do not prove appearance.
 - An independent GIF viewer and asciinema-compatible player: duration, looping, opening/closing state, palettes and representative frames. These are validation tools, not application dependencies.
 
 Compare C and Rust under the same terminal settings. Capture representative frames and record the outcome. Check default, hawks, multiple flocks, depth/trails, matrix, custom sprite, text shapes, panel toggling and resizing. A report that merely says “looks good” without configuration is incomplete.

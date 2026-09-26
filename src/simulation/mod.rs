@@ -147,9 +147,11 @@ pub enum RenderMode {
     /// Solid two by three blocks: bolder than dots, needs a 2020 font.
     Sextants = 2,
     Blocks = 3,
+    /// Pixel graphics on Sixel-capable terminals, including Windows Terminal.
+    Sixel = 4,
 }
 
-pub const RENDER_NAMES: [&str; 4] = ["kitty", "braille", "sextants", "blocks"];
+pub const RENDER_NAMES: [&str; 5] = ["kitty", "braille", "sextants", "blocks", "sixel"];
 
 impl RenderMode {
     /// The option table's enum index, `-1` for unset.
@@ -159,6 +161,7 @@ impl RenderMode {
             1 => RenderMode::Braille,
             2 => RenderMode::Sextants,
             3 => RenderMode::Blocks,
+            4 => RenderMode::Sixel,
             _ => RenderMode::Unset,
         }
     }
@@ -170,6 +173,7 @@ impl RenderMode {
             RenderMode::Braille => RENDER_NAMES[1],
             RenderMode::Sextants => RENDER_NAMES[2],
             RenderMode::Blocks => RENDER_NAMES[3],
+            RenderMode::Sixel => RENDER_NAMES[4],
         }
     }
 }

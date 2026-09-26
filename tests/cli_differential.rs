@@ -1,3 +1,5 @@
+#![cfg(unix)]
+
 //! Cross-process CLI comparison (docs/COMPATIBILITY.md C01, C16): the same
 //! argument vectors given to the canonical C build and to rbirds, comparing
 //! exit status and both output streams.
@@ -5,10 +7,11 @@
 //! Both run with the same `argv[0]` and an empty environment, standard input
 //! from /dev/null (so a live run fails at raw mode, deterministically, after
 //! everything read_options does), in a scratch directory holding the files
-//! the corpus names. The only normalization is the product identity in the
+//! the corpus names. Normalization covers product identity in the
 //! places docs/COMPATIBILITY.md §1 allows: the tagline, examples and
 //! completion program name print `cbirds` where rbirds prints `rbirds`, and
-//! the version line names each product's own version.
+//! the version line names each product's own version. Expected help and choice
+//! listings also account for the ASCII tagline and Sixel support (D-004).
 
 mod support;
 
@@ -84,6 +87,58 @@ fn the_identity_normalization_changes_nothing_else() {
 
 fn args(list: &[&[u8]]) -> Vec<OsString> {
     list.iter().map(|a| OsString::from_vec(a.to_vec())).collect()
+}
+
+/// Replace known CLI differences without decoding invalid UTF-8 diagnostics.
+/// The rest of each stream must still match exactly.
+fn normalize_cli_changes(bytes: &[u8]) -> Vec<u8> {
+    let mut result = bytes.to_vec();
+    for (old, new) in [
+        (
+            "rbirds \u{2014} a flock of birds in your terminal.\n",
+            "rbirds - a flock of birds in your terminal.\n",
+        ),
+        (
+            "braille by default; sextants, blocks, or kitty in Kitty and Ghostty",
+            "braille (default), sextants, blocks, kitty, sixel",
+        ),
+        ("kitty braille sextants blocks", "kitty braille sextants blocks sixel"),
+        (
+            "--render must be one of kitty, braille, sextants, blocks\n",
+            "--render must be one of kitty, braille, sextants, blocks, sixel\n",
+        ),
+        (
+            "sprites, in Kitty or Ghostty\n",
+            "sprites, in Kitty or Ghostty\n  rbirds --render sixel            pixels, in Windows Terminal 1.22+\n",
+        ),
+    ] {
+        let mut output = Vec::new();
+        let mut rest = result.as_slice();
+        while let Some(at) = rest.windows(old.len()).position(|part| part == old.as_bytes()) {
+            output.extend_from_slice(&rest[..at]);
+            output.extend_from_slice(new.as_bytes());
+            rest = &rest[at + old.len()..];
+        }
+        output.extend_from_slice(rest);
+        result = output;
+    }
+    result
+}
+
+#[test]
+fn cli_normalization_preserves_other_choices_errors_and_raw_bytes() {
+    assert_eq!(
+        normalize_cli_changes(b"\xff kitty braille sextants blocks"),
+        b"\xff kitty braille sextants blocks sixel"
+    );
+    assert_eq!(
+        normalize_cli_changes(b"--shape must be one of bird, plane\n"),
+        b"--shape must be one of bird, plane\n"
+    );
+    assert_eq!(
+        normalize_cli_changes(b"kitty braille sextants missing"),
+        b"kitty braille sextants missing"
+    );
 }
 
 fn corpus(files: &Path) -> Vec<Vec<OsString>> {
@@ -213,8 +268,8 @@ fn every_argument_vector_behaves_as_the_reference() {
         let r = run(&rust, &case, &scratch.path);
         let expected = Run {
             status: c.status.clone(),
-            stdout: normalize_identity(&c.stdout),
-            stderr: c.stderr,
+            stdout: normalize_cli_changes(&normalize_identity(&c.stdout)),
+            stderr: normalize_cli_changes(&c.stderr),
         };
         if expected != r {
             let shown: Vec<String> =
