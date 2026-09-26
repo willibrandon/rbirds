@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "purpose": "Documentation baseline and immutable reference inventory; not Rust parity evidence.",
+  "source": {
+    "repository": "https://github.com/clainstone/cbirds.git",
+    "commit": "cc446fc3cb80733371c62676533adcac2fc10002",
+    "tree": "9177c30ed3024775f368bf8c5c8d7e7d3906a48a",
+    "version": "1.4.0",
+    "tracked_source_was_clean": true,
+    "tracked_file_count": 43,
+    "sha256_by_path": {
+      ".clang-format": "f1addda9b56becd8c821f6c9710b277a8dd4263b59ec40af4687f0e4f44b8d81",
+      ".github/scripts/readme-block.sh": "665fdc761024ad044f3f8da163fdefe87d5507c67e2c72403b6582b13c4d98cf",
+      ".github/workflows/install.yml": "06fc4bf31d61234118072573bafd99bf1c78d336ef350d34e6952e327b60d81f",
+      ".github/workflows/tests.yml": "d48e95838a3cdb1a0e41521ee1ecde7087bda0f0ae4218f1f3c69ca99a601b88",
+      ".gitignore": "6de7128def383dfad7491c900760646cb42ce4d3b0bbb31fc7d0597a6ff5bf77",
+      "LICENSE": "ce43414abce90c24554e5a903c3a2cfa8112deb380b7842daa91b481ef33e444",
+      "README.md": "fc683214d972e9855b14f8a204fc87d9be1f2566e3f8fe8eea0d1cba7d6cb769",
+      "boids.c": "d274d6aa2484f1861a1771e02fc6d11152b8e2775aead407449867908e159a8a",
+      "cells.c": "5dc55a6f5462f94575363e0973efbef3e5a99b64e77c89329423e4f2f6449c3a",
+      "cells.h": "08e39ff3a1ad50b7a4ac2a5556e659b1ea70b97e452a48774113fe5fe41b69a9",
+      "docs/README.md": "9e8140011958b9983d5a94daea9e118e905796f265642cdfa177207fddb5e503",
+      "docs/braille.gif": "3acbb6ad067c7647c2014722bc70279ee53514f3b20d3ffbb2915162fe91d48a",
+      "docs/demo.cast": "d6a33c8b6196257c47c67ceefb87e485ff19535b65d570446dbc47a7e138a3e7",
+      "docs/demo.gif": "2ad2256cd907cc0b6b0adbc863988168cca599bf884f64973d7c498751b46e28",
+      "docs/depth.gif": "1d2d29bfa2442085c2d1416b9aee2f65eaf2d4d46c6f8b8dc70ada1127557b8d",
+      "docs/flocks.gif": "a217643e35ce7efed08738823b0bc416af75f391398885973dba46a8c871c160",
+      "docs/hawks.gif": "01d3d815fc5db8dd1d25c4345fbd71388a4e27f0528f6b0c9a42256eff6528a1",
+      "docs/matrix.gif": "aa448216e36cb65c8ae7c9f1663af55a8c0d95611c6419c275b506455c8cc32a",
+      "docs/sextants.gif": "db5cfaba94a3b10e683c0450806fc464c90a178b2123f0bb125761184aa2b92a",
+      "font.c": "5f96ee974ee43eb16a78442d9f3cfd6b31ce7de53020401129c76dd18305a959",
+      "font.h": "4b7ce79fb031fa754f5d1bc0f1f539699201b91444d466e7b8f6dad707b85190",
+      "gif.c": "08345a83a1032d51b57631822261c32d234e3092928cfed9bd5fc3c2ceb10034",
+      "gif.h": "1eca4d2c320673b56bc687cd39c3e5f8a8696479d0cf370f2cb3034096013654",
+      "kitty_graphics.c": "ff83653b00256f6382e0bba87e92c3f1b462742374a549b9f395f6c056e14143",
+      "kitty_graphics.h": "4ac4d40d92fd28f8a7155e9e2bc1aea2d159d83bc9dc1c878004c6385ea4430d",
+      "makefile": "2ac66f07739a40f1a5f6d9ba70e2d3cd0e0f240c2a6227ca9b340159beaad24c",
+      "matrix.png": "cbd1cb4985cb59e6faa19556254c0404065124641ed0a86041144c64ee37165e",
+      "mkasset.c": "3dc76dd581de761d020532687ba5a2d2f7ca4f6957f61e56bd49a65110508e65",
+      "options.c": "8ed9b13866f74b44e8152b7a78a29c3fc578a4bfab085f278e788e985eb13d02",
+      "options.h": "269310559b38e4d786c2d3377257f6d40c38a2fbd1370c1288a2019c235c3e6a",
+      "png.c": "88d839520b6182e55c5c8aed7d4fdfa1ef17dce7ba01191a38783295c263235f",
+      "png.h": "b03969661df3a5668abfe5a211c0794a0de9fc9a17da000f07cc993b3e302454",
+      "spatial_grid.c": "fa84073e3e1945438a9d39dcd0f0143cfabb02891170e23643f4548a42726688",
+      "spatial_grid.h": "d83b2e3118c30d4828d9979ca3909b8820d61132873fe9480e5d2ad1d8baa05a",
+      "sprite_png.h": "f9b102b0a4c6deb61565816cd305e6602da4914b3c1f5080daf3959a07b47b43",
+      "tests/boids_test.c": "8a89c2c5a1fb507ca5b83ea9d67edb89a643d955d3b759c5ae154e1e551e7906",
+      "tests/cells_test.c": "294016ca7cd13fb23d30a8b5c8613f825713017d22afd748a4336ef822aa4b39",
+      "tests/gif_test.c": "42c2047cbb35b0a82f9a8c817cc2eb3c72c0beb8a3eefd62b2e706e57dcb5c3f",
+      "tests/kitty_graphics_test.c": "7bac90b443b37715df45d6e6b659fc58bdbcf8b86a10075bdc37c4f1fd54237a",
+      "tests/options_test.c": "af0a34db8263b05926860e5775c295d667a7f39e84a484949ba8a0142ebabf97",
+      "tests/png_test.c": "02f8f6f02528a30234bf95b6ab4e5d4ba94465d5286f7dd4e660ed0af6c6bb1d",
+      "tests/spatial_grid_test.c": "222a7954792bc7ef1a3b20b7f04ce0f4116a20001eb02f10006d2e9d9c381d69",
+      "valgrind-guide.md": "d6a2aaf93030dfcc0f645358db0a42e0bbf7e6992785a0989bbdf5f4ec00b836"
+    }
+  },
+  "inventory": {
+    "test_discovery": "test_*() calls in each tests/*_test.c int main(void); cross-checked against static void test_*(void) definitions",
+    "test_count": 112,
+    "tests_by_suite": {
+      "tests/boids_test.c": 64,
+      "tests/cells_test.c": 14,
+      "tests/gif_test.c": 3,
+      "tests/kitty_graphics_test.c": 8,
+      "tests/options_test.c": 8,
+      "tests/png_test.c": 12,
+      "tests/spatial_grid_test.c": 3
+    },
+    "initial_test_inventory_sha256": "e97c0b1b5ded9d9c79ea9d7bafa344c1ddef43c6730c1c4d16e670be2e644703",
+    "option_table_row_count": 29,
+    "option_table_names": [
+      "birds",
+      "size",
+      "flocks",
+      "hawks",
+      "preset",
+      "seed",
+      "boundary",
+      "separation",
+      "alignment",
+      "turning",
+      "perception",
+      "speed",
+      "avoidance",
+      "color",
+      "shape",
+      "sprite",
+      "trails",
+      "depth",
+      "panel",
+      "render",
+      "matrix",
+      "bench",
+      "frames",
+      "snapshot",
+      "record",
+      "record-fps",
+      "record-seconds",
+      "record-size",
+      "unlock-fps"
+    ],
+    "option_specials": [
+      "-h",
+      "--help",
+      "-V",
+      "--version",
+      "--completion"
+    ],
+    "c_implementation_lines": 7147,
+    "c_test_lines": 5488
+  },
+  "local_validation": {
+    "source_preparation": "Built a fresh git archive of the pinned commit in an isolated temporary directory; did not reuse the existing cbirds executable or modify the original checkout.",
+    "os": "ProductName:\t\tmacOS\nProductVersion:\t\t26.5.2\nBuildVersion:\t\t25F84",
+    "machine": "Darwin arm64",
+    "c_compiler": "Apple clang version 17.0.0 (clang-1700.6.4.2)\nTarget: arm64-apple-darwin25.5.0\nThread model: posix\nInstalledDir: /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/bin",
+    "rustc_observed": "rustc 1.92.0 (ded5c06cf 2025-12-08) (Homebrew)\nbinary: rustc\ncommit-hash: ded5c06cf21d2b93bffd5d884aa6e96934ee4234\ncommit-date: 2025-12-08\nhost: aarch64-apple-darwin\nrelease: 1.92.0\nLLVM version: 21.1.7",
+    "cargo_observed": "cargo 1.92.0 (Homebrew)",
+    "steps": [
+      {
+        "argv": [
+          "make",
+          "CC=cc",
+          "CFLAGS=-O2 -g -Wpedantic -Wshadow -Werror",
+          "cbirds"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 2.183,
+        "stdout": "cc -std=c99 -Wall -Wextra  -O2 -g -Wpedantic -Wshadow -Werror boids.c cells.c font.c gif.c kitty_graphics.c options.c png.c spatial_grid.c -o cbirds  -lm\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "make",
+          "CC=cc",
+          "test"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 26.081,
+        "stdout": "cc -std=c99 -Wall -Wextra  -O3 -g tests/kitty_graphics_test.c kitty_graphics.c -o tests/kitty_graphics_test \ncc -std=c99 -Wall -Wextra  -O3 -g tests/options_test.c options.c -o tests/options_test \ncc -std=c99 -Wall -Wextra  -O3 -g tests/png_test.c png.c -o tests/png_test  -lm\ncc -std=c99 -Wall -Wextra  -O3 -g tests/gif_test.c gif.c png.c -o tests/gif_test  -lm\ncc -std=c99 -Wall -Wextra  -O3 -g tests/cells_test.c cells.c png.c -o tests/cells_test  -lm\ncc -std=c99 -Wall -Wextra  -O3 -g tests/spatial_grid_test.c spatial_grid.c -o tests/spatial_grid_test  -lm\ncc -std=c99 -Wall -Wextra  -O3 -g tests/boids_test.c cells.c font.c gif.c kitty_graphics.c options.c png.c spatial_grid.c -o tests/boids_test  -lm\ntests/kitty_graphics_test\ntests/options_test\ntests/png_test\ntests/gif_test\ntests/cells_test\ntests/spatial_grid_test\ntests/boids_test\n",
+        "stderr": ""
+      },
+      {
+        "argv": [
+          "./cbirds",
+          "--version"
+        ],
+        "exit_code": 0,
+        "elapsed_seconds": 0.242,
+        "stdout": "cbirds 1.4.0\n",
+        "stderr": ""
+      }
+    ],
+    "scope": "Local macOS arm64 C baseline only. The warnings-as-errors executable uses -O2; test binaries use the makefile default -O3. Canonical -O3 runtime fixtures, ABI probes, PTY checks, other platforms, performance baselines and all Rust comparisons remain pending.",
+    "rust_toolchain_note": "The rbirds checkout currently resolves Homebrew Rust/Cargo 1.92.0 through PATH; the separately installed rustup-managed toolchain is 1.96.0 and is the proposed pin. Verify executable resolution in P1.",
+    "proposed_rustup_toolchain": {
+      "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)\nbinary: rustc\ncommit-hash: ac68faa20c58cbccd01ee7208bf3b6e93a7d7f96\ncommit-date: 2026-05-25\nhost: aarch64-apple-darwin\nrelease: 1.96.0\nLLVM version: 22.1.2",
+      "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)"
+    },
+    "completed_at_utc": "2026-09-26T00:46:12.308357+00:00"
+  },
+  "migration": {
+    "status": "documentation_only",
+    "phases": {
+      "P0": "pending",
+      "P1": "pending",
+      "P2": "pending",
+      "P3": "pending",
+      "P4": "pending",
+      "P5": "pending",
+      "P6": "pending",
+      "P7": "pending"
+    },
+    "rust_tests_mapped": 0,
+    "compatibility_requirements_passed": 0
+  }
+}
