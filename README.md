@@ -2,6 +2,8 @@
 
 Rust port of [cbirds](https://github.com/clainstone/cbirds) 1.4.0, a flocking simulation that runs in the terminal.
 
+This is a rescue operation. The birds couldn't be left living in an unsafe environment, so they were moved to Rust. The flock is beak-for-beak identical: same seed, same flight, same frames.
+
 ## Build and run
 
 ```sh
