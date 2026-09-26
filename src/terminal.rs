@@ -17,11 +17,6 @@ use crate::palette::{self, Rgb, Theme};
 use crate::platform::{self, PollFd, STDIN_FILENO, STDOUT_FILENO};
 use crate::simulation::Sim;
 
-pub const ALT_SCREEN_ON: &[u8] = b"\x1b[?1049h";
-pub const CURSOR_HIDE: &[u8] = b"\x1b[?25l";
-/// Any event tracking plus SGR coordinates.
-pub const MOUSE_REPORT_ON: &[u8] = b"\x1b[?1003h\x1b[?1006h";
-
 /// The terminal, taken. Dropping it puts it back.
 #[derive(Debug)]
 pub struct Terminal {
@@ -32,31 +27,23 @@ impl Terminal {
     /// `enter_terminal`: raw mode on standard input, the saved attributes
     /// recorded before the raw flag is, so a signal can always restore them.
     pub fn enter() -> io::Result<Terminal> {
-        let saved = platform::tcgetattr(STDIN_FILENO)?;
-        let mut raw = saved;
-        raw.make_raw_as_cbirds();
-        platform::emergency::record_saved_termios(&saved);
-        platform::tcsetattr(STDIN_FILENO, &raw)?;
-        platform::emergency::mark_raw_acquired();
+        platform::enter_terminal()?;
         Ok(Terminal { _private: () })
     }
 
     /// `enter_alt_screen`.
     pub fn enter_alt_screen(&mut self) {
-        write_all(ALT_SCREEN_ON);
-        write_all(CURSOR_HIDE);
-        write_all(MOUSE_REPORT_ON);
-        platform::emergency::mark_alt_screen_on();
+        platform::enter_alt_screen();
     }
 
     /// Even a failed upload may have left some images behind.
     pub fn mark_sprites_uploaded(&mut self) {
-        platform::emergency::mark_sprites_uploaded();
+        platform::mark_sprites_uploaded();
     }
 
     /// `restore_terminal`: once, whatever calls it.
     pub fn restore(&mut self) {
-        platform::emergency::restore_terminal();
+        platform::restore_terminal();
     }
 }
 
@@ -69,7 +56,7 @@ impl Drop for Terminal {
 /// `write_all`: to standard output, retrying EINTR, silently giving up on any
 /// other failure.
 pub fn write_all(bytes: &[u8]) {
-    let _ = platform::write_all(STDOUT_FILENO, bytes);
+    platform::write_all_quietly(STDOUT_FILENO, bytes);
 }
 
 /// `terminal_query`: sends a request and collects the reply until a
@@ -143,16 +130,16 @@ pub fn learn_the_theme(theme: &mut Theme) -> bool {
 
 /// `update_screen_dimensions`: what the terminal says, zero where it will not.
 pub fn update_screen_dimensions(sim: &mut Sim) {
-    apply_window_size(sim, platform::window_size(STDOUT_FILENO).unwrap_or_default());
+    apply_window_size(sim, platform::window_size_or_zero(STDOUT_FILENO));
 }
 
 /// The derivation half of `update_screen_dimensions`, for a size already read.
 pub fn apply_window_size(sim: &mut Sim, size: platform::WinSize) {
     sim.apply_screen_size(
-        i32::from(size.ws_col),
-        i32::from(size.ws_row),
-        i32::from(size.ws_xpixel),
-        i32::from(size.ws_ypixel),
+        i32::from(size.col),
+        i32::from(size.row),
+        i32::from(size.xpixel),
+        i32::from(size.ypixel),
     );
 }
 

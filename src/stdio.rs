@@ -15,7 +15,6 @@ use crate::platform;
 pub struct CStdout {
     buffer: Vec<u8>,
     line_buffered: bool,
-    failed: bool,
 }
 
 impl CStdout {
@@ -24,14 +23,13 @@ impl CStdout {
     pub fn new() -> CStdout {
         CStdout {
             buffer: Vec::new(),
-            line_buffered: platform::isatty(platform::STDOUT_FILENO),
-            failed: false,
+            line_buffered: platform::is_terminal(platform::STDOUT_FILENO),
         }
     }
 
     /// A stream that holds everything until [`CStdout::take`], for tests.
     pub fn captured() -> CStdout {
-        CStdout { buffer: Vec::new(), line_buffered: false, failed: false }
+        CStdout { buffer: Vec::new(), line_buffered: false }
     }
 
     /// `fputs`/`printf`: appended, and flushed now if line buffered and the
@@ -43,11 +41,11 @@ impl CStdout {
         }
     }
 
-    /// Writes what is buffered. A failure is remembered and never reported,
-    /// as `exit` never reports one.
+    /// Writes what is buffered. A failure is never reported, as `exit`
+    /// never reports one.
     pub fn flush(&mut self) {
-        if !self.failed && !self.buffer.is_empty() {
-            self.failed = platform::write_all(platform::STDOUT_FILENO, &self.buffer).is_err();
+        if !self.buffer.is_empty() {
+            platform::write_all_quietly(platform::STDOUT_FILENO, &self.buffer);
         }
         self.buffer.clear();
     }
@@ -66,7 +64,7 @@ impl Default for CStdout {
 
 /// `fprintf(stderr, ...)`: one unbuffered write, errors ignored.
 pub fn eprint(text: &[u8]) {
-    let _ = platform::write_all(platform::STDERR_FILENO, text);
+    platform::write_all_quietly(platform::STDERR_FILENO, text);
 }
 
 /// Concatenates byte pieces, for messages that splice in raw path bytes.

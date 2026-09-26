@@ -203,6 +203,11 @@ impl LiveLoop {
     }
 }
 
+/// The errno an OS error carries, as `perror` would report it.
+fn errno_of(error: &std::io::Error) -> i32 {
+    error.raw_os_error().unwrap_or(platform::EIO)
+}
+
 fn fail(message: &[u8]) -> i32 {
     eprint(message);
     EXIT_FAILURE
@@ -230,10 +235,7 @@ fn flush_frame(
             Ok(()) => {}
             Err(KittyError::Again) => {
                 if let Err(error) = terminal::wait_for_terminal_io() {
-                    return Err(fail(&platform::perror_text(
-                        b"Cannot wait for terminal output",
-                        &error,
-                    )));
+                    return Err(fail(&platform::perror_message(b"Cannot wait for terminal output", errno_of(&error))));
                 }
                 running = read_keys(sim, parser);
             }
@@ -276,11 +278,11 @@ fn run_live(
 ) -> Result<i32, i32> {
     let name = settings.program_name.clone();
     let sprite_path = settings.sprite_path.as_deref();
-    platform::emergency::install_signal_handlers();
+    platform::install_signal_handlers();
 
     // The terminal is asked its questions before anything is built for it.
     let mut terminal = Terminal::enter()
-        .map_err(|error| fail(&platform::perror_text(b"Can't enable raw mode", &error)))?;
+        .map_err(|error| fail(&platform::perror_message(b"Can't enable raw mode", errno_of(&error))))?;
     sim.render_mode = sim.live_render_mode();
     sim.settle_the_bird_size();
     if sim.palette_follows_the_theme() && !terminal::learn_the_theme(&mut sim.theme) {
@@ -319,10 +321,7 @@ fn run_live(
     let mut birds: Vec<Bird> = Vec::new();
     let mut snapshot: Vec<Bird> = Vec::new();
     if birds.try_reserve_exact(count).is_err() || snapshot.try_reserve_exact(count).is_err() {
-        return Err(fail(&platform::perror_text(
-            b"Out of memory",
-            &std::io::Error::from_raw_os_error(platform::ENOMEM),
-        )));
+        return Err(fail(&platform::perror_message(b"Out of memory", platform::ENOMEM)));
     }
     birds.resize(count, Bird::default());
     snapshot.resize(count, Bird::default());
@@ -352,7 +351,7 @@ fn run_live(
     loop {
         let keys = platform::read(STDIN_FILENO, &mut input).ok();
         let frame_start = platform::monotonic_now();
-        let window = platform::window_size(platform::STDOUT_FILENO).unwrap_or_default();
+        let window = platform::window_size_or_zero(platform::STDOUT_FILENO);
         let keys = keys.map(|length| &input[..length]);
         // The clock is read after the keys, as the C reads it; the window a
         // moment later, which no step in between depends on.
@@ -387,7 +386,7 @@ fn run_live(
         let remaining =
             frame_delay_after(settings.unlock_fps, elapsed_microseconds(&frame_start, &frame_end));
         if remaining > 0 {
-            platform::nanosleep(&Timespec {
+            let _ = platform::nanosleep(&Timespec {
                 tv_sec: remaining / 1_000_000,
                 tv_nsec: (remaining % 1_000_000) * 1000,
             });

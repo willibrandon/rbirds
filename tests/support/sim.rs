@@ -467,10 +467,10 @@ impl World {
                 let taken = &bytes[..bytes.len().min(rbirds::config::INPUT_BUFFER_SIZE)];
                 let frame_start = Timespec { tv_sec: int(2), tv_nsec: int(3) };
                 let window = WinSize {
-                    ws_col: int(4) as u16,
-                    ws_row: int(5) as u16,
-                    ws_xpixel: int(6) as u16,
-                    ws_ypixel: int(7) as u16,
+                    col: int(4) as u16,
+                    row: int(5) as u16,
+                    xpixel: int(6) as u16,
+                    ypixel: int(7) as u16,
                 };
                 let mut graphics = self.graphics.take().expect("graphics");
                 let grid = self.grid.as_mut().expect("grid before live");
