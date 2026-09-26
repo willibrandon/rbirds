@@ -27,7 +27,9 @@ compile_error!(
 );
 
 mod scan;
+mod trig;
 pub use scan::scan_osc_rgb;
+pub use trig::sin_cos;
 
 pub const STDIN_FILENO: RawFd = 0;
 pub const STDOUT_FILENO: RawFd = 1;

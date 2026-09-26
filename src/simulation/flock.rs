@@ -6,7 +6,7 @@ use std::f64::consts::PI;
 
 use super::{Bird, Sim, Vector, direction_frame, normalized_angle, trig_lookup, turn_towards};
 use crate::config::*;
-use crate::fp::mul_add;
+use crate::fp::{self, mul_add};
 use crate::spatial_grid::SpatialGrid;
 
 impl Sim {
@@ -279,8 +279,8 @@ impl Sim {
                 if distance < 1e-9 {
                     // Exactly on top of one another: one direction per flock.
                     let angle = 2.0 * PI * f as f64 / f64::from(self.config.flocks);
-                    dx = angle.cos();
-                    dy = angle.sin();
+                    dx = fp::cos(angle);
+                    dy = fp::sin(angle);
                     distance = 1.0;
                 }
                 shove_x += (room - distance) * dx / distance;
@@ -510,8 +510,8 @@ impl Sim {
         // fma: boids.c:2129:39
         by = mul_add(wind.y, WIND_WEIGHT, by);
         if bx != 0.0 || by != 0.0 {
-            let x = target.direction.cos() + bx;
-            let y = target.direction.sin() + by;
+            let x = fp::cos(target.direction) + bx;
+            let y = fp::sin(target.direction) + by;
             if x != 0.0 || y != 0.0 {
                 return normalized_angle(y, x);
             }
@@ -529,7 +529,7 @@ impl Sim {
         if self.config.flocks > 1 {
             return self.shade_for_flock(bird.flock);
         }
-        let turns = normalized_angle(bird.direction.sin(), bird.direction.cos()) / (2.0 * PI);
+        let turns = normalized_angle(fp::sin(bird.direction), fp::cos(bird.direction)) / (2.0 * PI);
         let folded = if turns < 0.5 { turns * 2.0 } else { (1.0 - turns) * 2.0 };
         let shade = (folded * f64::from(shades)) as i32;
         if shade >= shades { shades - 1 } else { shade }
@@ -611,9 +611,9 @@ impl Sim {
                 }
             }
             // fma: boids.c:2223:20
-            bird.x = mul_add(step, direction.cos(), bird.x);
+            bird.x = mul_add(step, fp::cos(direction), bird.x);
             // fma: boids.c:2224:20
-            bird.y = mul_add(step, direction.sin(), bird.y);
+            bird.y = mul_add(step, fp::sin(direction), bird.y);
             if self.rain {
                 self.wrap_position(bird);
             }

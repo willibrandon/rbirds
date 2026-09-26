@@ -95,3 +95,38 @@ fn the_site_list_is_what_the_reference_produces() {
         });
     assert_eq!(generated, listed_sites(), "docs/evidence/fma-sites.txt is stale");
 }
+
+/// Every sine and cosine goes through `fp::sin_cos`, because the canonical
+/// build fuses every one of them (docs/evidence/trig-sites.txt).
+#[test]
+fn no_sine_or_cosine_bypasses_the_fused_pair() {
+    let mut files = Vec::new();
+    sources(&oracle::repository().join("src"), &mut files);
+    let mut plain = Vec::new();
+    for (path, text) in &files {
+        if path.ends_with("platform/trig.rs") {
+            continue;
+        }
+        for (number, line) in text.lines().enumerate() {
+            let code = line.split("//").next().unwrap_or("");
+            if code.contains(".sin()")
+                || code.contains(".cos()")
+                || code.contains(".sin_cos()")
+                || code.contains("f64::sin")
+                || code.contains("f64::cos")
+            {
+                plain.push(format!("{path}:{}: {}", number + 1, line.trim()));
+            }
+        }
+    }
+    assert!(plain.is_empty(), "plain sine or cosine calls: {plain:#?}");
+}
+
+#[test]
+fn the_trig_site_list_says_every_call_is_fused() {
+    let text = fs::read_to_string(oracle::repository().join("docs/evidence/trig-sites.txt"))
+        .expect("trig site list");
+    let calls: Vec<&str> = text.lines().filter(|l| !l.starts_with('#')).collect();
+    assert!(!calls.is_empty());
+    assert!(calls.iter().all(|l| l.ends_with(" __sincos_stret")), "{calls:?}");
+}

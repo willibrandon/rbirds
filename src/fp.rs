@@ -42,6 +42,27 @@ pub fn mul_add(a: f64, b: f64, c: f64) -> f64 {
     if CONTRACTS { a.mul_add(b, c) } else { a * b + c }
 }
 
+/// `(sin(x), cos(x))` as the canonical C build computes them: see
+/// [`crate::platform::sin_cos`]. Every `sin` and `cos` the reference calls
+/// goes through here, so a sine and cosine of one argument are always the
+/// fused pair the C computed, and a lone one is its half of that pair.
+#[inline]
+pub fn sin_cos(x: f64) -> (f64, f64) {
+    crate::platform::sin_cos(x)
+}
+
+/// C `sin(x)`: the sine half of [`sin_cos`].
+#[inline]
+pub fn sin(x: f64) -> f64 {
+    sin_cos(x).0
+}
+
+/// C `cos(x)`: the cosine half of [`sin_cos`].
+#[inline]
+pub fn cos(x: f64) -> f64 {
+    sin_cos(x).1
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

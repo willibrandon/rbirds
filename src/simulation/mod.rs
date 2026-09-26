@@ -20,6 +20,7 @@ use std::f64::consts::PI;
 use std::sync::LazyLock;
 
 use crate::config::*;
+use crate::fp;
 use crate::palette::{PALETTES, Palette, Rgb, Theme};
 use crate::rng::Rng;
 use crate::spatial_grid::SpatialGrid;
@@ -46,8 +47,8 @@ pub static TRIG_LOOKUP_TABLE: LazyLock<[TrigEntry; TRIG_LOOKUP_SIZE as usize]> =
         let mut table = [TrigEntry::default(); TRIG_LOOKUP_SIZE as usize];
         for (i, entry) in table.iter_mut().enumerate() {
             let angle = i as f64 * 2.0 * PI / f64::from(TRIG_LOOKUP_SIZE);
-            entry.cosine = angle.cos() as f32;
-            entry.sine = angle.sin() as f32;
+            entry.cosine = fp::cos(angle) as f32;
+            entry.sine = fp::sin(angle) as f32;
         }
         table
     });
@@ -243,7 +244,7 @@ pub fn direction_frame(radians: f64) -> i32 {
 
 /// `turn_towards`: at most `most` radians from `from` toward `to`.
 pub fn turn_towards(from: f64, to: f64, most: f64) -> f64 {
-    let mut delta = (to - from).sin().atan2((to - from).cos());
+    let mut delta = fp::sin(to - from).atan2(fp::cos(to - from));
     if delta > most {
         delta = most;
     }
