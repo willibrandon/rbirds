@@ -2,6 +2,11 @@
 //! second on the monotonic clock, keys read between frames and while output
 //! is blocked, and a snapshot written once the terminal is back. Translated
 //! from the live half of cbirds `boids.c` `main` and `write_snapshot`.
+//!
+//! The loop body is [`LiveLoop::frame`], which takes the keys read, the
+//! frame's timestamp and the window size as arguments rather than reading
+//! them itself, so the same body the terminal runs can be driven with
+//! injected time and input against the reference.
 
 #![forbid(unsafe_code)]
 
@@ -12,7 +17,7 @@ use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Program, frame_delay_after};
 use crate::config::*;
 use crate::image::{Image, PngError, png};
 use crate::input::InputParser;
-use crate::platform::{self, STDIN_FILENO, Timespec};
+use crate::platform::{self, STDIN_FILENO, Timespec, WinSize};
 use crate::render::Renderer;
 use crate::render::compose::{compose_onto, text_style, upload_sprite_sets};
 use crate::render::kitty::{KittyError, KittyGraphics};
@@ -92,8 +97,110 @@ pub fn write_snapshot(
     };
     let Ok(encoded) = canvas.and_then(|canvas| png::encode(&canvas)) else { return Ok(false) };
     // A full disk may only say so when the file is closed.
-    let written = std::fs::write(path, &encoded).is_ok();
-    Ok(written)
+    Ok(platform::write_file(path, &encoded).is_ok())
+}
+
+/// Where the loop body left the frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Frame {
+    /// Queued in the output buffer, to be flushed.
+    Drawn,
+    /// The flight out is over: leave the loop without drawing.
+    Over,
+}
+
+/// The loop's own state (`live_birds`, `leaving`, the clocks, the parser).
+#[derive(Clone, Debug)]
+pub struct LiveLoop {
+    pub parser: InputParser,
+    pub started: Timespec,
+    pub previous_frame: Timespec,
+    pub live_birds: i32,
+    /// Seconds left of the flight out.
+    pub leaving: f64,
+}
+
+impl LiveLoop {
+    pub fn new(started: Timespec, live_birds: i32) -> LiveLoop {
+        LiveLoop {
+            parser: InputParser::default(),
+            started,
+            previous_frame: started,
+            live_birds,
+            leaving: 0.0,
+        }
+    }
+
+    /// One pass of the C main loop from `handle_input` to the queued frame.
+    /// `keys` is what the read returned (`None` for nothing or a failure),
+    /// `frame_start` the monotonic clock just after it, and `window` what
+    /// TIOCGWINSZ reports (zero where it fails). `Err` is the exit code, the
+    /// message already written.
+    #[allow(clippy::too_many_arguments)]
+    pub fn frame(
+        &mut self,
+        sim: &mut Sim,
+        renderer: &mut Renderer,
+        graphics: &mut KittyGraphics,
+        birds: &mut Vec<Bird>,
+        snapshot: &mut Vec<Bird>,
+        grid: &mut SpatialGrid,
+        keys: Option<&[u8]>,
+        frame_start: Timespec,
+        window: WinSize,
+    ) -> Result<Frame, i32> {
+        if !sim.handle_input(&mut self.parser, keys) && self.leaving <= 0.0 {
+            // Asked to quit: fly off the top first.
+            self.leaving = f64::from(OUTRO_FRAMES_AT_SIXTY) / f64::from(FRAME_RATE);
+            sim.formation.clear();
+        }
+        sim.set_frame_seconds(elapsed_seconds(&self.previous_frame, &frame_start));
+        self.previous_frame = frame_start;
+        if self.leaving > 0.0 {
+            self.leaving -= sim.frame_seconds;
+            if self.leaving <= 0.0 {
+                return Ok(Frame::Over);
+            }
+        }
+        sim.clock.frame += 1;
+        sim.clock.seconds = elapsed_seconds(&self.started, &frame_start);
+        // Writing lets go when its hold is up.
+        sim.release_the_formation_if_due();
+        sim.maybe_drift();
+        terminal::apply_window_size(sim, window);
+        if let Err(error) = grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds) {
+            return Err(grid_failure("Cannot resize spatial grid", error));
+        }
+        if sim.population_changed {
+            sim.population_changed = false;
+            if sim.resize_the_flock(birds, snapshot, self.live_birds, sim.config.birds) {
+                self.live_birds = sim.config.birds;
+            } else {
+                // Keep what we have rather than lose it.
+                sim.config.birds = self.live_birds;
+            }
+            if let Err(error) = grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds)
+            {
+                return Err(grid_failure("Cannot resize spatial grid", error));
+            }
+        }
+        if let Err(error) = sim.snapshot_and_build(birds, snapshot, grid) {
+            return Err(grid_failure("Cannot build spatial grid", error));
+        }
+        let rendered = if self.leaving > 0.0 {
+            sim.fly_away(birds);
+            renderer.queue_render_frame(graphics, sim, birds)
+        } else {
+            sim.advance(birds, snapshot, grid);
+            renderer.queue_render_frame(graphics, sim, birds)
+        };
+        if let Err(error) = rendered {
+            return Err(fail(
+                format!("Cannot render Kitty graphics: {}\n", kitty_status(error)).as_bytes(),
+            ));
+        }
+        Ok(Frame::Drawn)
+    }
 }
 
 fn fail(message: &[u8]) -> i32 {
@@ -109,31 +216,79 @@ fn kitty_status(error: KittyError) -> &'static str {
     crate::render::kitty::kitty_graphics_status_string(Err(error))
 }
 
+/// Writes the queued frame, reading keys whenever the terminal pushes back.
+/// `Ok(false)` is a `q` read while blocked, which leaves without the outro.
+fn flush_frame(
+    sim: &mut Sim,
+    parser: &mut InputParser,
+    graphics: &mut KittyGraphics,
+    name: &[u8],
+) -> Result<bool, i32> {
+    let mut running = true;
+    while running && !graphics.is_empty() {
+        match graphics.flush_nonblocking() {
+            Ok(()) => {}
+            Err(KittyError::Again) => {
+                if let Err(error) = terminal::wait_for_terminal_io() {
+                    return Err(fail(&platform::perror_text(
+                        b"Cannot wait for terminal output",
+                        &error,
+                    )));
+                }
+                running = read_keys(sim, parser);
+            }
+            Err(KittyError::Io(errno)) => {
+                // Whatever the renderer; a reader that went away is the
+                // usual reason.
+                return Err(fail(&cat(&[
+                    name,
+                    b": cannot write to the terminal: ",
+                    &platform::strerror(errno),
+                    b"\n",
+                ])));
+            }
+            Err(error) => {
+                return Err(fail(&cat(&[
+                    name,
+                    b": cannot write to the terminal: ",
+                    kitty_status(error).as_bytes(),
+                    b"\n",
+                ])));
+            }
+        }
+    }
+    Ok(running)
+}
+
 /// The live half of `main`. The terminal is restored when this returns,
 /// whichever way it returns.
 pub fn run(program: &mut Program, _stdout: &mut CStdout) -> i32 {
     let Program { sim, settings, renderer } = program;
+    match run_live(sim, renderer, settings) {
+        Ok(code) | Err(code) => code,
+    }
+}
+
+fn run_live(
+    sim: &mut Sim,
+    renderer: &mut Renderer,
+    settings: &crate::app::Settings,
+) -> Result<i32, i32> {
     let name = settings.program_name.clone();
-    let sprite_path = settings.sprite_path.clone();
+    let sprite_path = settings.sprite_path.as_deref();
     platform::emergency::install_signal_handlers();
 
     // The terminal is asked its questions before anything is built for it.
-    let mut terminal = match Terminal::enter() {
-        Ok(terminal) => terminal,
-        Err(error) => {
-            return fail(&platform::perror_text(b"Can't enable raw mode", &error));
-        }
-    };
+    let mut terminal = Terminal::enter()
+        .map_err(|error| fail(&platform::perror_text(b"Can't enable raw mode", &error)))?;
     sim.render_mode = sim.live_render_mode();
     sim.settle_the_bird_size();
     if sim.palette_follows_the_theme() && !terminal::learn_the_theme(&mut sim.theme) {
         sim.config.palette = crate::palette::fallback_palette();
     }
 
-    let mut grid = match SpatialGrid::new(SPATIAL_CELL_SIZE) {
-        Ok(grid) => grid,
-        Err(error) => return grid_failure("Cannot initialize spatial grid", error),
-    };
+    let mut grid = SpatialGrid::new(SPATIAL_CELL_SIZE)
+        .map_err(|error| grid_failure("Cannot initialize spatial grid", error))?;
     // A named seed makes a run repeatable.
     let seed = if settings.requested_seed >= 0 {
         settings.requested_seed as u32
@@ -142,20 +297,19 @@ pub fn run(program: &mut Program, _stdout: &mut CStdout) -> i32 {
     };
     sim.rng.seed(seed);
     terminal::update_screen_dimensions(sim);
-    if let Err(error) = grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds) {
-        return grid_failure("Cannot prepare spatial grid", error);
-    }
+    grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds)
+        .map_err(|error| grid_failure("Cannot prepare spatial grid", error))?;
     // The sprites, once, as pixels.
     let built = if sim.drawing_with_text() {
-        renderer.prepare_text_renderer(sim, sprite_path.as_deref(), &name)
+        renderer.prepare_text_renderer(sim, sprite_path, &name)
     } else {
-        sim.rasterise_sprites(&mut renderer.sprites, sprite_path.as_deref(), &name)
+        sim.rasterise_sprites(&mut renderer.sprites, sprite_path, &name)
     };
     match built {
         Ok(()) => {}
-        Err(SpriteError::Fatal(message)) => return fail(&message),
+        Err(SpriteError::Fatal(message)) => return Err(fail(&message)),
         Err(SpriteError::Png(_)) => {
-            return fail(&cat(&[&name, b": cannot build the sprites to draw with\n"]));
+            return Err(fail(&cat(&[&name, b": cannot build the sprites to draw with\n"])));
         }
     }
     sim.set_frame_seconds(1.0 / f64::from(FRAME_RATE));
@@ -165,16 +319,16 @@ pub fn run(program: &mut Program, _stdout: &mut CStdout) -> i32 {
     let mut birds: Vec<Bird> = Vec::new();
     let mut snapshot: Vec<Bird> = Vec::new();
     if birds.try_reserve_exact(count).is_err() || snapshot.try_reserve_exact(count).is_err() {
-        return fail(&platform::perror_text(b"Out of memory", &std::io::Error::from_raw_os_error(12)));
+        return Err(fail(&platform::perror_text(
+            b"Out of memory",
+            &std::io::Error::from_raw_os_error(platform::ENOMEM),
+        )));
     }
     birds.resize(count, Bird::default());
     snapshot.resize(count, Bird::default());
-    let mut graphics = match KittyGraphics::new(platform::STDOUT_FILENO) {
-        Ok(graphics) => graphics,
-        Err(error) => {
-            return fail(format!("Cannot initialize Kitty graphics: {}\n", kitty_status(error)).as_bytes());
-        }
-    };
+    let mut graphics = KittyGraphics::new(platform::STDOUT_FILENO).map_err(|error| {
+        fail(format!("Cannot initialize Kitty graphics: {}\n", kitty_status(error)).as_bytes())
+    })?;
 
     terminal.enter_alt_screen();
     terminal::write_all(b"\x1b[J");
@@ -187,108 +341,51 @@ pub fn run(program: &mut Program, _stdout: &mut CStdout) -> i32 {
         let uploaded = upload_sprite_sets(sim, &mut graphics, &renderer.sprites);
         free_sprites(&mut renderer.sprites);
         if let Err(error) = uploaded {
-            return fail(format!("Cannot upload Kitty graphics: {}\n", kitty_status(error)).as_bytes());
+            return Err(fail(
+                format!("Cannot upload Kitty graphics: {}\n", kitty_status(error)).as_bytes(),
+            ));
         }
     }
 
-    let mut parser = InputParser::default();
-    let started = platform::monotonic_now();
-    let mut previous_frame = started;
-    let mut live_birds = sim.config.birds;
-    let mut running = true;
-    // Seconds left of the flight out.
-    let mut leaving = 0.0_f64;
-    while running {
-        if !read_keys(sim, &mut parser) && leaving <= 0.0 {
-            // Asked to quit: fly off the top first.
-            leaving = f64::from(OUTRO_FRAMES_AT_SIXTY) / f64::from(FRAME_RATE);
-            sim.formation.clear();
-        }
-
+    let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
+    let mut input = [0_u8; INPUT_BUFFER_SIZE];
+    loop {
+        let keys = platform::read(STDIN_FILENO, &mut input).ok();
         let frame_start = platform::monotonic_now();
-        sim.set_frame_seconds(elapsed_seconds(&previous_frame, &frame_start));
-        previous_frame = frame_start;
-        if leaving > 0.0 {
-            leaving -= sim.frame_seconds;
-            if leaving <= 0.0 {
-                break;
-            }
-        }
-        sim.clock.frame += 1;
-        sim.clock.seconds = elapsed_seconds(&started, &frame_start);
-        // Writing lets go when its hold is up.
-        sim.release_the_formation_if_due();
-        sim.maybe_drift();
-        terminal::update_screen_dimensions(sim);
-        if let Err(error) = grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds) {
-            return grid_failure("Cannot resize spatial grid", error);
-        }
-        if sim.population_changed {
-            sim.population_changed = false;
-            if sim.resize_the_flock(&mut birds, &mut snapshot, live_birds, sim.config.birds) {
-                live_birds = sim.config.birds;
-            } else {
-                // Keep what we have rather than lose it.
-                sim.config.birds = live_birds;
-            }
-            if let Err(error) = grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds)
-            {
-                return grid_failure("Cannot resize spatial grid", error);
-            }
-        }
-        if let Err(error) = sim.snapshot_and_build(&birds, &mut snapshot, &mut grid) {
-            return grid_failure("Cannot build spatial grid", error);
-        }
-        let rendered = if leaving > 0.0 {
-            sim.fly_away(&mut birds);
-            renderer.queue_render_frame(&mut graphics, sim, &birds)
-        } else {
-            sim.advance(&mut birds, &mut snapshot, &mut grid);
-            renderer.queue_render_frame(&mut graphics, sim, &birds)
-        };
-        if let Err(error) = rendered {
-            return fail(format!("Cannot render Kitty graphics: {}\n", kitty_status(error)).as_bytes());
+        let window = platform::window_size(platform::STDOUT_FILENO).unwrap_or_default();
+        let keys = keys.map(|length| &input[..length]);
+        // The clock is read after the keys, as the C reads it; the window a
+        // moment later, which no step in between depends on.
+        let drawn = live.frame(
+            sim,
+            renderer,
+            &mut graphics,
+            &mut birds,
+            &mut snapshot,
+            &mut grid,
+            keys,
+            frame_start,
+            window,
+        )?;
+        if drawn == Frame::Over {
+            break;
         }
         let frame_bytes = graphics.len();
-        while running && !graphics.is_empty() {
-            match graphics.flush_nonblocking() {
-                Ok(()) => {}
-                Err(KittyError::Again) => {
-                    if let Err(error) = terminal::wait_for_terminal_io() {
-                        return fail(&platform::perror_text(b"Cannot wait for terminal output", &error));
-                    }
-                    running = read_keys(sim, &mut parser);
-                }
-                Err(KittyError::Io(errno)) => {
-                    // Whatever the renderer; a reader that went away is the
-                    // usual reason.
-                    return fail(&cat(&[
-                        &name,
-                        b": cannot write to the terminal: ",
-                        &platform::strerror(errno),
-                        b"\n",
-                    ]));
-                }
-                Err(error) => {
-                    return fail(&cat(&[
-                        &name,
-                        b": cannot write to the terminal: ",
-                        kitty_status(error).as_bytes(),
-                        b"\n",
-                    ]));
-                }
-            }
-        }
-        if !running {
+        if !flush_frame(sim, &mut live.parser, &mut graphics, &name)? {
             break;
         }
         if settings.frame_limit > 0 && sim.clock.frame >= i64::from(settings.frame_limit) {
             break;
         }
         let frame_end = platform::monotonic_now();
-        let spent = elapsed_microseconds(&frame_start, &frame_end);
-        account_frame(renderer, sim.clock.seconds, spent, frame_bytes);
-        let remaining = frame_delay_after(settings.unlock_fps, elapsed_microseconds(&frame_start, &frame_end));
+        account_frame(
+            renderer,
+            sim.clock.seconds,
+            elapsed_microseconds(&frame_start, &frame_end),
+            frame_bytes,
+        );
+        let remaining =
+            frame_delay_after(settings.unlock_fps, elapsed_microseconds(&frame_start, &frame_end));
         if remaining > 0 {
             platform::nanosleep(&Timespec {
                 tv_sec: remaining / 1_000_000,
@@ -300,14 +397,14 @@ pub fn run(program: &mut Program, _stdout: &mut CStdout) -> i32 {
     let mut outcome = EXIT_SUCCESS;
     if let Some(path) = settings.snapshot_path.as_deref() {
         terminal.restore();
-        match write_snapshot(sim, renderer, path, &birds, sprite_path.as_deref(), &name) {
+        match write_snapshot(sim, renderer, path, &birds, sprite_path, &name) {
             Ok(true) => eprint(&cat(&[&name, b": wrote ", path.as_bytes(), b"\n"])),
             Ok(false) => {
                 eprint(&cat(&[&name, b": could not write ", path.as_bytes(), b"\n"]));
                 outcome = EXIT_FAILURE;
             }
-            Err(message) => return fail(&message),
+            Err(message) => return Err(fail(&message)),
         }
     }
-    outcome
+    Ok(outcome)
 }

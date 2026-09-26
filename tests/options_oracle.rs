@@ -11,10 +11,6 @@
 //! and the oracle resets every target before each case. A sample also runs in
 //! fresh processes with the raw argument bytes the OS delivers, and must agree.
 
-// tests/support/ is shared and not this file's to format or lint: it is not
-// yet rustfmt-clean and trips clippy::collapsible_if under -D warnings.
-#[rustfmt::skip]
-#[allow(clippy::collapsible_if)]
 mod support;
 
 use std::collections::BTreeMap;

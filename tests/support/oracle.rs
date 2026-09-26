@@ -72,8 +72,26 @@ fn check_reference(reference: &Path) -> Result<(), String> {
 
 static BUILD_LOCK: Mutex<()> = Mutex::new(());
 
+/// Where this target's oracles live: one directory per architecture, so an
+/// x86_64 test run under Rosetta never picks up an arm64 oracle.
+fn oracle_dir() -> PathBuf {
+    repository().join("target/oracle").join(format!(
+        "{}-{}",
+        std::env::consts::ARCH,
+        std::env::consts::OS
+    ))
+}
+
+/// Extra C flags for the canonical control on this target, such as
+/// `-arch x86_64` for an x86_64 run on an arm64 Mac. Whitespace separated.
+fn extra_cflags() -> Vec<String> {
+    std::env::var("RBIRDS_ORACLE_CFLAGS")
+        .map(|flags| flags.split_whitespace().map(str::to_owned).collect())
+        .unwrap_or_default()
+}
+
 /// Compiles `tools/oracle/<program>.c` with the named reference sources into
-/// `target/oracle/<name>` and returns the executable, rebuilding when any input
+/// `target/oracle/<arch>-<os>/<name>` and returns the executable, rebuilding when any input
 /// is newer. `None` only when skipping is explicitly allowed.
 pub fn build(name: &str, program: &str, reference_sources: &[&str]) -> Option<PathBuf> {
     build_with(name, program, reference_sources, &[])
@@ -91,7 +109,7 @@ pub fn build_with(
     if let Err(why) = check_reference(&reference) {
         return unavailable(&why);
     }
-    let out_dir = repository().join("target/oracle");
+    let out_dir = oracle_dir();
     if let Err(e) = fs::create_dir_all(&out_dir) {
         return unavailable(&format!("cannot create {}: {e}", out_dir.display()));
     }
@@ -111,6 +129,7 @@ pub fn build_with(
     let partial = out_dir.join(format!("{name}.partial.{}", std::process::id()));
     let mut cc = Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()));
     cc.args(["-std=c99", "-Wall", "-Wextra", "-O3", "-g"])
+        .args(extra_cflags())
         .arg(format!("-I{}", reference.display()))
         .args(extra)
         .arg(&program_path);
@@ -192,4 +211,63 @@ impl Drop for Scratch {
             eprintln!("kept scratch files for diagnosis: {}", self.path.display());
         }
     }
+}
+
+/// The reference executable itself, built from the pinned sources with the
+/// canonical flags into `target/oracle/<arch>-<os>/cbirds` (never inside the reference
+/// checkout, whose own build products are not trusted).
+pub fn reference_binary() -> Option<PathBuf> {
+    let sources = [
+        "cells.c",
+        "font.c",
+        "gif.c",
+        "kitty_graphics.c",
+        "options.c",
+        "png.c",
+        "spatial_grid.c",
+    ];
+    build_program("cbirds", "boids.c", &sources)
+}
+
+/// Compiles reference sources alone (no observation program) into
+/// `target/oracle/<arch>-<os>/<name>`.
+pub fn build_program(name: &str, main_source: &str, others: &[&str]) -> Option<PathBuf> {
+    let _guard = BUILD_LOCK.lock().unwrap_or_else(|poison| poison.into_inner());
+    let reference = reference_dir();
+    if let Err(why) = check_reference(&reference) {
+        return unavailable(&why);
+    }
+    let out_dir = oracle_dir();
+    if let Err(e) = fs::create_dir_all(&out_dir) {
+        return unavailable(&format!("cannot create {}: {e}", out_dir.display()));
+    }
+    let exe = out_dir.join(name);
+    let mut inputs = vec![reference.join(main_source)];
+    inputs.extend(others.iter().map(|s| reference.join(s)));
+    let newest = inputs.iter().filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok()).max();
+    let built = fs::metadata(&exe).and_then(|m| m.modified()).ok();
+    if let (Some(input), Some(built)) = (newest, built)
+        && built >= input
+    {
+        return Some(exe);
+    }
+    let partial = out_dir.join(format!("{name}.partial.{}", std::process::id()));
+    let mut cc = Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()));
+    cc.args(["-std=c99", "-Wall", "-Wextra", "-O3", "-g"]).args(extra_cflags());
+    for input in &inputs {
+        cc.arg(input);
+    }
+    cc.arg("-o").arg(&partial).arg("-lm");
+    match cc.output() {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => panic!("{name} failed to compile:\n{}", String::from_utf8_lossy(&out.stderr)),
+        Err(e) => return unavailable(&format!("cannot run cc: {e}")),
+    }
+    fs::rename(&partial, &exe).expect("install reference binary");
+    Some(exe)
+}
+
+/// The rbirds executable Cargo built for this test run.
+pub fn rust_binary() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_rbirds"))
 }

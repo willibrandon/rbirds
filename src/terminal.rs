@@ -143,7 +143,11 @@ pub fn learn_the_theme(theme: &mut Theme) -> bool {
 
 /// `update_screen_dimensions`: what the terminal says, zero where it will not.
 pub fn update_screen_dimensions(sim: &mut Sim) {
-    let size = platform::window_size(STDOUT_FILENO).unwrap_or_default();
+    apply_window_size(sim, platform::window_size(STDOUT_FILENO).unwrap_or_default());
+}
+
+/// The derivation half of `update_screen_dimensions`, for a size already read.
+pub fn apply_window_size(sim: &mut Sim, size: platform::WinSize) {
     sim.apply_screen_size(
         i32::from(size.ws_col),
         i32::from(size.ws_row),

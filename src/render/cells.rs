@@ -434,6 +434,24 @@ fn zeroed(count: usize) -> Option<Vec<Cell>> {
     Some(grid)
 }
 
+impl Default for Cells {
+    /// The C's zero-initialized static `cells_t` before `cells_init`.
+    fn default() -> Cells {
+        Cells {
+            cols: 0,
+            rows: 0,
+            now: Vec::new(),
+            before: Vec::new(),
+            draw_everything: false,
+            keep_cols: 0,
+            keep_rows: 0,
+            truecolor: false,
+            text: Vec::new(),
+            capacity: 0,
+        }
+    }
+}
+
 impl Cells {
     /// `cells_init`: an unsized grid that will draw everything first.
     /// `truecolor` picks 24 bit SGR; otherwise the nearest of the 256 colour

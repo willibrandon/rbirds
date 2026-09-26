@@ -112,7 +112,7 @@ pub fn names_a_cast(path: &OsStr) -> bool {
 
 /// The loop body every recording shares: the clock, the intro's release,
 /// the autopilot, and one frame of flight.
-fn record_step(
+pub fn record_step(
     sim: &mut Sim,
     birds: &mut [Bird],
     snapshot: &mut [Bird],

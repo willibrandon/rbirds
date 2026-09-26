@@ -21,6 +21,14 @@ pub struct BenchResult {
     pub bytes: f64,
 }
 
+/// The simulation half of one benchmark frame: the snapshot and grid, a hunt,
+/// and `render_frame`'s flight, which hunts again.
+pub fn bench_step(sim: &mut Sim, birds: &mut [Bird], snapshot: &mut [Bird], grid: &mut SpatialGrid) {
+    let _ = sim.snapshot_and_build(birds, snapshot, grid);
+    sim.hunt(snapshot);
+    sim.advance(birds, snapshot, grid);
+}
+
 /// The frames of a benchmark, with the time they took. `None` where the C
 /// returns EXIT_FAILURE before printing anything.
 pub fn bench_frames(
@@ -66,10 +74,8 @@ pub fn bench_frames(
     let mut bytes = 0.0_f64;
     let start = platform::monotonic_now();
     for _ in 0..settings.bench_frames {
-        let _ = sim.snapshot_and_build(&birds, &mut snapshot, &mut grid);
-        sim.hunt(&snapshot);
+        bench_step(sim, &mut birds, &mut snapshot, &mut grid);
         graphics.clear();
-        sim.advance(&mut birds, &mut snapshot, &mut grid);
         let _ = renderer.queue_render_frame(&mut graphics, sim, &birds);
         bytes += graphics.len() as f64;
     }

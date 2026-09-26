@@ -26,7 +26,18 @@
  *   resize N                         config.birds = N; resize_the_flock
  *   sprites                          prepare_text_renderer (or rasterise for kitty)
  *   render                           queue_render_frame, bytes printed as hex
+ *   live_begin SEC NSEC              the live loop's own state, started at that time
+ *   live HEX SEC NSEC COLS ROWS XPIXELS YPIXELS
+ *                                    one pass of main's loop body, from handle_input
+ *                                    to the queued frame, with the monotonic clock
+ *                                    and window given rather than read; the frame's
+ *                                    bytes printed as hex
+ *   stats MICROSECONDS BYTES         main's per-second panel statistics for a frame
  *   dump | digest                    the whole state, or its FNV-1a 64 digest
+ *
+ * `live` and `stats` repeat main's loop body line for line, because main
+ * itself cannot be entered piecemeal; that is orchestration, and every
+ * function it calls is the reference's.
  *
  * Output format "rbirds-sim-trace 1": integers in decimal, doubles as 16 hex
  * digits of their IEEE bits, floats as 8.
@@ -115,6 +126,10 @@ static void dump_state(void) {
     for (int i = 0; i < 5; i++)
         emit("%02x%02x%02x", theme_tints[i][0], theme_tints[i][1], theme_tints[i][2]);
     emit("\n");
+    emit("stats frame_ms=%016llx bytes=%016llx rate=%016llx counted=%ld started=%016llx "
+         "window_ms=%016llx window_bytes=%016llx legend_drawn=%d text_legend=%d\n",
+         D(stats.frame_ms), D(stats.bytes), D(stats.rate), stats.counted, D(stats.window_started),
+         D(stats.window_ms), D(stats.window_bytes), legend_drawn, text_legend_was_drawn);
     emit("rng front=%d rear=%d words=", random_state.front, random_state.rear);
     for (int i = 0; i < RANDOM_WORDS; i++) emit("%08" PRIx32, random_state.word[i]);
     emit("\n");
@@ -196,8 +211,8 @@ static int set_field(const char *field, long value) {
     return 1;
 }
 
-static void feed_keys(const char *hex) {
-    char bytes[4096];
+static int handle_keys(const char *hex) {
+    static char bytes[1 << 16];
     size_t length = 0;
     if (strcmp(hex, "-") != 0)
         for (const char *c = hex; c[0] && c[1] && length < sizeof(bytes); c += 2) {
@@ -206,32 +221,54 @@ static void feed_keys(const char *hex) {
         }
     int descriptors[2];
     if (pipe(descriptors) != 0) abort();
-    if (write(descriptors[1], bytes, length) != (ssize_t)length) abort();
+    /* A pipe holds far more than one read takes; handle_input reads at most
+     * INPUT_BUFFER_SIZE, and the rest is dropped with the pipe, as a burst
+     * longer than one read would wait for the next frame's read live. */
+    if (length > 0 && write(descriptors[1], bytes, length) != (ssize_t)length) abort();
     close(descriptors[1]);
     int saved = dup(STDIN_FILENO);
     dup2(descriptors[0], STDIN_FILENO);
     close(descriptors[0]);
-    /* One read, as the live loop makes, of at most INPUT_BUFFER_SIZE bytes;
-     * an empty pipe is end of file, which is what an idle raw terminal's
-     * zero-byte read looks like to handle_input. */
+    /* An empty pipe is end of file: a zero-byte read, as an idle raw
+     * terminal's read is. */
     int result = handle_input();
     dup2(saved, STDIN_FILENO);
     close(saved);
-    emit("keys %d\n", result);
+    return result;
 }
 
+static void emit_buffer(const char *label, int status) {
+    emit("%s %d %zu ", label, status, graphics.length);
+    for (size_t i = 0; i < graphics.length; i++) emit("%02x", (unsigned char)graphics.buffer[i]);
+    emit("\n");
+}
+
+static void ensure_graphics(void) {
+    if (!graphics_ready && kitty_graphics_init(&graphics, STDOUT_FILENO) != KITTY_GRAPHICS_OK)
+        abort();
+    graphics_ready = 1;
+}
+
+static int live_birds;
+static double leaving;
+static struct timespec started, previous_frame;
+
 int main(void) {
-    char line[8192];
+    static char line[1 << 17];
     trig_lookup_init();
     name_the_palettes();
     name_the_presets();
     name_the_shapes();
     while (fgets(line, sizeof(line), stdin) != NULL) {
-        char command[64] = "", a[4096] = "", b[256] = "", c[256] = "", d[256] = "";
-        char e[64] = "", f[64] = "";
-        if (line[0] == '#' || line[0] == '\n') continue;
-        int n = sscanf(line, "%63s %4095s %255s %255s %255s %63s %63s", command, a, b, c, d, e, f);
-        if (n < 1) continue;
+        char *word[16] = {0};
+        int words = 0;
+        if (line[0] == '#') continue;
+        for (char *token = strtok(line, " \t\n"); token != NULL && words < 16;
+             token = strtok(NULL, " \t\n"))
+            word[words++] = token;
+        if (words == 0) continue;
+        for (int i = words; i < 16; i++) word[i] = "";
+        const char *command = word[0], *a = word[1], *b = word[2], *c = word[3], *d = word[4];
         if (strcmp(command, "screen") == 0) {
             apply_screen_size(atoi(a), atoi(b), atoi(c), atoi(d));
         } else if (strcmp(command, "set") == 0) {
@@ -266,6 +303,7 @@ int main(void) {
             grid_ready = 1;
             emit("grid %d\n", spatial_grid_prepare(&grid, screen.width, screen.height, config.birds));
         } else if (strcmp(command, "record") == 0) {
+            /* run_recording's loop body. */
             double fps = from_bits(b);
             clock_state.frame = atoi(a);
             clock_state.seconds = (double)atoi(a) / fps;
@@ -276,6 +314,7 @@ int main(void) {
             spatial_grid_build(&grid, config.birds, read_bird_position, snapshot);
             fly(birds, snapshot, &grid);
         } else if (strcmp(command, "bench") == 0) {
+            /* run_benchmark's loop body, less the drawing. */
             memcpy(snapshot, birds, sizeof(*birds) * (size_t)config.birds);
             spatial_grid_build(&grid, config.birds, read_bird_position, snapshot);
             hunt(snapshot);
@@ -291,10 +330,10 @@ int main(void) {
             clock_state.frame = atol(a);
             clock_state.seconds = from_bits(b);
         } else if (strcmp(command, "keys") == 0) {
-            feed_keys(a);
+            emit("keys %d\n", handle_keys(a));
         } else if (strcmp(command, "theme") == 0) {
             uint8_t accent[3] = {(uint8_t)atoi(a), (uint8_t)atoi(b), (uint8_t)atoi(c)};
-            uint8_t ground[3] = {(uint8_t)atoi(d), (uint8_t)atoi(e), (uint8_t)atoi(f)};
+            uint8_t ground[3] = {(uint8_t)atoi(d), (uint8_t)atoi(word[5]), (uint8_t)atoi(word[6])};
             ramp_between(accent, ground);
             theme_is_known = 1;
         } else if (strcmp(command, "resize") == 0) {
@@ -308,14 +347,74 @@ int main(void) {
                                          : rasterise_sprites(text_sprites) == PNG_OK;
             emit("sprites %d\n", ok);
         } else if (strcmp(command, "render") == 0) {
-            if (!graphics_ready) kitty_graphics_init(&graphics, -1);
-            graphics_ready = 1;
+            ensure_graphics();
             graphics.length = 0;
-            kitty_graphics_status_t status = queue_render_frame(&graphics, birds);
-            emit("render %d %zu ", (int)status, graphics.length);
-            for (size_t i = 0; i < graphics.length; i++)
-                emit("%02x", (unsigned char)graphics.buffer[i]);
-            emit("\n");
+            emit_buffer("render", (int)queue_render_frame(&graphics, birds));
+        } else if (strcmp(command, "live_begin") == 0) {
+            ensure_graphics();
+            started.tv_sec = atol(a);
+            started.tv_nsec = atol(b);
+            previous_frame = started;
+            live_birds = config.birds;
+            leaving = 0;
+        } else if (strcmp(command, "live") == 0) {
+            /* main's loop body, from handle_input to the queued frame. */
+            ensure_graphics();
+            graphics.length = 0;
+            if (!handle_keys(a) && leaving <= 0) {
+                leaving = (double)OUTRO_FRAMES_AT_SIXTY / FRAME_RATE;
+                formation_clear();
+            }
+            struct timespec frame_start = {atol(b), atol(c)};
+            set_frame_seconds(elapsed_seconds(&previous_frame, &frame_start));
+            previous_frame = frame_start;
+            if (leaving > 0) {
+                leaving -= frame_seconds;
+                if (leaving <= 0) {
+                    emit("live over\n");
+                    flush_out();
+                    continue;
+                }
+            }
+            clock_state.frame++;
+            clock_state.seconds = (double)(frame_start.tv_sec - started.tv_sec) +
+                                  (double)(frame_start.tv_nsec - started.tv_nsec) / 1e9;
+            if (formation.writing && formation.until >= 0 && clock_state.seconds >= formation.until)
+                formation_clear();
+            maybe_drift();
+            apply_screen_size(atoi(d), atoi(word[5]), atoi(word[6]), atoi(word[7]));
+            if (spatial_grid_prepare(&grid, screen.width, screen.height, config.birds) != 0) abort();
+            if (population_changed) {
+                population_changed = 0;
+                if (resize_the_flock(&birds, &snapshot, live_birds, config.birds))
+                    live_birds = config.birds;
+                else
+                    config.birds = live_birds;
+                allocated = live_birds;
+                if (spatial_grid_prepare(&grid, screen.width, screen.height, config.birds) != 0)
+                    abort();
+            }
+            memcpy(snapshot, birds, sizeof(*birds) * (size_t)config.birds);
+            if (spatial_grid_build(&grid, config.birds, read_bird_position, snapshot) != 0) abort();
+            if (leaving > 0) fly_away(birds);
+            kitty_graphics_status_t status = leaving > 0
+                                                 ? queue_render_frame(&graphics, birds)
+                                                 : render_frame(&graphics, birds, snapshot, &grid);
+            emit_buffer("live", (int)status);
+        } else if (strcmp(command, "stats") == 0) {
+            /* main's statistics, after a frame's flush. */
+            stats.window_ms += (double)atol(a) / 1000.0;
+            stats.window_bytes += (double)strtoul(b, NULL, 10);
+            stats.counted++;
+            if (clock_state.seconds - stats.window_started >= 1.0) {
+                double span = clock_state.seconds - stats.window_started;
+                stats.frame_ms = stats.window_ms / (double)stats.counted;
+                stats.bytes = stats.window_bytes / (double)stats.counted;
+                stats.rate = (double)stats.counted / span;
+                stats.window_started = clock_state.seconds;
+                stats.window_ms = stats.window_bytes = 0;
+                stats.counted = 0;
+            }
         } else if (strcmp(command, "dump") == 0) {
             dump_state();
         } else if (strcmp(command, "digest") == 0) {
