@@ -13,7 +13,7 @@ pub mod panel;
 use crate::image::Image;
 use crate::sprites::empty_catalogue;
 
-pub use panel::Stats;
+pub use panel::{LegendBuffers, Stats};
 
 /// The renderers' own state, formerly the C's `text_sprites`, `text_canvas`,
 /// `text_cells`, `text_legend_was_drawn`, `legend_drawn` and `stats`.
@@ -29,6 +29,8 @@ pub struct Renderer {
     /// Whether the panel is currently on screen.
     pub legend_drawn: bool,
     pub stats: Stats,
+    /// The panel's rows, rebuilt in place each frame.
+    pub legend: LegendBuffers,
 }
 
 impl Default for Renderer {
@@ -40,6 +42,7 @@ impl Default for Renderer {
             text_legend_was_drawn: false,
             legend_drawn: false,
             stats: Stats::default(),
+            legend: LegendBuffers::default(),
         }
     }
 }

@@ -1,6 +1,6 @@
 # Port process and release gates
 
-Status: planning complete; P0–P7 are pending. A local clean C build/test check is recorded in [the reference manifest](reference-manifest.json); it is not a completed cross-platform baseline or a Rust compatibility result.
+Status: P0–P5 complete, with evidence on all four targets (the x86_64 ones under Rosetta and emulation); P6 partly complete; P7 pending. See [the phase status](#phase-status) and [the evidence index](evidence/README.md).
 
 Read [the design](DESIGN.md) and [the compatibility contract](COMPATIBILITY.md) first. Work one phase to its exit gate before treating downstream behavior as accepted. Small implementation changes may overlap in a branch, but an unmet prerequisite remains visible.
 
@@ -142,6 +142,19 @@ Check a fresh Cargo home with the pinned toolchain available to show no registry
 | P5: live terminal integration | Complete lifecycle/signals, input/resize/theme, polling/backpressure, snapshot file handling, normal/error exits | ABI checks and PTY/failure cases pass; debug/release results agree; all 112 C test mappings executed; no terminal state leak |
 | P6: release qualification | Run complete matrix, real terminals, independent playback, performance budgets, installation and dependency audit | All C01–C18 requirements have evidence on applicable targets; accepted report has zero unexpected differences and zero skipped required gates |
 | P7: cutover | Make Rust the normal documented executable/build, preserve reference retrieval and regression harness, assign release identity and final provenance | Fresh checkout builds/runs offline with installed tools; release checklist below complete; source and assets attributed; reference remains available for future regressions |
+
+### Phase status
+
+| Phase | Status | Evidence |
+| --- | --- | --- |
+| P0 | complete | `tools/reference.sh` verifies all 43 pinned files; the C suites pass on macOS arm64 and Linux arm64/x86_64; oracles only observe (`tools/oracle/`); `tests/inventory.rs` rediscovers the 112 C tests |
+| P1 | complete | empty dependency graph; `tests/options_oracle.rs`, `tests/cli_differential.rs`; RNG and grid exact in `tests/sim_oracle.rs`; `tests/abi.rs` identical on all four targets |
+| P2 | complete | `tests/c_png.rs`, `tests/c_gif.rs`, `tests/png_oracle.rs`, `tests/gif_oracle.rs`, sprite pipeline exact |
+| P3 | complete | `tests/sim_oracle.rs` bit-exact, including 68 s recordings and a 4,700-frame live session; the two numerical findings classified and reproduced (DESIGN §5) |
+| P4 | complete | `tests/cells_oracle.rs`, `tests/kitty_oracle.rs`, `tests/headless_differential.rs` (every rate, byte-identical GIFs and casts) |
+| P5 | complete | `tests/pty_reference.rs`, `tests/pty_rbirds.rs`, `tests/allocation_failure.rs`; debug and release agree; all 112 mappings executed |
+| P6 | partly complete | done: matrix on the four targets (x86_64 translated/emulated), installation and dependency audit. Open: native x86_64 runs, real terminals, independent playback, performance budgets (`tools/perf.sh`) |
+| P7 | pending | needs the owner's release identity and decisions on [the deviations](DEVIATIONS.md) |
 
 Each phase should consist of reviewable module-sized changes with its tests and updated mappings. Keep algorithm changes out of translation changes. Do not remove C reference access after the Rust executable first animates successfully.
 

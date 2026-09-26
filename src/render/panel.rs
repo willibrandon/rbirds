@@ -4,7 +4,9 @@
 //!
 //! Rows are bytes padded as `snprintf` pads them — by bytes — and cut as
 //! `snprintf` cuts them at the C buffer sizes, so a row is the reference's
-//! row even when a statistic outgrows its column.
+//! row even when a statistic outgrows its column. They are built into
+//! buffers the renderer keeps, as the C builds them on its stack, so a frame
+//! with the panel up allocates nothing.
 
 use std::f64::consts::PI;
 
@@ -26,10 +28,30 @@ pub struct Stats {
     pub window_bytes: f64,
 }
 
+/// The panel's rows and the scratch they are built with: the C's
+/// `lines[LEGEND_MAX_ROWS][LEGEND_LINE_MAX]`, `value[]` and `measured[]`.
+#[derive(Clone, Debug)]
+pub struct LegendBuffers {
+    pub lines: [Vec<u8>; LEGEND_MAX_ROWS as usize],
+    value: Vec<u8>,
+    measured: Vec<u8>,
+    bar: Vec<u8>,
+}
+
+impl Default for LegendBuffers {
+    fn default() -> LegendBuffers {
+        LegendBuffers {
+            lines: std::array::from_fn(|_| Vec::with_capacity(LEGEND_LINE_MAX)),
+            value: Vec::with_capacity(LEGEND_VALUE_WIDTH as usize + 8),
+            measured: Vec::with_capacity(LEGEND_LINE_MAX / 2),
+            bar: Vec::with_capacity(LEGEND_BAR_CELLS as usize * 3),
+        }
+    }
+}
+
 /// `snprintf(out, size, ...)`: at most `size - 1` bytes survive.
-fn truncated(mut text: Vec<u8>, size: usize) -> Vec<u8> {
+fn cut(text: &mut Vec<u8>, size: usize) {
     text.truncate(size.saturating_sub(1));
-    text
 }
 
 fn pad_right(out: &mut Vec<u8>, text: &[u8], width: usize) {
@@ -43,8 +65,16 @@ fn pad_left(out: &mut Vec<u8>, text: &[u8], width: usize) {
 }
 
 /// `legend_slider`: name, bar, value right aligned by cells, the two keys.
-pub fn legend_slider(name: &str, notch: i32, value: &[u8], lower: u8, raise: u8) -> Vec<u8> {
-    let mut bar = Vec::with_capacity(LEGEND_BAR_CELLS as usize * 3);
+fn legend_slider(
+    line: &mut Vec<u8>,
+    bar: &mut Vec<u8>,
+    name: &str,
+    notch: i32,
+    value: &[u8],
+    lower: u8,
+    raise: u8,
+) {
+    bar.clear();
     for cell in 0..LEGEND_BAR_CELLS {
         bar.extend_from_slice(if cell < notch { "\u{2593}" } else { "\u{2591}" }.as_bytes());
     }
@@ -52,128 +82,105 @@ pub fn legend_slider(name: &str, notch: i32, value: &[u8], lower: u8, raise: u8)
     let bytes = value.len();
     let glyphs = value.iter().filter(|&&c| (c & 0xc0) != 0x80).count();
     let column = (LEGEND_VALUE_WIDTH + (bytes - glyphs) as i32) as usize;
-    let mut line = Vec::with_capacity(LEGEND_LINE_MAX);
+    line.clear();
     line.extend_from_slice("\u{2502} ".as_bytes());
-    pad_right(&mut line, name.as_bytes(), LEGEND_NAME_WIDTH as usize);
+    pad_right(line, name.as_bytes(), LEGEND_NAME_WIDTH as usize);
     line.push(b' ');
-    line.extend_from_slice(&bar);
+    line.extend_from_slice(bar);
     line.push(b' ');
-    pad_left(&mut line, value, column);
+    pad_left(line, value, column);
     line.extend_from_slice(b"  ");
     line.push(lower);
     line.push(b'/');
     line.push(raise);
     line.extend_from_slice(" \u{2502}".as_bytes());
-    truncated(line, LEGEND_LINE_MAX)
+    cut(line, LEGEND_LINE_MAX);
 }
 
-/// `legend_number`: `%.*f` into a buffer of `LEGEND_VALUE_WIDTH + 8`.
-fn legend_number(value: f64, decimals: usize) -> Vec<u8> {
-    truncated(cfmt::fixed(value, decimals).into_bytes(), LEGEND_VALUE_WIDTH as usize + 8)
-}
-
-fn border(left: &str, right: &str) -> Vec<u8> {
-    let mut line = Vec::with_capacity(LEGEND_LINE_MAX);
+fn border(line: &mut Vec<u8>, left: &str, right: &str) {
+    line.clear();
     line.extend_from_slice(left.as_bytes());
     for _ in 0..LEGEND_COLUMNS - 2 {
         line.extend_from_slice("\u{2500}".as_bytes());
     }
     line.extend_from_slice(right.as_bytes());
-    line
 }
 
-/// `build_legend`: the panel's rows, `legend_rows()` of them.
-pub fn build_legend(sim: &Sim, stats: &Stats) -> Vec<Vec<u8>> {
+/// A slider's value: `%.*f` followed by a unit, in the C's
+/// `char value[LEGEND_VALUE_WIDTH + 8]`.
+fn value_of(value: &mut Vec<u8>, number: f64, decimals: usize, unit: &str) {
+    value.clear();
+    cfmt::push_fixed(value, number, decimals);
+    value.extend_from_slice(unit.as_bytes());
+    cut(value, LEGEND_VALUE_WIDTH as usize + 8);
+}
+
+/// `build_legend`: the panel's rows into `buffers.lines`; returns how many,
+/// `legend_rows()`.
+pub fn build_legend_into(sim: &Sim, stats: &Stats, buffers: &mut LegendBuffers) -> usize {
     let config = &sim.config;
     let rows = sim.legend_rows() as usize;
     let inner = (LEGEND_COLUMNS - 2) as usize;
-    let value_size = LEGEND_VALUE_WIDTH as usize + 8;
-    let mut lines = vec![Vec::new(); LEGEND_MAX_ROWS as usize];
+    let LegendBuffers { lines, value, measured, bar } = buffers;
 
-    lines[0] = border("\u{256d}", "\u{256e}");
-    lines[1] = legend_slider(
-        "boundary",
-        config.boundary_notch,
-        &legend_number(config.boundary, 2),
-        b'b',
-        b'B',
-    );
-    lines[2] = legend_slider(
-        "separation",
-        config.separation_notch,
-        &legend_number(config.separation, 3),
-        b's',
-        b'S',
-    );
-    lines[3] = legend_slider(
-        "alignment",
-        config.alignment_notch,
-        &legend_number(config.alignment, 2),
-        b'a',
-        b'A',
-    );
-    let degrees = format!("{}\u{b0}", cfmt::fixed(sim.turning_notch_radians() * 180.0 / PI, 0));
-    lines[4] = legend_slider(
-        "turning",
-        config.turning_notch,
-        &truncated(degrees.into_bytes(), value_size),
-        b't',
-        b'T',
-    );
-    let pixels = format!("{}px", config.vision_radius);
-    lines[5] = legend_slider(
-        "perception",
-        config.vision_notch,
-        &truncated(pixels.into_bytes(), value_size),
-        b'p',
-        b'P',
-    );
-    let pace = format!("{}\u{d7}", cfmt::fixed(config.pace, 1));
-    lines[6] = legend_slider(
-        "speed",
-        config.pace_notch,
-        &truncated(pace.into_bytes(), value_size),
-        b'v',
-        b'V',
-    );
+    border(&mut lines[0], "\u{256d}", "\u{256e}");
+    value_of(value, config.boundary, 2, "");
+    legend_slider(&mut lines[1], bar, "boundary", config.boundary_notch, value, b'b', b'B');
+    value_of(value, config.separation, 3, "");
+    legend_slider(&mut lines[2], bar, "separation", config.separation_notch, value, b's', b'S');
+    value_of(value, config.alignment, 2, "");
+    legend_slider(&mut lines[3], bar, "alignment", config.alignment_notch, value, b'a', b'A');
+    value_of(value, sim.turning_notch_radians() * 180.0 / PI, 0, "\u{b0}");
+    legend_slider(&mut lines[4], bar, "turning", config.turning_notch, value, b't', b'T');
+    value.clear();
+    {
+        use std::io::Write;
+        let _ = write!(value, "{}px", config.vision_radius);
+    }
+    cut(value, LEGEND_VALUE_WIDTH as usize + 8);
+    legend_slider(&mut lines[5], bar, "perception", config.vision_notch, value, b'p', b'P');
+    value_of(value, config.pace, 1, "\u{d7}");
+    legend_slider(&mut lines[6], bar, "speed", config.pace_notch, value, b'v', b'V');
     if config.flocks > 1 {
-        let avoid = format!("{}\u{d7}", cfmt::fixed(f64::from(config.avoid_notch) / 4.0, 2));
-        lines[7] = legend_slider(
-            "avoidance",
-            config.avoid_notch,
-            &truncated(avoid.into_bytes(), value_size),
-            b'g',
-            b'G',
-        );
+        value_of(value, f64::from(config.avoid_notch) / 4.0, 2, "\u{d7}");
+        legend_slider(&mut lines[7], bar, "avoidance", config.avoid_notch, value, b'g', b'G');
     }
 
-    let mut measured = Vec::new();
-    pad_right(&mut measured, b"frame", LEGEND_NAME_WIDTH as usize);
+    measured.clear();
+    pad_right(measured, b"frame", LEGEND_NAME_WIDTH as usize);
     measured.push(b' ');
-    measured.extend_from_slice(cfmt::fixed_width(stats.frame_ms, 5, 1).as_bytes());
+    cfmt::push_fixed_width(measured, stats.frame_ms, 5, 1);
     measured.extend_from_slice(b"ms ");
-    measured.extend_from_slice(cfmt::fixed_width(stats.bytes / 1024.0, 5, 0).as_bytes());
+    cfmt::push_fixed_width(measured, stats.bytes / 1024.0, 5, 0);
     measured.extend_from_slice(b"KB ");
-    measured.extend_from_slice(cfmt::fixed_width(stats.rate, 3, 0).as_bytes());
+    cfmt::push_fixed_width(measured, stats.rate, 3, 0);
     measured.extend_from_slice(b"fps");
-    let measured = truncated(measured, LEGEND_LINE_MAX / 2);
-    let mut row = Vec::new();
+    cut(measured, LEGEND_LINE_MAX / 2);
+    let row = &mut lines[rows - 3];
+    row.clear();
     row.extend_from_slice("\u{2502} ".as_bytes());
-    pad_right(&mut row, &measured, inner - 2);
+    pad_right(row, measured, inner - 2);
     row.extend_from_slice(" \u{2502}".as_bytes());
-    lines[rows - 3] = truncated(row, LEGEND_LINE_MAX);
+    cut(row, LEGEND_LINE_MAX);
 
-    let mut quit = Vec::new();
+    let quit = &mut lines[rows - 2];
+    quit.clear();
     quit.extend_from_slice("\u{2502} ".as_bytes());
-    pad_right(&mut quit, b"quit", LEGEND_NAME_WIDTH as usize);
+    pad_right(quit, b"quit", LEGEND_NAME_WIDTH as usize);
     quit.extend_from_slice(b" q");
-    pad_left(&mut quit, b"", inner - LEGEND_NAME_WIDTH as usize - 4);
+    pad_left(quit, b"", inner - LEGEND_NAME_WIDTH as usize - 4);
     quit.extend_from_slice(" \u{2502}".as_bytes());
-    lines[rows - 2] = truncated(quit, LEGEND_LINE_MAX);
+    cut(quit, LEGEND_LINE_MAX);
 
-    lines[rows - 1] = border("\u{2570}", "\u{256f}");
-    lines.truncate(rows);
-    lines
+    border(&mut lines[rows - 1], "\u{2570}", "\u{256f}");
+    rows
+}
+
+/// `build_legend` as owned rows, for tests and callers outside a frame.
+pub fn build_legend(sim: &Sim, stats: &Stats) -> Vec<Vec<u8>> {
+    let mut buffers = LegendBuffers::default();
+    let rows = build_legend_into(sim, stats, &mut buffers);
+    buffers.lines[..rows].to_vec()
 }
 
 impl Renderer {
@@ -195,8 +202,8 @@ impl Renderer {
             self.legend_drawn = false;
             return Ok(());
         }
-        let lines = build_legend(sim, &self.stats);
-        for (row, line) in lines.iter().enumerate() {
+        let rows = build_legend_into(sim, &self.stats, &mut self.legend);
+        for (row, line) in self.legend.lines[..rows].iter().enumerate() {
             graphics.write_text(row as i32, 0, line)?;
         }
         self.legend_drawn = true;

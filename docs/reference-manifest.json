@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "purpose": "Documentation baseline and immutable reference inventory; not Rust parity evidence.",
+  "purpose": "Immutable reference inventory, the local C baseline, and the migration's recorded status.",
   "source": {
     "repository": "https://github.com/clainstone/cbirds.git",
     "commit": "cc446fc3cb80733371c62676533adcac2fc10002",
@@ -160,18 +160,40 @@
     "completed_at_utc": "2026-09-26T00:46:12.308357+00:00"
   },
   "migration": {
-    "status": "documentation_only",
+    "status": "ported; release qualification in progress",
     "phases": {
-      "P0": "pending",
-      "P1": "pending",
-      "P2": "pending",
-      "P3": "pending",
-      "P4": "pending",
-      "P5": "pending",
-      "P6": "pending",
+      "P0": "complete",
+      "P1": "complete",
+      "P2": "complete",
+      "P3": "complete",
+      "P4": "complete",
+      "P5": "complete",
+      "P6": "partly complete",
       "P7": "pending"
     },
-    "rust_tests_mapped": 0,
-    "compatibility_requirements_passed": 0
+    "rust_tests_mapped": 112,
+    "compatibility_requirements_with_passing_evidence": 18,
+    "open_gates": [
+      "native x86_64 runs (macOS and Linux)",
+      "real terminals",
+      "independent playback",
+      "performance budgets",
+      "deviation decisions D-001 to D-003"
+    ],
+    "evidence": "docs/evidence/README.md",
+    "numerical_findings": {
+      "fma_sites": "docs/evidence/fma-sites.txt",
+      "trig_sites": "docs/evidence/trig-sites.txt"
+    },
+    "linux_c_baseline": {
+      "image": "rust:1.96-bookworm",
+      "c_compiler": "gcc (Debian 12.2.0-14+deb12u1) 12.2.0",
+      "libc": "glibc 2.36",
+      "architectures": [
+        "aarch64",
+        "x86_64 (emulated)"
+      ],
+      "make_test": "pass"
+    }
   }
 }

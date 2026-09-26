@@ -83,6 +83,29 @@ fn strip_fraction_zeros(mut text: String) -> String {
     text
 }
 
+/// Appends `%.*f` to `out` without allocating beyond `out`'s own growth.
+pub fn push_fixed(out: &mut Vec<u8>, value: f64, precision: usize) {
+    use std::io::Write;
+    match non_finite(value) {
+        Some(text) => out.extend_from_slice(text.as_bytes()),
+        None => {
+            let _ = write!(out, "{value:.precision$}");
+        }
+    }
+}
+
+/// Appends `%*.*f` to `out`: right aligned in `width` bytes.
+pub fn push_fixed_width(out: &mut Vec<u8>, value: f64, width: usize, precision: usize) {
+    let start = out.len();
+    push_fixed(out, value, precision);
+    let written = out.len() - start;
+    if written < width {
+        let pad = width - written;
+        out.resize(out.len() + pad, b' ');
+        out[start..].rotate_right(pad);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -106,5 +129,8 @@ mod tests {
         assert_eq!(pad_left("1\u{b0}", 5), "  1\u{b0}");
         assert_eq!(pad_right("ab", 4), "ab  ");
         assert_eq!(fixed_width(2.125, 5, 1), "  2.1");
+        let mut out = b"x".to_vec();
+        push_fixed_width(&mut out, 2.125, 5, 1);
+        assert_eq!(out, b"x  2.1");
     }
 }
