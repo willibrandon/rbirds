@@ -95,7 +95,7 @@ The WSL workflows require the pinned Rust toolchain, C compiler and script-speci
 tools inside that distribution. `unix.ps1` defaults to Debian and keeps WSL Cargo
 build files separate from the Windows build. See [development commands](docs/WINDOWS.md#development).
 
-CI is configured for native Windows x86_64 and Linux/macOS on both x86_64 and arm64.
+CI is configured for native Windows, Linux and macOS, each on both x86_64 and arm64.
 See the [test results](docs/evidence/windows-sixel.md) for what has run locally.
 
 ## Docs
