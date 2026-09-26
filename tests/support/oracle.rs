@@ -99,12 +99,14 @@ pub fn build_with(
     let program_path = repository().join("tools/oracle").join(program);
     let mut inputs = vec![program_path.clone()];
     inputs.extend(reference_sources.iter().map(|s| reference.join(s)));
-    let newest_input = inputs.iter().filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok()).max();
+    let newest_input =
+        inputs.iter().filter_map(|p| fs::metadata(p).and_then(|m| m.modified()).ok()).max();
     let built = fs::metadata(&exe).and_then(|m| m.modified()).ok();
-    if let (Some(input), Some(built)) = (newest_input, built) {
-        if built >= input && extra.is_empty() {
-            return Some(exe);
-        }
+    if let (Some(input), Some(built)) = (newest_input, built)
+        && built >= input
+        && extra.is_empty()
+    {
+        return Some(exe);
     }
     let partial = out_dir.join(format!("{name}.partial.{}", std::process::id()));
     let mut cc = Command::new(std::env::var_os("CC").unwrap_or_else(|| "cc".into()));
@@ -118,10 +120,9 @@ pub fn build_with(
     cc.arg("-o").arg(&partial).arg("-lm");
     match cc.output() {
         Ok(out) if out.status.success() => {}
-        Ok(out) => panic!(
-            "oracle {name} failed to compile:\n{}",
-            String::from_utf8_lossy(&out.stderr)
-        ),
+        Ok(out) => {
+            panic!("oracle {name} failed to compile:\n{}", String::from_utf8_lossy(&out.stderr))
+        }
         Err(e) => return unavailable(&format!("cannot run cc: {e}")),
     }
     fs::rename(&partial, &exe).expect("install oracle");
@@ -171,7 +172,8 @@ pub struct Scratch {
 impl Scratch {
     pub fn new(label: &str) -> Scratch {
         let base = repository().join("target/scratch");
-        let path = base.join(format!("{label}.{}.{:?}", std::process::id(), std::thread::current().id()));
+        let path =
+            base.join(format!("{label}.{}.{:?}", std::process::id(), std::thread::current().id()));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).expect("create scratch directory");
         Scratch { path }

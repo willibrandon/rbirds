@@ -6,3 +6,6 @@
 
 # Scratch evidence from local runs; accepted reports live in docs/evidence/.
 /evidence-scratch/
+
+# Local agent and editor state
+/.claude/

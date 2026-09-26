@@ -26,6 +26,9 @@ compile_error!(
      other targets need their own verified bindings (docs/DESIGN.md §2)"
 );
 
+mod scan;
+pub use scan::scan_osc_rgb;
+
 pub const STDIN_FILENO: RawFd = 0;
 pub const STDOUT_FILENO: RawFd = 1;
 pub const STDERR_FILENO: RawFd = 2;

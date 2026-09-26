@@ -13,4 +13,4 @@ rbirds is a translation of [cbirds](https://github.com/clainstone/cbirds)
 - The 5×7 bitmap font in `src/font.rs` is the upstream font, glyph for glyph.
 
 cbirds is copyright (c) 2025 clainstone@icloud.com and distributed under the MIT
-License, reproduced with the rbirds copyright line in [`LICENSE`](LICENSE).
+License, reproduced with the rbirds copyright line (Brandon Williams) in [`LICENSE`](LICENSE).

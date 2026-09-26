@@ -3,16 +3,28 @@
 //!
 //! The library exists so integration tests can drive each translated module
 //! and compare it with the pinned C reference; the `rbirds` binary is a thin
-//! entry point over [`app`]. See docs/DESIGN.md for the architecture and
+//! entry point over [`app::main`]. See docs/DESIGN.md for the architecture and
 //! docs/COMPATIBILITY.md for the behavior it must preserve.
 
 #![deny(unsafe_code)]
 
+pub mod app;
+pub mod bench;
+pub mod cfmt;
+pub mod config;
 pub mod font;
 pub mod fp;
 pub mod image;
+pub mod input;
+pub mod live;
 pub mod options;
+pub mod palette;
 pub mod platform;
+pub mod record;
 pub mod render;
 pub mod rng;
+pub mod simulation;
 pub mod spatial_grid;
+pub mod sprites;
+pub mod stdio;
+pub mod terminal;

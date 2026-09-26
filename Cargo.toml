@@ -3,6 +3,7 @@ name = "rbirds"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.96"
+authors = ["Brandon Williams"]
 description = "A Rust port of cbirds 1.4.0: a flock of birds in your terminal"
 license = "MIT"
 repository = "https://github.com/clainstone/cbirds"
