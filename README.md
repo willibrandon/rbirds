@@ -29,11 +29,13 @@ The test suite builds the C reference and compares the two programs directly:
 - Scripted simulations run through both programs, comparing every floating point value.
 - Recordings, PNG and GIF codec output, renderer escape sequences and CLI output, compared exactly.
 - Terminal handling (raw mode, signals, resizes, blocked output) checked under a pseudoterminal.
+- The GIFs and cast that cbirds publishes, made again with the commands in its `docs/README.md`. On Linux they come out exactly as published.
 
 ```sh
 tools/reference.sh   # fetch the pinned cbirds source into .reference/
 tools/verify.sh      # run all checks; --all-local adds x86_64 macOS and Linux (Docker)
 tools/perf.sh        # compare speed and memory with the C build
+tools/vhs/live.sh    # both programs through the same VHS tape, side by side
 ```
 
 The comparison tests need a C compiler. Set `RBIRDS_NO_ORACLE=1` to skip them.

@@ -45,6 +45,7 @@ Both are properties of the canonical C build, and the port reproduces them on pu
 | C tests | `tests/c_*.rs` | all 112 C tests with the same names, assertions and tolerances; the boids tests start from the C suite's own entry state | [inventory](../c-test-inventory.csv) |
 | CLI | `tests/cli_differential.rs`, `tests/options_oracle.rs` | exit status, stdout and stderr of the two programs; parser state and messages | about 90 argument vectors end to end (help, version, completions, errors, numeric syntax, invalid bytes, sprite failures, warnings, `argv[0]`); about 36,000 parser cases |
 | Recording | `tests/headless_differential.rs` | GIF files exactly; casts exactly apart from the header timestamp and title; summaries and diagnostics | every `--record-fps` from 2 to 120 as GIF and cast; shapes, custom sprite, text renderers, matrix, presets, sizes; `.cast` naming; write failures |
+| Published recordings | `tests/published_media.rs` | the seven GIFs and the cast in cbirds' `docs/`, made with the commands in its `docs/README.md` | on Linux, exactly the published files (the cast apart from its header line); elsewhere, the pinned C build's output |
 | Benchmark | same | the report except the two timing lines | kitty and text renderers, 4096 birds, a busy flock, mode precedence |
 | Codecs | `tests/png_oracle.rs`, `tests/gif_oracle.rs` | encoded bytes, decoded pixels, statuses, decoding each other's output | about 1,450 images; every PNG variant; truncation at every byte; 17,500 mutations; the sprite pipeline at 12 sizes, 60 angles and 3 spans |
 | Cells, Kitty | `tests/cells_oracle.rs`, `tests/kitty_oracle.rs` | emitted bytes, cell state, painted pixels, protocol stream | 90 cell scenarios; uploads across every chunk boundary |
@@ -69,6 +70,23 @@ Three test harness problems showed up only on Linux and were fixed in the tests,
 
 Under x86_64 emulation, one lifecycle case (SIGTERM while output is blocked) ends with the process killed by the signal instead of exiting with 143 through the handler. This happens the same way for the C reference and the port. On native x86_64 Linux in CI, and natively everywhere else, both exit with 143 and restore the terminal, so it comes from the emulator's signal delivery during a blocking write.
 
+## Published recordings
+
+cbirds publishes seven GIFs and an asciinema cast in its `docs/`, with the commands that made them in `docs/README.md`. They were made on Linux with GCC: the C at the commits that added them reproduces them there, on arm64 and x86_64, and not on macOS. On Linux the pinned 1.4.0 C and rbirds both make all eight exactly as published (the cast apart from its header line, which holds a timestamp and the title). On macOS both make the same files as each other, which differ from the published ones because Apple clang fuses multiply-adds and Apple's libm is not glibc's. `tests/published_media.rs` runs the eight commands from cbirds' README on every target, so CI checks the published files on both Linux runners.
+
+## Terminal
+
+`tools/vhs/live.sh` runs the pinned C build and rbirds through the same [VHS](https://github.com/charmbracelet/vhs) tape (`tools/vhs/live.tape`) in a headless terminal: VHS 0.12.1 with ttyd 1.7.7 and xterm.js, Cascadia Code at 14 px, 1100×640 pixels. The tape runs braille with hawks, two flocks, depth, trails and the panel, then types h, K, + and e and quits with q; then sextants with `--matrix`, stopped with Ctrl-C; then blocks in acid with the plane shape, quit with q. After each run the shell prints the exit status and compares `stty -g` with the settings saved before.
+
+Both programs exit with 0 after q and 130 after Ctrl-C, and both leave the terminal settings as they found them. The one change `stty -g` shows after either program is PENDIN, a kernel state bit set when a program returns to canonical mode with input still queued and cleared by the next read, which a plain command doesn't cause; the check leaves it out. [`vhs-2026-09-26-macos-arm64.jpg`](vhs-2026-09-26-macos-arm64.jpg) shows one frame of each run, C on the left.
+
+## Independent playback
+
+A 4 s recording with 2 hawks, 2 flocks, depth and trails (`--seed 42`) as a GIF, and one as a cast, from both programs:
+
+- The GIFs have the same bytes. ffprobe 9.0.2, ImageMagick and Pillow 11.3 all read 100 frames of 40 ms, 4.0 s, 768×416, looping forever.
+- The casts have the same events. `asciinema convert` (asciinema 3.1.0) reads them, and agg 1.7.0 renders 101 frames over 7.0 s (the 4 s recording and agg's 3 s hold on the last frame) showing the braille flock in colour.
+
 ## Performance
 
 See [`perf-2026-09-26-macos-arm64.txt`](perf-2026-09-26-macos-arm64.txt), which lists every run with its raw samples. These are results from `tools/perf.sh` on the M4 Pro: ten interleaved C and Rust samples per workload after two warmups, each sample about 1.5 s of frames, with the C built with its canonical flags and Rust with `--release`.
@@ -84,5 +102,5 @@ Every median is within its budget (frames 1.15×, startup 1.20×, memory `max(1.
 
 ## Not yet done
 
-- Real terminals (PORTING.md §6). Kitty, Ghostty, macOS Terminal, a Linux terminal and tmux need someone at the screen. Under the scripted PTY the bytes those terminals receive are the same as the reference's, which is necessary but not enough to show they look the same.
+- Kitty graphics in a real Kitty or Ghostty window, and macOS Terminal and tmux, recorded with their versions and fonts (PORTING.md §6). The headless terminal above has no Kitty graphics. The bytes both programs send under the scripted PTY are the same, which is necessary but not enough to show a terminal draws them the same.
 - Deviations D-001 to D-003 are waiting for the owner's decision ([DEVIATIONS.md](../DEVIATIONS.md)).
