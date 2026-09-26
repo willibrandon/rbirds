@@ -953,25 +953,57 @@ pub mod cases {
         }
     }
 
-    /// `q` while flying: the flock flies out for 40/60 s of frames, then the
-    /// program exits 0 with the terminal restored.
+    /// `q` while flying. The reference has two quit paths, and which one a
+    /// keypress takes depends on when it is read: at the top of the loop,
+    /// the flock flies out for 40/60 s of frames, then the program exits 0;
+    /// while the program waits on output the terminal has not yet taken (its
+    /// frames are larger than a PTY's buffer, so it often is), it leaves at
+    /// once with no outro. Both end with the terminal restored. This case
+    /// types `q` once twenty frames have been drawn and accepts either path,
+    /// asserting whichever it took; `quit_key_while_output_blocked` forces
+    /// the second, and the injected-time oracle tests the first exactly.
     pub fn quit_key(subject: &Subject) -> Outcome {
-        let spec = Spec::new(subject, &["--color", "ember", "--seed", "1"])
-            .step(Step::after_output(ALT_SCREEN_ON, Action::Mark("screen taken")))
-            .step(Step::after(Duration::from_millis(300), Action::Input(b"q".to_vec())));
+        let mut spec = Spec::new(subject, &["--color", "ember", "--seed", "1"])
+            .step(Step::after_output(ALT_SCREEN_ON, Action::Mark("screen taken")));
+        for _ in 0..20 {
+            spec = spec.step(Step::after_output(FRAME_BEGIN, Action::Mark("frame")));
+        }
+        let spec = spec.step(Step::after(Duration::from_millis(20), Action::Input(b"q".to_vec())));
         let outcome = run(&spec);
         assert_clean_exit(&outcome, false);
         let quit = outcome.event("wrote q").expect("q was typed");
         let flight = outcome.run_time.saturating_sub(quit.at);
+        let after_quit = find_all(&outcome.transcript[quit.offset..], FRAME_BEGIN);
+        // The flight is drawn: about 40 frames at 60 Hz; the bound allows a
+        // slow host. Or the quit was read while output was blocked: at most
+        // the frame being written finishes.
+        let flew_out = flight >= Duration::from_millis(600) && after_quit >= 10;
+        let left_at_once = after_quit <= 1;
         assert!(
-            flight >= Duration::from_millis(600),
-            "the outro lasts about 40/60 s, took {flight:?}\n{}",
+            flew_out || left_at_once,
+            "neither quit path: {flight:?} and {after_quit} frames after q\n{}",
             outcome.describe()
         );
-        // The flight is drawn: frames keep coming after the q (about 40 at
-        // 60 Hz; the bound allows a slow host).
+        outcome
+    }
+
+    /// `q` typed while the terminal has stopped reading, so the program is
+    /// waiting on its output: it reads the key there, leaves the loop with no
+    /// outro, and exits 0 once its restore sequence can be written.
+    pub fn quit_key_while_output_blocked(subject: &Subject) -> Outcome {
+        let mut spec = Spec::new(subject, &["--color", "ember", "--seed", "1"])
+            .step(Step::after_output(ALT_SCREEN_ON, Action::Mark("screen taken")));
+        for _ in 0..10 {
+            spec = spec.step(Step::after_output(FRAME_BEGIN, Action::Mark("frame")));
+        }
+        let spec = spec
+            .step(Step::after(Duration::ZERO, Action::PauseReading(Duration::from_millis(1500))))
+            .step(Step::after(Duration::from_millis(500), Action::Input(b"q".to_vec())));
+        let outcome = run(&spec);
+        assert_clean_exit(&outcome, false);
+        let quit = outcome.event("wrote q").expect("q was typed");
         let after_quit = find_all(&outcome.transcript[quit.offset..], FRAME_BEGIN);
-        assert!(after_quit >= 10, "{after_quit} frames after q\n{}", outcome.describe());
+        assert!(after_quit <= 1, "{after_quit} frames after a blocked q\n{}", outcome.describe());
         outcome
     }
 

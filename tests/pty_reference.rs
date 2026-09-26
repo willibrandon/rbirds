@@ -66,7 +66,8 @@ reference_case!(c_frames_run_queries_theme_and_restores, cases::frames_run);
 reference_case!(c_fixed_palette_asks_nothing, cases::fixed_palette);
 reference_case!(c_theme_replies_are_used, cases::theme_run);
 reference_case!(c_fragmented_theme_reply_is_accumulated, cases::fragmented_theme_run);
-reference_case!(c_quit_key_flies_out_then_exits, cases::quit_key);
+reference_case!(c_quit_key_flies_out_or_leaves_at_once, cases::quit_key);
+reference_case!(c_quit_while_output_blocked_leaves_at_once, cases::quit_key_while_output_blocked);
 reference_case!(c_sigterm_exits_143_restored, |s| cases::signal_while_running(
     s,
     platform::SIGTERM
