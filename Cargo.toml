@@ -1,0 +1,27 @@
+[package]
+name = "rbirds"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "A Rust port of cbirds 1.4.0: a flock of birds in your terminal"
+license = "MIT"
+repository = "https://github.com/clainstone/cbirds"
+readme = "README.md"
+publish = false
+# Only the application sources ship; the reference, fixtures and tools do not.
+include = ["/src/**", "/assets/sprite.png", "/Cargo.toml", "/Cargo.lock", "/LICENSE", "/NOTICE.md", "/README.md"]
+
+# Rust's standard library and system libraries only: no dependency tables of
+# any kind (docs/DESIGN.md §2). tools/verify.sh audits the resolved graph.
+
+[lib]
+name = "rbirds"
+path = "src/lib.rs"
+
+[[bin]]
+name = "rbirds"
+path = "src/main.rs"
+
+[profile.release]
+# Keep unwinding: terminal restoration after a controlled panic is tested.
+panic = "unwind"

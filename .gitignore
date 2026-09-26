@@ -1,0 +1,8 @@
+# Build output
+/target/
+
+# The pinned C reference is cloned here by tools/reference.sh; never commit it.
+/.reference/
+
+# Scratch evidence from local runs; accepted reports live in docs/evidence/.
+/evidence-scratch/

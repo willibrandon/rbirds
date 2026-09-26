@@ -1,0 +1,6 @@
+# Initial reproducibility pin (docs/DESIGN.md §2). A toolchain file does not
+# affect a directly invoked Homebrew rustc; use the rustup proxies.
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
