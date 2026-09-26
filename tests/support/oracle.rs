@@ -52,8 +52,11 @@ fn check_reference(reference: &Path) -> Result<(), String> {
     match head {
         Ok(out) if out.status.success() => {
             let head = String::from_utf8_lossy(&out.stdout).trim().to_owned();
-            if head != REFERENCE_COMMIT {
-                return Err(format!("reference is at {head}, not {REFERENCE_COMMIT}"));
+            // The upstream workflow names a newer cbirds commit to compare with.
+            let expected = std::env::var("RBIRDS_REFERENCE_COMMIT")
+                .unwrap_or_else(|_| REFERENCE_COMMIT.to_owned());
+            if head != expected {
+                return Err(format!("reference is at {head}, not {expected}"));
             }
         }
         _ => return Err(format!("cannot read the commit of {}", reference.display())),
