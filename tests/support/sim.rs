@@ -23,6 +23,7 @@ pub struct World {
     pub grid: Option<SpatialGrid>,
     pub graphics: Option<KittyGraphics>,
     pub live: LiveLoop,
+    pub settings: rbirds::app::Settings,
     out: String,
 }
 
@@ -92,6 +93,7 @@ impl World {
             grid: None,
             graphics: None,
             live: LiveLoop::new(Timespec { tv_sec: 0, tv_nsec: 0 }, 0),
+            settings: rbirds::app::Settings::default(),
             out: String::new(),
         }
     }
@@ -523,4 +525,194 @@ pub fn run_rust(script: &str) -> String {
         world.command(line);
     }
     world.take()
+}
+
+/// `key=value` fields of a dump line.
+fn fields(line: &str) -> std::collections::HashMap<&str, &str> {
+    line.split_whitespace().filter_map(|word| word.split_once('=')).collect()
+}
+
+fn hex_f64(text: &str) -> f64 {
+    from_bits(text)
+}
+
+fn int<T: std::str::FromStr>(text: &str) -> T
+where
+    T::Err: std::fmt::Debug,
+{
+    text.parse().unwrap_or_else(|e| panic!("bad integer {text:?}: {e:?}"))
+}
+
+fn pair3(text: &str) -> (&str, &str, &str) {
+    let mut parts = text.split(',');
+    (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap())
+}
+
+impl World {
+    /// The state a "rbirds-sim-trace 1" dump describes, the inverse of
+    /// [`World::dump`] (birds and the grid excepted, which the suite's
+    /// entry dumps never hold).
+    pub fn load(dump: &str) -> World {
+        let mut world = World::new();
+        let sim = &mut world.sim;
+        for line in dump.lines() {
+            let f = fields(line);
+            let words: Vec<&str> = line.split_whitespace().collect();
+            match words.first().copied() {
+                Some("config") if f.contains_key("birds") => {
+                    let c = &mut sim.config;
+                    c.birds = int(f["birds"]);
+                    c.bird_size = int(f["size"]);
+                    c.palette = int(f["palette"]);
+                    c.flocks = int(f["flocks"]);
+                    c.trails = f["trails"] != "0";
+                    c.hawks = int(f["hawks"]);
+                    c.shape = int(f["shape"]);
+                    c.turning_notch = int(f["turning"]);
+                }
+                Some("config") if f.contains_key("speed") => {
+                    sim.config.speed = hex_f64(f["speed"]);
+                    sim.config.base_speed = hex_f64(f["base"]);
+                    sim.config.pace = hex_f64(f["pace"]);
+                }
+                Some("config") if words.get(1) == Some(&"vision") => {
+                    sim.config.vision_cells = int(f["cells"]);
+                    sim.config.vision_radius = int(f["radius"]);
+                    sim.config.vision_radius_squared = int(f["squared"]);
+                }
+                Some("config") if words.get(1) == Some(&"weights") => {
+                    sim.config.separation = hex_f64(f["separation"]);
+                    sim.config.alignment = hex_f64(f["alignment"]);
+                    sim.config.boundary = hex_f64(f["boundary"]);
+                }
+                Some("config") if words.get(1) == Some(&"notches") => {
+                    let c = &mut sim.config;
+                    c.boundary_notch = int(f["boundary"]);
+                    c.separation_notch = int(f["separation"]);
+                    c.alignment_notch = int(f["alignment"]);
+                    c.vision_notch = int(f["vision"]);
+                    c.pace_notch = int(f["pace"]);
+                    c.avoid_notch = int(f["avoid"]);
+                }
+                Some("config") if words.get(1) == Some(&"avoid") => {
+                    sim.config.avoid_kinship = hex_f64(f["kinship"]);
+                    sim.config.avoid_room = hex_f64(f["room"]);
+                    sim.config.avoid_weight = hex_f64(f["weight"]);
+                }
+                Some("screen") => {
+                    let v: Vec<i32> = words[1..].iter().map(|w| int(w)).collect();
+                    let s = &mut sim.screen;
+                    (s.width, s.height, s.cols, s.rows) = (v[0], v[1], v[2], v[3]);
+                    (s.cell_width, s.cell_height, s.turn_x, s.turn_y) = (v[4], v[5], v[6], v[7]);
+                    (s.turn_bottom, s.legend_width, s.legend_height) = (v[8], v[9], v[10]);
+                }
+                Some("state") if f.contains_key("legend") => {
+                    sim.legend_enabled = f["legend"] != "0";
+                    sim.render_mode = RenderMode::from_index(int(f["render"]));
+                    sim.deep_look = f["deep"] != "0";
+                    sim.rain = f["rain"] != "0";
+                    sim.paused = f["paused"] != "0";
+                    sim.step_once = f["step"] != "0";
+                    sim.population_changed = f["population"] != "0";
+                }
+                Some("state") if f.contains_key("frame_seconds") => {
+                    sim.frame_seconds = hex_f64(f["frame_seconds"]);
+                    let (frame, seconds) = f["clock"].split_once(',').unwrap();
+                    sim.clock.frame = int(frame);
+                    sim.clock.seconds = hex_f64(seconds);
+                }
+                Some("state") if f.contains_key("mouse") => {
+                    let (present, x, y) = pair3(f["mouse"]);
+                    sim.mouse.present = present != "0";
+                    sim.mouse.x = hex_f64(x);
+                    sim.mouse.y = hex_f64(y);
+                    sim.last_key_at = hex_f64(f["last_key"]);
+                    sim.last_drift_at = hex_f64(f["last_drift"]);
+                }
+                Some("state") if f.contains_key("konami_at") => {
+                    sim.konami.at = int(f["konami_at"]);
+                    let seen = hex_bytes(f["seen"]);
+                    sim.konami.seen.copy_from_slice(&seen);
+                    sim.requested_preset = int(f["preset"]);
+                    sim.hawk_sets_built = f["hawk_sets"] != "0";
+                    sim.theme.known = f["theme_known"] != "0";
+                    let theme = hex_bytes(f["theme"]);
+                    for (i, tint) in sim.theme.tints.iter_mut().enumerate() {
+                        tint.copy_from_slice(&theme[i * 3..i * 3 + 3]);
+                    }
+                }
+                Some("stats") => {
+                    let st = &mut world.renderer.stats;
+                    st.frame_ms = hex_f64(f["frame_ms"]);
+                    st.bytes = hex_f64(f["bytes"]);
+                    st.rate = hex_f64(f["rate"]);
+                    st.counted = int(f["counted"]);
+                    st.window_started = hex_f64(f["started"]);
+                    st.window_ms = hex_f64(f["window_ms"]);
+                    st.window_bytes = hex_f64(f["window_bytes"]);
+                    world.renderer.legend_drawn = f["legend_drawn"] != "0";
+                    world.renderer.text_legend_was_drawn = f["text_legend"] != "0";
+                }
+                Some("rng") => {
+                    sim.rng.front = int(f["front"]);
+                    sim.rng.rear = int(f["rear"]);
+                    let words = f["words"];
+                    for (i, word) in sim.rng.word.iter_mut().enumerate() {
+                        *word = u32::from_str_radix(&words[i * 8..i * 8 + 8], 16).unwrap();
+                    }
+                }
+                Some("formation") => {
+                    sim.formation.count = int(f["count"]);
+                    sim.formation.writing = f["writing"] != "0";
+                    sim.formation.until = hex_f64(f["until"]);
+                }
+                Some("target") => {
+                    let i: usize = int(words[1]);
+                    sim.formation.x[i] = hex_f64(words[2]);
+                    sim.formation.y[i] = hex_f64(words[3]);
+                }
+                Some("flock") => {
+                    let i: usize = int(words[1]);
+                    let (cx, cy) = f["center"].split_once(',').unwrap();
+                    let (hx, hy) = f["home"].split_once(',').unwrap();
+                    sim.flock_center_x[i] = hex_f64(cx);
+                    sim.flock_center_y[i] = hex_f64(cy);
+                    sim.flock_home_x[i] = hex_f64(hx);
+                    sim.flock_home_y[i] = hex_f64(hy);
+                    sim.flock_leash[i] = hex_f64(f["leash"]);
+                }
+                Some("hawk") => {
+                    let i: usize = int(words[1]);
+                    let h = &mut sim.hawks[i];
+                    h.x = hex_f64(words[2]);
+                    h.y = hex_f64(words[3]);
+                    h.direction = hex_f64(words[4]);
+                    h.frame = int(f["frame"]);
+                    h.prey = int(f["prey"]);
+                    h.commitment = hex_f64(f["commitment"]);
+                    h.passing = hex_f64(f["passing"]);
+                    h.wing = int(f["wing"]);
+                    h.wing_clock = hex_f64(f["clock"]);
+                }
+                Some("settings") => {
+                    let st = &mut world.settings;
+                    st.frame_limit = int(f["frame_limit"]);
+                    st.bench_frames = int(f["bench"]);
+                    st.record_fps = int(f["record_fps"]);
+                    st.record_seconds = int(f["record_seconds"]);
+                    st.record_columns = int(f["columns"]);
+                    st.record_rows = int(f["rows"]);
+                    st.matrix_mode = f["matrix"] != "0";
+                    st.unlock_fps = f["unlock"] != "0";
+                    st.requested_perception = int(f["perception"]);
+                    st.requested_seed = int(f["seed"]);
+                    assert_eq!(f["sprite"], "0", "a suite test entered with a sprite path set");
+                    assert_eq!(f["snapshot"], "0");
+                    assert_eq!(f["record"], "0");
+                }
+                _ => {}
+            }
+        }
+        world
+    }
 }

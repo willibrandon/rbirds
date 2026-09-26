@@ -6,3 +6,4 @@
 pub mod oracle;
 
 pub mod sim;
+pub mod suite;
