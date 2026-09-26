@@ -84,6 +84,7 @@ pub use os::{
     nfds_t, pid_t, speed_t, tcflag_t, time_t,
 };
 pub use poll::{PollFd, poll};
+pub use restore::write_all_quietly as write_text_all_quietly;
 pub use restore::{
     ALT_SCREEN_OFF, ALT_SCREEN_ON, CURSOR_HIDE, CURSOR_SHOW, KITTY_FREE_IMAGES, MOUSE_REPORT_OFF,
     MOUSE_REPORT_ON, SYNC_UPDATE_END, alt_screen_is_on, enable_sixel_mode, enter_alt_screen,

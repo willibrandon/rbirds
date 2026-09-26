@@ -7,7 +7,8 @@ The branch starts at `5eee8a75429e96cb020bb8016c32c214008e4d3a`.
 | --- | --- | --- |
 | Windows 11 Pro x64, build 26200 | Rust 1.96.0 MSVC, PowerShell 7 | `tools/verify.ps1` passed |
 | Debian x86_64 in WSL | Rust 1.96.0, GCC 14.2.0, glibc 2.41 | `tools/unix.ps1 verify -Distribution Debian` passed |
-| GitHub Actions workflow | `actionlint .github/workflows/ci.yml` | Passed; hosted jobs have not run for this branch |
+| GitHub Actions workflow | `actionlint .github/workflows/ci.yml` | Passed |
+| Hosted Windows, Linux and macOS jobs, plus C controls | Commit `adeee48`, [CI run](https://github.com/willibrandon/rbirds/actions/runs/36223274472) | All six jobs passed |
 
 Both verification scripts passed formatting, all-target checks, Clippy with
 warnings treated as errors, debug and release tests, release builds, dependency
@@ -19,6 +20,12 @@ The full Windows runs passed 158 tests per profile. The full Linux runs passed
 test were checked again in debug and release after those runs. Windows' one
 ignored test is a child-process fixture invoked explicitly by six parent tests.
 It is not a skipped console test.
+
+A later console encoding fix adds a seventh parent test. It failed before the
+fix and passed afterward, reading back exact Unicode text from stdout and stderr
+with code page 437 unchanged. All seven native console tests and the portable CLI
+tests passed in Windows debug and release builds. Linux CLI comparisons and
+Clippy on both platforms also passed. The release executable was rebuilt.
 
 ## New tests
 
@@ -33,6 +40,7 @@ It is not a skipped console test.
 | Unsupported terminals | `unsupported_or_sizeless_sixel_fails_cleanly` checks exit 1, restored terminal attributes and no image output |
 | Windows query input | `native_sixel_queries_read_console_replies_and_reject_unsupported_terminals` answers queries through real console input records and checks the request bytes and returned dimensions/error |
 | Windows input and cleanup | `native_console_input_resize_and_panic_restore_modes` checks Unicode, arrows, mouse input, resize, the exact intended panic, and restored modes/code pages |
+| Windows text encoding | `native_text_output_preserves_unicode_without_changing_codepage` reads Unicode text from the console buffer after stdout and stderr writes under code page 437 |
 | Windows exit and snapshots | `native_console_ctrl_break_exits_and_restores_modes` checks status 130; `native_console_frames_and_unicode_snapshot_restore_modes` reads the saved PNG and checks restoration |
 | Blocked Windows output | `native_output_backpressure_preserves_bytes_and_services_input` compares all 200,000 output bytes and checks input while blocked; `native_blocked_output_can_be_cancelled` checks cancellation and restoration |
 | CLI and default renderer | `help_completions_and_invalid_choice_include_sixel`, `sixel_is_an_explicit_renderer_and_the_default_stays_braille`, and `sixel_bench_is_headless_and_reports_encoded_bytes` check text, status, defaults and benchmark output |
@@ -61,8 +69,7 @@ POSIX C suite.
 
 ## Still to test
 
-Hosted CI, native Windows ARM64, and this branch on macOS hardware have not run
-here. The existing Unix CI jobs remain configured alongside the new Windows x64
-job. Appearance and input in a real Windows Terminal window still need the manual
+Native Windows ARM64 testing is still pending.
+Appearance and input in a real Windows Terminal window still need the manual
 checks in [WINDOWS.md](../WINDOWS.md#tests). The console tests use hidden consoles
 and scripted replies; they do not check the emulator's image renderer.

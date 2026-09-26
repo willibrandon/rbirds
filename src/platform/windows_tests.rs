@@ -16,6 +16,13 @@ unsafe extern "system" {
     fn SetConsoleScreenBufferSize(handle: Handle, size: Coord) -> i32;
     fn SetConsoleWindowInfo(handle: Handle, absolute: i32, rect: *const Rect) -> i32;
     fn GenerateConsoleCtrlEvent(event: u32, group: u32) -> i32;
+    fn ReadConsoleOutputCharacterW(
+        handle: Handle,
+        text: *mut u16,
+        count: u32,
+        at: Coord,
+        read: *mut u32,
+    ) -> i32;
 }
 
 fn child(case: &str) {
@@ -70,6 +77,11 @@ fn native_sixel_queries_read_console_replies_and_reject_unsupported_terminals() 
     child("sixel-unsupported");
 }
 
+#[test]
+fn native_text_output_preserves_unicode_without_changing_codepage() {
+    child("text");
+}
+
 fn modes() -> (u32, u32, u32, u32) {
     let (mut input, mut output) = (0, 0);
     // SAFETY: standard console handles and writable DWORDs.
@@ -96,7 +108,7 @@ fn key(character: u16) -> InputRecord {
 }
 
 #[test]
-#[ignore = "subprocess fixture; invoked by the native_console and native_output tests"]
+#[ignore = "subprocess fixture; invoked by the native_* tests"]
 fn hidden_console_child() {
     let case = std::env::var("RBIRDS_CONSOLE_TEST").unwrap();
     let input = std::fs::OpenOptions::new().read(true).write(true).open("CONIN$").unwrap();
@@ -108,6 +120,51 @@ fn hidden_console_child() {
     }
     let before = modes();
     match case.as_str() {
+        "text" => {
+            let saved_stderr = handle(2).unwrap();
+            // SAFETY: this child process owns its console.
+            unsafe {
+                check(SetConsoleOutputCP(437)).unwrap();
+            }
+            for stderr in [false, true] {
+                let mut info = ScreenInfo::default();
+                // SAFETY: info is a writable console-info structure.
+                check(unsafe { GetConsoleScreenBufferInfo(output.as_raw_handle(), &mut info) })
+                    .unwrap();
+                let text = "café Ж";
+                if stderr {
+                    // SAFETY: both borrowed handles remain valid throughout this case.
+                    check(unsafe { SetStdHandle(-12i32 as u32, output.as_raw_handle()) }).unwrap();
+                    crate::stdio::eprint(text.as_bytes());
+                    check(unsafe { SetStdHandle(-12i32 as u32, saved_stderr) }).unwrap();
+                } else {
+                    let mut stdout = crate::stdio::CStdout::new();
+                    stdout.print(text.as_bytes());
+                    stdout.flush();
+                }
+                let expected: Vec<u16> = text.encode_utf16().collect();
+                let mut actual = vec![0; expected.len()];
+                let mut read = 0;
+                // SAFETY: actual holds count writable UTF-16 code units.
+                check(unsafe {
+                    ReadConsoleOutputCharacterW(
+                        output.as_raw_handle(),
+                        actual.as_mut_ptr(),
+                        actual.len() as u32,
+                        info.cursor,
+                        &mut read,
+                    )
+                })
+                .unwrap();
+                assert_eq!(read as usize, expected.len());
+                assert_eq!(actual, expected, "stderr={stderr}");
+                assert_eq!(modes().3, 437, "text output must not change the console code page");
+            }
+            // SAFETY: restore the saved console code page.
+            unsafe {
+                check(SetConsoleOutputCP(before.3)).unwrap();
+            }
+        }
         "sixel" | "sixel-unsupported" => {
             use std::io::Read;
             let terminal = crate::terminal::Terminal::enter().unwrap();

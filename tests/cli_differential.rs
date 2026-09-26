@@ -10,8 +10,8 @@
 //! the corpus names. Normalization covers product identity in the
 //! places docs/COMPATIBILITY.md §1 allows: the tagline, examples and
 //! completion program name print `cbirds` where rbirds prints `rbirds`, and
-//! the version line names each product's own version. The explicit Sixel CLI
-//! extension (D-004) is applied to the C's expected help and choice listings.
+//! the version line names each product's own version. Expected help and choice
+//! listings also account for the ASCII tagline and Sixel support (D-004).
 
 mod support;
 
@@ -89,11 +89,15 @@ fn args(list: &[&[u8]]) -> Vec<OsString> {
     list.iter().map(|a| OsString::from_vec(a.to_vec())).collect()
 }
 
-/// Only the approved CLI additions; byte replacement preserves invalid UTF-8
-/// diagnostics and does not weaken comparison of the rest of either stream.
-fn extend_sixel_cli(bytes: &[u8]) -> Vec<u8> {
+/// Replace known CLI differences without decoding invalid UTF-8 diagnostics.
+/// The rest of each stream must still match exactly.
+fn normalize_cli_changes(bytes: &[u8]) -> Vec<u8> {
     let mut result = bytes.to_vec();
     for (old, new) in [
+        (
+            "rbirds \u{2014} a flock of birds in your terminal.\n",
+            "rbirds - a flock of birds in your terminal.\n",
+        ),
         (
             "braille by default; sextants, blocks, or kitty in Kitty and Ghostty",
             "braille (default), sextants, blocks, kitty, sixel",
@@ -122,17 +126,17 @@ fn extend_sixel_cli(bytes: &[u8]) -> Vec<u8> {
 }
 
 #[test]
-fn sixel_normalization_preserves_other_choices_errors_and_raw_bytes() {
+fn cli_normalization_preserves_other_choices_errors_and_raw_bytes() {
     assert_eq!(
-        extend_sixel_cli(b"\xff kitty braille sextants blocks"),
+        normalize_cli_changes(b"\xff kitty braille sextants blocks"),
         b"\xff kitty braille sextants blocks sixel"
     );
     assert_eq!(
-        extend_sixel_cli(b"--shape must be one of bird, plane\n"),
+        normalize_cli_changes(b"--shape must be one of bird, plane\n"),
         b"--shape must be one of bird, plane\n"
     );
     assert_eq!(
-        extend_sixel_cli(b"kitty braille sextants missing"),
+        normalize_cli_changes(b"kitty braille sextants missing"),
         b"kitty braille sextants missing"
     );
 }
@@ -264,8 +268,8 @@ fn every_argument_vector_behaves_as_the_reference() {
         let r = run(&rust, &case, &scratch.path);
         let expected = Run {
             status: c.status.clone(),
-            stdout: extend_sixel_cli(&normalize_identity(&c.stdout)),
-            stderr: extend_sixel_cli(&c.stderr),
+            stdout: normalize_cli_changes(&normalize_identity(&c.stdout)),
+            stderr: normalize_cli_changes(&c.stderr),
         };
         if expected != r {
             let shown: Vec<String> =

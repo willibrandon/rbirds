@@ -279,6 +279,26 @@ pub fn write_all_quietly(fd: RawFd, mut data: &[u8]) {
     }
 }
 
+/// Rust writes console text through the Unicode API. Pipes keep the original
+/// bytes, and graphics output continues to use the raw writer above.
+pub fn write_text_all_quietly(fd: RawFd, data: &[u8]) {
+    if !is_terminal(fd) {
+        write_all_quietly(fd, data);
+        return;
+    }
+    match fd {
+        STDOUT_FILENO => {
+            let mut output = io::stdout().lock();
+            let _ = output.write_all(data);
+            let _ = output.flush();
+        }
+        STDERR_FILENO => {
+            let _ = io::stderr().lock().write_all(data);
+        }
+        _ => write_all_quietly(fd, data),
+    }
+}
+
 #[derive(Default)]
 struct Input {
     bytes: VecDeque<u8>,

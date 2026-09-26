@@ -17,6 +17,9 @@ fn help_completions_and_invalid_choice_include_sixel() {
     {
         let output = strings(&args);
         assert!(output.status.success());
+        if args[0] == "--help" || args[0] == "-h" {
+            assert!(output.stdout.starts_with(b"rbirds - a flock of birds in your terminal.\n"));
+        }
         assert!(String::from_utf8(output.stdout).unwrap().contains("sixel"));
         assert!(output.stderr.is_empty());
     }

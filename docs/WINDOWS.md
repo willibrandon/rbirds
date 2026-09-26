@@ -28,6 +28,10 @@ Ctrl+Break exits with status 130. Windows Unicode file paths work, including
 non-ASCII and supplementary characters. Ill-formed UTF-16 arguments are rejected
 with a usage error; arbitrary non-UTF-8 Unix path bytes remain supported on Unix.
 
+Help and diagnostic messages use Unicode console output without changing the
+console code page. Redirected output stays UTF-8. The live renderer saves the
+code pages, selects UTF-8 while running, and restores them on exit.
+
 VS Code's integrated terminal is a different emulator from Windows Terminal.
 Use braille there unless its version advertises Sixel and replies to the cell-size
 query. For pixel graphics, run the executable in a Windows Terminal tab. Rust

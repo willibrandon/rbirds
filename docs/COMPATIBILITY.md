@@ -21,7 +21,7 @@ Reference: [cbirds 1.4.0, commit cc446fc3cb80733371c62676533adcac2fc10002](https
 
 Allowed normalized fields are limited to:
 
-1. Product identity: command names in known help/completion/error locations, version product/version fields, and the cast header's title. Record the rbirds version actually used. Do not replace arbitrary substrings in user paths or file contents.
+1. Product identity: command names in known help/completion/error locations, version product/version fields, and the cast header's title. The help tagline uses a plain hyphen. Record the rbirds version actually used. Do not replace arbitrary substrings in user paths or file contents.
 2. The cast header's wall-clock `timestamp`. Recording event timestamps and output bytes remain exact.
 3. Harness-generated absolute temporary paths, only where the fixture declares a path field.
 4. Measured durations, derived FPS, and live performance-panel statistics. Validate their field format and meaning separately. Output byte counts remain exact for the same deterministic frames.

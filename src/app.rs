@@ -441,7 +441,7 @@ pub const KEYS_HELP: &str = concat!(
     "       q quit\n",
 );
 
-pub const TAGLINE: &str = "rbirds \u{2014} a flock of birds in your terminal.";
+pub const TAGLINE: &str = "rbirds - a flock of birds in your terminal.";
 
 pub const EXAMPLES: [Example; 8] = [
     Example { command: "rbirds", what: "a flock in braille, and nothing to read" },
