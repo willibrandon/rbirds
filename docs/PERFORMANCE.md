@@ -350,6 +350,14 @@ The [background plane comparison](evidence/live-sixel-ground-2026-09-27-macos-ar
 records lower application cost at fixed throughput and lower iTerm decoder
 cost, with a modest dense-scene cadence gain that still falls short of 60 Hz.
 
+Live simulation inputs can differ between runs because movement follows
+measured elapsed time. Compare output volume and unchanged frame stages
+alongside CPU: a different flock shape can change both rendering and terminal
+work. Fixed-input codec comparisons isolate encoder cost, but cannot establish
+whole-session savings. The
+[rejected plane reservation experiment](evidence/live-sixel-reservation-2026-09-27-macos-arm64.md)
+shows faster encoding alongside mixed live CPU results and no clear cadence gain.
+
 While paused, live playback keeps the last image until a key changes the scene,
 a single step is requested, the window is resized or a visible autopilot slider
 changes. Pointer reports alone do not repaint a paused image. Input and window
