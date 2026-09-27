@@ -29,6 +29,9 @@ improved presentation. Its failure-recovery test is retained.
 The [fixed-scene harness checks](live-fixed-scene-2026-09-27-macos-arm64.md)
 measure identical simulation steps and exact submission ranges through a real
 terminal. Ordinary playback and display captures remain separate requirements.
+The [current Kitty checks](live-kitty-current-2026-09-27-macos-arm64.md)
+cover four rendering paths at two viewport sizes, with separate CPU and
+visible-playback runs and a retained invalid attempt.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

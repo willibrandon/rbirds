@@ -246,6 +246,9 @@ they expose pacing, controls, pauses, resize and overload behavior that fixed
 simulation steps do not qualify.
 The [iTerm qualification](evidence/live-fixed-scene-2026-09-27-macos-arm64.md)
 records byte-equivalence checks and repeated measurements of the same build.
+The [Kitty qualification](evidence/live-kitty-current-2026-09-27-macos-arm64.md)
+adds two viewport sizes and four rendering paths, with separate ordinary
+playback captures and an explicit unsupported-Sixel check.
 
 Some terminals decode images in separate helpers. For example, iTerm2 uses an
 `iTerm2SandboxedWorker` process for Sixel. Add `--helper-pid 12346` for each
