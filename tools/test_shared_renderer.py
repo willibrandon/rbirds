@@ -63,7 +63,7 @@ def run(binary, mode):
                     chunk = b''
                 data.extend(chunk)
                 if not version_replied and b'\x1b[>q' in data:
-                    os.write(master, b'\x1bP>|iTerm2 3.6.6\x1b\\')
+                    os.write(master, b'\x1bP>|iTerm2 3.7.3\x1b\\')
                     version_replied = True
                 while True:
                     start = data.find(b'\x1b_G', cursor)
