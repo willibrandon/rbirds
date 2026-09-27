@@ -8,6 +8,7 @@
 pub mod atlas;
 pub mod cells;
 pub mod compose;
+mod frame_codes;
 pub mod kitty;
 pub mod panel;
 mod pixel_runs;

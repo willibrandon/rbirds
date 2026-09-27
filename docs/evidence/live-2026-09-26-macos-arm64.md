@@ -692,6 +692,65 @@ retains the failed and corrected captures, CPU intervals, traces, static scene
 streams, comparison scripts, source changes, executable hashes and validation
 logs. No installed executable or terminal preference was replaced.
 
+## iTerm Kitty adaptive compression
+
+A follow-up to `bc462a8` assigns shorter DEFLATE codes to frequent literals and
+matches in each composed frame. Small streams keep fixed codes; larger streams
+compare both formats, including the dynamic code table, and use the smaller
+one. Pixel runs, match selection, image staging and composition are unchanged.
+Eight deterministic default and dense scenes retained exactly the same decoded
+RGBA pixels, image dimensions and placement commands, checked independently
+with Python's zlib. Total Kitty protocol bytes fell 23% for defaults and 17%
+for dense scenes. PNG row filters and a general zlib encoder were also sampled;
+they did not offer the same encoding-time tradeoff.
+
+Two foreground ABBA series compared this with the preceding fixed-code build,
+using the same 100-by-32 iTerm window, seed 42, three-second warm-up and
+20-second CPU interval. No capture, profiler, build or tests ran concurrently.
+Combined CPU fell 4.46% in the first series and 9.34% in the final-executable
+repeat, with both pairs improving in each series. The final repeat's medians
+were:
+
+| CPU ms/s | Fixed codes | Adaptive codes |
+|---|---:|---:|
+| rbirds | 403.28 | 417.21 |
+| iTerm main process | 904.25 | 768.18 |
+| Selected image decoder helper | 0.00 | 0.00 |
+| Combined | 1307.53 | 1185.38 |
+
+A separate 32-bird ABBA series improved combined CPU by 7.92%. These are local
+observations with shared terminal sessions, not guaranteed savings on another
+machine. The decoder helper remained alive; compositor and GPU work are outside
+the counters. Application CPU rose at defaults while terminal CPU fell. The
+final repeat's application traces had no intervals above 25 ms in either
+adaptive run; trace timing alone does not establish display smoothness.
+
+Separate visible captures recorded 60.05 changed images/s at defaults and
+16.37 in the dense case, compared with the preceding 59.82 and 14.40 captures.
+Nearest-rank p99 changed-image intervals were 29.49 and 70.70 ms, with maxima
+of 35.63 and 72.44 ms. All 904 default and 748 dense samples avoided the
+near-blank and bright-background signatures. The captured candidate preceded
+only a reduction in reserved output capacity and an additional test; the final
+executable received its own CPU comparison and independent transport check.
+These finite samples do not prove an absence of future stalls, and the dense
+case remains well below 60 updates/s.
+
+The encoder reserves one reusable eight-byte token per viewport pixel, about
+11.62 MiB of additional capacity at 1400 by 1088. This is a capacity bound, not
+a measured resident-memory increase. Output capacity retains the previous
+nine-bits-per-literal bound because the format comparison includes the dynamic
+header. Steady-state allocation checks still pass. Bounded Huffman trees,
+lossless decoding, both block formats and the output-size bound are tested;
+51 library tests passed in debug and release, alongside release Kitty, Sixel,
+paused playback, cancellation, C-oracle and allocation suites. Formatting,
+Clippy and the release build passed.
+
+The [compression archive](live-iterm-codes-2026-09-26-macos-arm64.tar.gz)
+contains the CPU intervals, traces, presentation samples, screenshots,
+deterministic streams, independent decoder, prototype comparisons, source
+changes, executable hashes and validation logs. The installed executable was
+not replaced.
+
 ## Wider atlas experiment
 
 A follow-up prototype packed sprites into two-dimensional pages, keeping the

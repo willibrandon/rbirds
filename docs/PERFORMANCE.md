@@ -166,6 +166,10 @@ image IDs avoid iTerm's image-number addressing failure; the bounded placement
 count avoids its repeated display-list rebuilds. Native pixels are transported
 with lossless RGBA compression. Two sets of image IDs keep the displayed frame
 alive while its replacement uploads; only the placement swap is synchronized.
+The compressor chooses fixed or per-frame Huffman codes after accounting for
+the code table's cost. This reduces transport bytes without changing pixels,
+at the cost of a reusable token buffer and some additional application CPU.
+Judge it by combined application and terminal CPU, alongside visible timing.
 Local alpha composition can differ slightly
 from the terminal blending separate textures, as recorded in the
 [Mac evidence](evidence/live-2026-09-26-macos-arm64.md).
