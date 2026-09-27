@@ -323,16 +323,41 @@ fn flush_frame(
 /// whichever way it returns.
 pub fn run(program: &mut Program, _stdout: &mut CStdout) -> i32 {
     let Program { sim, settings, renderer } = program;
-    match run_live(sim, renderer, settings) {
+    match run_live::<false>(sim, renderer, settings) {
         Ok(code) | Err(code) => code,
     }
 }
 
-fn run_live(
+/// The measurement executable's controlled scene. Rendering, negotiation and
+/// output use the live path; simulation time advances by frame number. Input
+/// or resize invalidates the run. Ordinary `run` specializes these hooks away.
+pub fn run_fixed_scene(program: &mut Program, _stdout: &mut CStdout) -> i32 {
+    let Program { sim, settings, renderer } = program;
+    if settings.requested_seed < 0
+        || settings.frame_limit <= 0
+        || settings.bench_frames > 0
+        || settings.record_path.is_some()
+        || settings.sprite_path.is_some()
+        || sim.legend_enabled
+    {
+        return fail(b"Fixed scenes require --seed and --frames, without --bench, --record, --sprite or --panel\n");
+    }
+    match run_live::<true>(sim, renderer, settings) {
+        Ok(code) | Err(code) => code,
+    }
+}
+
+fn run_live<const FIXED_SCENE: bool>(
     sim: &mut Sim,
     renderer: &mut Renderer,
     settings: &crate::app::Settings,
 ) -> Result<i32, i32> {
+    let gate = if FIXED_SCENE {
+        crate::fixed_scene::Gate::from_environment(settings.frame_limit)
+            .map_err(|error| fail(format!("Cannot start fixture gate: {error}\n").as_bytes()))?
+    } else {
+        None
+    };
     let name = settings.program_name.clone();
     let sprite_path = settings.sprite_path.as_deref();
     let mut trace = Trace::from_environment()
@@ -452,13 +477,24 @@ fn run_live(
         }
     }
 
-    let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
+    let started =
+        if FIXED_SCENE { crate::fixed_scene::frame_time(0) } else { platform::monotonic_now() };
+    let mut live = LiveLoop::new(started, sim.config.birds);
     #[cfg(target_os = "macos")]
     {
         live.parser = startup_parser;
     }
     live.reuse_paused_frame = true;
+    let fixed_window = FIXED_SCENE.then(|| {
+        terminal::graphics_window(
+            platform::window_size_or_zero(platform::STDOUT_FILENO),
+            sixel_cell,
+        )
+    });
     if let Some(trace) = &mut trace {
+        if FIXED_SCENE {
+            trace.fixed_scene(format!("v1;seed={seed};{sim:?}"));
+        }
         trace
             .begin(
                 sim.render_mode.name(),
@@ -472,6 +508,13 @@ fn run_live(
     loop {
         if platform::exit_requested() {
             return Ok(130);
+        }
+        if let Some(gate) = &gate
+            && sim.clock.frame == gate.warmup
+        {
+            gate.wait("begin")
+                .map_err(|error| fail(format!("Fixture begin: {error}\n").as_bytes()))?;
+            pacer = FramePacer::new(Instant::now());
         }
         renderer.profile = trace.as_ref().map(|_| {
             let mut profile = FrameProfile::new();
@@ -487,6 +530,9 @@ fn run_live(
             sixel_cell,
         );
         let keys = keys.map(|length| &input[..length]);
+        if fixed_window.is_some_and(|fixed| fixed != window) {
+            return Err(fail(b"Fixed scene invalidated by a window resize\n"));
+        }
         // The clock is read after the keys, as the C reads it; the window a
         // moment later, which no step in between depends on.
         let drawn = live.frame(
@@ -497,14 +543,25 @@ fn run_live(
             &mut snapshot,
             &mut grid,
             keys,
-            frame_start,
+            if FIXED_SCENE {
+                crate::fixed_scene::frame_time(sim.clock.frame + 1)
+            } else {
+                frame_start
+            },
             window,
         )?;
+        if FIXED_SCENE && (live.parser.revision != 0 || sim.mouse.present) {
+            return Err(fail(b"Fixed scene invalidated by input\n"));
+        }
         if drawn == Frame::Over {
             break;
         }
         let frame_bytes = graphics.len();
-        if !flush_frame(sim, &mut live.parser, &mut graphics, &name)? {
+        let flushed_all = flush_frame(sim, &mut live.parser, &mut graphics, &name)?;
+        if FIXED_SCENE && (live.parser.revision != 0 || sim.mouse.present) {
+            return Err(fail(b"Fixed scene invalidated by input during output\n"));
+        }
+        if !flushed_all {
             break;
         }
         let flushed = Instant::now();
@@ -533,6 +590,11 @@ fn run_live(
                 )
                 .map_err(|error| fail(format!("Cannot record live trace: {error}\n").as_bytes()))?;
         }
+        if let Some(gate) = &gate
+            && sim.clock.frame == gate.end
+        {
+            gate.wait("end").map_err(|error| fail(format!("Fixture end: {error}\n").as_bytes()))?;
+        }
         if last {
             break;
         }
@@ -542,6 +604,15 @@ fn run_live(
     // loop before its next iteration can observe the cancellation flag.
     if platform::exit_requested() {
         return Ok(130);
+    }
+    if fixed_window.is_some_and(|fixed| {
+        fixed
+            != terminal::graphics_window(
+                platform::window_size_or_zero(platform::STDOUT_FILENO),
+                sixel_cell,
+            )
+    }) {
+        return Err(fail(b"Fixed scene invalidated by a window resize\n"));
     }
     if let Some(trace) = trace {
         terminal.restore();

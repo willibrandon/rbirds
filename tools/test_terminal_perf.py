@@ -2,6 +2,7 @@
 """Correctness checks for native counters, not performance or display budgets."""
 
 import importlib.util
+import copy
 import json
 import math
 import os
@@ -21,6 +22,40 @@ ROOT = Path(__file__).resolve().parent.parent
 SPEC = importlib.util.spec_from_file_location('terminal_perf', ROOT / 'tools/terminal-perf.py')
 terminal_perf = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(terminal_perf)
+COMPARE_SPEC = importlib.util.spec_from_file_location('compare_fixed_scenes', ROOT / 'tools/compare-fixed-scenes.py')
+fixed_comparison = importlib.util.module_from_spec(COMPARE_SPEC)
+COMPARE_SPEC.loader.exec_module(fixed_comparison)
+
+
+class FixedComparison(unittest.TestCase):
+    def test_only_matching_complete_controlled_workloads_are_compared(self):
+        report = dict(measurement_valid=True, status=0, trace={'simulation_clock': 'fixed-60-hz'},
+                      fixed_scene='same input', platform='same host', measurement_clock='clock',
+                      terminal_process='terminal', binary_sha256='first', command=['fixture'],
+                      interval_sample=dict(fixture_frames=dict(first=3,last=5,count=3),
+                                           trace_alignment=dict(submitted_frames_min=3,submitted_frames_max=3),
+                                           application_cpu_seconds=.03,terminal_cpu_seconds=.06,wall_seconds=.1))
+        other = copy.deepcopy(report)
+        other['binary_sha256'] = 'second'
+        other['interval_sample']['wall_seconds'] = .2
+        result = fixed_comparison.compare([report, other])
+        self.assertEqual(result['runs'][0]['cpu_ms_per_frame']['combined'], 30)
+        self.assertEqual(result['runs'][1]['cpu_ms_per_frame']['combined'], 30)
+        self.assertEqual(result['runs'][0]['cpu_ms_per_second']['combined'], 900)
+        self.assertEqual(result['runs'][1]['cpu_ms_per_second']['combined'], 450)
+        for change in [dict(measurement_valid=False), dict(status=1), dict(fixed_scene='other input'),
+                       dict(platform='other host'), dict(terminal_process='different'),
+                       dict(trace={'simulation_clock': 'elapsed'})]:
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                fixed_comparison.compare([report, {**other, **change}])
+        wrong_range = copy.deepcopy(other)
+        wrong_range['interval_sample']['fixture_frames'] = dict(first=4,last=6,count=3)
+        with self.assertRaises(ValueError):
+            fixed_comparison.compare([report, wrong_range])
+        uncertain = copy.deepcopy(other)
+        uncertain['interval_sample']['trace_alignment']['submitted_frames_min'] = 2
+        with self.assertRaises(ValueError):
+            fixed_comparison.compare([report, uncertain])
 
 
 class SamplingDeadline(unittest.TestCase):
@@ -303,6 +338,66 @@ Path(os.environ['RBIRDS_TRACE']).write_text('\\n'.join(json.dumps(r) for r in [s
             self.assertIn('error', report['trace'])
             self.assertIn('application_cpu_seconds', report['interval_sample'])
 
+    def fixture_child(self, mode='fixed-60-hz', extra=0):
+        return f'''
+import json,os,sys,time
+from pathlib import Path
+sys.path.insert(0, {str(ROOT / 'tools')!r})
+from measurement_clock import MeasurementClock
+clock=MeasurementClock()
+gate=Path(os.environ['RBIRDS_FIXTURE_GATE'])
+warmup,count=map(int,(gate/'config').read_text().split())
+def boundary(stage):
+    (gate/stage).write_text('ready')
+    while not (gate/(stage+'-ack')).exists():time.sleep(.001)
+begin=clock.now_ns()
+frames=[]
+for i in range(warmup):
+    frames.append(dict(kind='frame',drawn=True,submitted_ns=clock.now_ns()))
+boundary('begin')
+for i in range(count+{extra}):
+    time.sleep(.01)
+    frames.append(dict(kind='frame',drawn=True,submitted_ns=clock.now_ns()))
+boundary('end')
+summary=dict(kind='summary',version=2,session=int(os.environ['RBIRDS_TRACE_SESSION']),
+             pid=os.getpid(),measurement_clock=clock.name,begin_ns=begin,end_ns=clock.now_ns(),
+             samples=len(frames),omitted=0,drawn_frames=len(frames),
+             simulation_clock={mode!r},fixed_scene='test scene')
+Path(os.environ['RBIRDS_TRACE']).write_text('\\n'.join(json.dumps(r) for r in [summary,*frames])+'\\n')
+'''
+
+    def test_fixture_handshake_counters_cover_exactly_the_requested_frames(self):
+        for warmup in [0, 2]:
+            trace = self.path / 'fixed.jsonl'
+            result, report = self.run_report(self.fixture_child(), [
+                '--fixture-frames', f'{warmup}:3', '--trace', str(trace)])
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(report['measurement_valid'])
+            self.assertEqual(report['fixed_scene'], 'test scene')
+            self.assertEqual(report['trace']['simulation_clock'], 'fixed-60-hz')
+            interval = report['interval_sample']
+            self.assertEqual(interval['fixture_frames'], dict(first=warmup+1, last=warmup+3, count=3))
+            self.assertEqual(interval['trace_alignment']['submitted_frames_min'], 3)
+            self.assertEqual(interval['trace_alignment']['submitted_frames_max'], 3)
+
+    def test_fixture_rejects_elapsed_clocks_and_wrong_frame_counts(self):
+        for child in [self.fixture_child(mode='elapsed'), self.fixture_child(extra=1)]:
+            result, report = self.run_report(child, [
+                '--fixture-frames', '2:3', '--trace', str(self.path / 'fixed.jsonl')])
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertFalse(report['measurement_valid'])
+            self.assertIn('trace does not contain', report['trace']['error'])
+
+    def test_missing_fixture_boundaries_fail_without_reaping_cpu_counters(self):
+        for child in ['pass', 'import time; time.sleep(10)']:
+            result, report = self.run_report(child, [
+                '--fixture-frames', '0:3', '--fixture-timeout', '.05',
+                '--trace', str(self.path / 'fixed.jsonl')])
+            self.assertNotEqual(result.returncode, 0, result.stderr)
+            self.assertFalse(report['measurement_valid'])
+            self.assertIn('error', report['interval_sample'])
+            self.assertIn('application_cpu_seconds', report)
+
     def test_repeated_windows_measure_the_same_processes_with_the_requested_gap(self):
         helper = self.sleeper()
         result, report = self.run_report('import time; time.sleep(1.5)', [
@@ -348,6 +443,15 @@ Path(os.environ['RBIRDS_TRACE']).write_text('\\n'.join(json.dumps(r) for r in [s
                 ['--sample-gap-seconds', '-1'], ['--sample-gap-seconds', 'nan'],
                 ['--sample-gap-seconds', 'inf'], ['--sample-count', '2'],
                 ['--sample-gap-seconds', '1'], ['--trace', str(self.path / 'trace.jsonl')],
+                ['--fixture-frames', '0:0'], ['--fixture-frames', '-1:3'],
+                ['--fixture-frames', '1:65536'], ['--fixture-frames', '1:2:3'],
+                ['--fixture-frames', '0:3'],
+                ['--fixture-timeout', '0'], ['--fixture-timeout', 'nan'],
+                ['--fixture-timeout', 'inf'],
+                ['--fixture-frames', '0:3', '--trace', str(self.path / 'trace.jsonl'),
+                 '--sample-seconds', '1'],
+                ['--fixture-frames', '0:3', '--trace', str(self.path / 'trace.jsonl'),
+                 '--warmup-seconds', '0'],
                 ['--trace', str(self.path / 'invalid.json'), '--sample-seconds', '1']]:
             with self.subTest(options=options):
                 output = self.path / 'invalid.json'

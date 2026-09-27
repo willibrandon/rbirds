@@ -12,6 +12,7 @@ pub mod app;
 pub mod bench;
 pub mod cfmt;
 pub mod config;
+mod fixed_scene;
 pub mod font;
 pub mod fp;
 pub mod image;

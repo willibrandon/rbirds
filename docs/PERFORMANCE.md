@@ -196,6 +196,57 @@ usable by the PTY harness but cannot be aligned this way. Normal playback withou
 tracing makes no additional measurement-clock calls. This measures successful
 output submission; visible frame timing still needs a separate display capture.
 
+For comparisons that require identical simulation inputs, build the separate
+`fixed-scene` example. It uses the application's terminal negotiation, renderers,
+output handling and frame scheduler, but advances simulation time by frame
+number at 60 logical steps per second. Ordinary `rbirds` keeps its elapsed-time
+simulation. The example requires an explicit seed and frame limit, and rejects
+input or resizing during a run. Panel metrics, custom sprites, recording and
+headless benchmark options are excluded from this controlled path; exercise
+those with the ordinary application.
+
+```sh
+cargo build --release --example fixed-scene
+python3 tools/terminal-perf.py --terminal-pid 12345 --helper-pid 12346 --fixture-frames 180:900 --trace target/fixed-a.jsonl --output target/fixed-a.json -- target/release/examples/fixed-scene --render sixel --seed 42 --frames 1080
+```
+
+Use the actual terminal and helper PIDs. On Windows use `python` and the
+example's `.exe` suffix. `--fixture-frames WARMUP:COUNT` replaces timed sampling:
+the child waits after the warm-up frames while counters are read, then waits
+again after the measured frames have been flushed. `--frames` must equal their
+sum. The report above therefore covers exactly frames 181–1080, even if one
+build takes longer to produce them. The trace must independently confirm all
+requested submissions inside the counter window, with no boundary ambiguity.
+Missing boundaries, early exits, invalid traces and frame-count mismatches
+invalidate the measurement while retaining its diagnostics. The default
+boundary timeout is 180 seconds; `--fixture-timeout` changes it.
+Once a boundary is reached, the child allows 30 seconds for the counter reader
+to acknowledge it before restoring the terminal and exiting with an error.
+
+Repeat with a different output and trace path, then compare the reports:
+
+```sh
+python3 tools/compare-fixed-scenes.py target/fixed-a.json target/fixed-b.json --output target/fixed-comparison.json
+```
+
+The comparison requires matching recorded initial simulation state, theme,
+geometry, renderer, seed, frame range, platform and selected terminal process
+names. It rejects ordinary elapsed-time traces. It reports each run's CPU per
+frame and per second separately, without inferring a saving from one pair.
+Use the same host, terminal version/configuration, visibility and background
+load, and alternate build order. A changed executable must still pass separate
+simulation and image-correctness checks; compatible inputs do not prove
+equivalent outputs.
+
+Counter windows include the small boundary-handshake cost. Terminal decoding
+and display can lag a successful flush, so these boundaries are not display
+fences. The deliberate waits make this a CPU measurement path, not a smoothness
+benchmark. Keep ordinary live CPU and visible-presentation runs alongside it;
+they expose pacing, controls, pauses, resize and overload behavior that fixed
+simulation steps do not qualify.
+The [iTerm qualification](evidence/live-fixed-scene-2026-09-27-macos-arm64.md)
+records byte-equivalence checks and repeated measurements of the same build.
+
 Some terminals decode images in separate helpers. For example, iTerm2 uses an
 `iTerm2SandboxedWorker` process for Sixel. Add `--helper-pid 12346` for each
 identified, dedicated helper that remains alive throughout the sample. The

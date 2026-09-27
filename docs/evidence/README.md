@@ -26,6 +26,9 @@ slightly and presentation remains below 60 changes/s.
 The [rejected Sixel plane reservation experiment](live-sixel-reservation-2026-09-27-macos-arm64.md)
 records faster isolated encoding without consistent total CPU savings or
 improved presentation. Its failure-recovery test is retained.
+The [fixed-scene harness checks](live-fixed-scene-2026-09-27-macos-arm64.md)
+measure identical simulation steps and exact submission ranges through a real
+terminal. Ordinary playback and display captures remain separate requirements.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

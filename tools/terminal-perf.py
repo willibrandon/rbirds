@@ -2,14 +2,17 @@
 """Measure CPU and memory for rbirds, its terminal and selected helpers."""
 
 import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import math
 import os
 import platform
 import secrets
+import signal
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -33,6 +36,25 @@ def wait_until(stopped, deadline):
     return True
 
 
+def fixture_frames(value):
+    try:
+        warmup, frames = map(int, value.split(':'))
+        if warmup < 0 or frames < 1 or warmup + frames > 65536:
+            raise ValueError()
+        return warmup, frames
+    except ValueError:
+        raise argparse.ArgumentTypeError('expected WARMUP:COUNT, with warmup >= 0, count > 0 and total <= 65536')
+
+
+def wait_for_fixture(stopped, directory, stage, timeout):
+    deadline = time.perf_counter() + timeout
+    while not (directory / stage).is_file():
+        if stopped.wait(.005):
+            raise RuntimeError(f'child exited before fixture {stage}')
+        if time.perf_counter() >= deadline:
+            raise TimeoutError(f'fixture {stage} did not arrive within {timeout} seconds')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -50,6 +72,10 @@ def main():
                         help="number of interval samples in the same run (default: 1)")
     parser.add_argument("--sample-gap-seconds", type=float, default=0,
                         help="delay between interval samples (default: 0)")
+    parser.add_argument("--fixture-frames", type=fixture_frames, metavar="WARMUP:COUNT",
+                        help="sample exactly COUNT frames after WARMUP frames from the fixed-scene example; replaces timed sampling")
+    parser.add_argument("--fixture-timeout", type=float, default=180,
+                        help="seconds allowed for each fixture boundary (default: 180)")
     parser.add_argument("--trace", type=Path,
                         help="record rbirds submissions and align them with CPU intervals")
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -69,8 +95,15 @@ def main():
         parser.error("sample gap seconds must be finite and nonnegative")
     if args.sample_seconds is None and (args.sample_count != 1 or args.sample_gap_seconds != 0):
         parser.error("repeated sampling requires --sample-seconds")
-    if args.trace and args.sample_seconds is None:
-        parser.error("trace alignment requires --sample-seconds")
+    if not math.isfinite(args.fixture_timeout) or args.fixture_timeout <= 0:
+        parser.error("fixture timeout must be finite and positive")
+    if args.fixture_frames and (args.sample_seconds is not None or args.sample_count != 1
+                               or args.sample_gap_seconds != 0 or args.warmup_seconds != 3):
+        parser.error("fixture frames replace timed sampling options")
+    if args.fixture_frames and not args.trace:
+        parser.error("fixture frames require --trace")
+    if args.trace and args.sample_seconds is None and not args.fixture_frames:
+        parser.error("trace alignment requires --sample-seconds or --fixture-frames")
     if args.trace and args.trace.resolve() == args.output.resolve():
         parser.error("trace and CPU report must use different paths")
     pids = [args.terminal_pid, *args.helper_pid]
@@ -80,7 +113,11 @@ def main():
     if not binary:
         parser.error(f"cannot find executable: {args.command[0]}")
 
-    with Counters() as counters:
+    with ExitStack() as stack:
+        if args.fixture_frames:
+            args.fixture_directory = Path(stack.enter_context(tempfile.TemporaryDirectory(prefix='rbirds-fixed-scene-')))
+            (args.fixture_directory / 'config').write_text('%d %d\n' % args.fixture_frames)
+        counters = stack.enter_context(Counters())
         report = measure(args, counters, binary)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
@@ -91,6 +128,9 @@ def measure(args, counters, binary):
     clock = MeasurementClock()
     session = secrets.randbits(64)
     environment = os.environ.copy()
+    sampling = args.sample_seconds is not None or args.fixture_frames is not None
+    if args.fixture_frames:
+        environment['RBIRDS_FIXTURE_GATE'] = str(args.fixture_directory)
     if args.trace:
         args.trace.parent.mkdir(parents=True, exist_ok=True)
         environment["RBIRDS_TRACE"] = str(args.trace.resolve())
@@ -137,17 +177,23 @@ def measure(args, counters, binary):
             interval = {"error": "interval sample did not complete"}
             intervals.append(interval)
             try:
-                delay = args.sample_gap_seconds if index else args.warmup_seconds
-                if wait_until(stopped, time.perf_counter() + delay):
-                    phase = "between interval samples" if index else "during warmup"
-                    raise RuntimeError(f"child exited {phase}")
+                if args.fixture_frames:
+                    wait_for_fixture(stopped, args.fixture_directory, 'begin', args.fixture_timeout)
+                else:
+                    delay = args.sample_gap_seconds if index else args.warmup_seconds
+                    if wait_until(stopped, time.perf_counter() + delay):
+                        phase = "between interval samples" if index else "during warmup"
+                        raise RuntimeError(f"child exited {phase}")
                 first_lo = clock.now_ns()
                 app_before = counters.snapshot(process.pid)
                 term_before = counters.snapshot(args.terminal_pid)
                 helper_before = {pid: counters.snapshot(pid) for pid in args.helper_pid}
                 first_hi = clock.now_ns()
                 sample_start = time.perf_counter()
-                if wait_until(stopped, sample_start + args.sample_seconds):
+                if args.fixture_frames:
+                    (args.fixture_directory / 'begin-ack').write_text('ready\n')
+                    wait_for_fixture(stopped, args.fixture_directory, 'end', args.fixture_timeout)
+                elif wait_until(stopped, sample_start + args.sample_seconds):
                     raise RuntimeError("child exited before the interval sample finished")
                 last_lo = clock.now_ns()
                 app_after = counters.snapshot(process.pid)
@@ -172,16 +218,30 @@ def measure(args, counters, binary):
                     raise RuntimeError("measurement clock did not advance across the CPU window")
                 interval["counter_read_bounds_ns"] = {
                     "before": [first_lo, first_hi], "after": [last_lo, last_hi]}
+                if args.fixture_frames:
+                    warmup, frames = args.fixture_frames
+                    interval['fixture_frames'] = {'first': warmup + 1, 'last': warmup + frames, 'count': frames}
+                    (args.fixture_directory / 'end-ack').write_text('ready\n')
                 interval.pop("error", None)
             except Exception as error:
                 # Retain completed windows and the failure, then stop sampling.
                 interval["error"] = f"{type(error).__name__}: {error}"
+                if args.fixture_frames and not stopped.is_set() and process.returncode is None:
+                    try:
+                        # Do not call poll here: on Unix the main thread owns
+                        # wait4 and must retain the child's lifetime CPU count.
+                        if os.name == 'nt':
+                            process.terminate()
+                        else:
+                            os.kill(process.pid, signal.SIGTERM)
+                    except ProcessLookupError:
+                        pass
                 break
 
     sampler = None
     try:
         counters.prepare_child(process)
-        if args.sample_seconds is not None:
+        if sampling:
             sampler = threading.Thread(target=sample_intervals, daemon=True)
             sampler.start()
         application_cpu = counters.wait(process)
@@ -225,7 +285,7 @@ def measure(args, counters, binary):
         for sample in helpers["processes"]:
             sample["process"] = helper_names[sample["pid"]]
         report["terminal_helpers"] = helpers
-    if args.sample_seconds is not None:
+    if sampling:
         if args.sample_count == 1:
             report["interval_sample"] = intervals[0]
         else:
@@ -234,7 +294,8 @@ def measure(args, counters, binary):
             report["interval_samples"] = intervals
     report["measurement_valid"] = (
         "terminal_error" not in report
-        and (args.sample_seconds is None or len(intervals) == args.sample_count)
+        and (not args.fixture_frames or process.returncode == 0)
+        and (not sampling or len(intervals) == args.sample_count)
         and all("error" not in sample for sample in intervals)
         and all("cpu_seconds" in sample["terminal_helpers"]
                 for sample in [report, *intervals] if "terminal_helpers" in sample))
@@ -243,9 +304,24 @@ def measure(args, counters, binary):
                            "scope": "completed output submissions, not displayed frames"}
         try:
             trace = read_trace(args.trace, session, process.pid, clock.name)
+            with args.trace.open() as source:
+                summary = json.loads(next(source))
+            report['trace']['simulation_clock'] = summary.get('simulation_clock', 'elapsed')
+            if args.fixture_frames:
+                warmup, frames = args.fixture_frames
+                if (summary.get('simulation_clock') != 'fixed-60-hz'
+                        or not isinstance(summary.get('fixed_scene'), str) or not summary['fixed_scene']
+                        or summary['samples'] != warmup + frames or summary['drawn_frames'] != warmup + frames):
+                    raise ValueError('trace does not contain the requested complete fixed scene')
+                report['fixed_scene'] = summary['fixed_scene']
+                report['fixture_scope'] = ('Fixed simulation steps and a specified frame range. Counter windows include boundary handshake overhead. '
+                                           'Terminal decoding and display may lag submissions; not presentation timing.')
             for interval in intervals:
                 if "error" not in interval:
                     interval["trace_alignment"] = align_interval(interval, trace)
+                    if args.fixture_frames and (interval['trace_alignment']['submitted_frames_min'] != frames
+                                               or interval['trace_alignment']['submitted_frames_max'] != frames):
+                        raise ValueError('fixture counter window does not contain exactly the requested frames')
         except (OSError, ValueError, KeyError, TypeError, StopIteration) as error:
             report["trace"]["error"] = f"{type(error).__name__}: {error}"
             report["measurement_valid"] = False

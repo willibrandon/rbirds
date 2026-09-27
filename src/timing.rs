@@ -95,6 +95,7 @@ pub struct Trace {
     drawn_frames: u64,
     renderer: &'static str,
     viewport: [i32; 4],
+    fixed_scene: Option<String>,
 }
 
 fn micros(duration: Duration) -> u64 {
@@ -118,7 +119,12 @@ impl Trace {
             drawn_frames: 0,
             renderer: "unset",
             viewport: [0; 4],
+            fixed_scene: None,
         }))
+    }
+
+    pub(crate) fn fixed_scene(&mut self, initial_state: String) {
+        self.fixed_scene = Some(initial_state);
     }
 
     /// Excludes terminal negotiation and sprite upload from steady-state CPU.
@@ -170,9 +176,12 @@ impl Trace {
         let elapsed = self.started.elapsed();
         let cpu = platform::process_cpu_time()?.saturating_sub(self.cpu_started);
         let mut out = BufWriter::new(self.file);
+        let clock = if self.fixed_scene.is_some() { "fixed-60-hz" } else { "elapsed" };
+        let scene = self.fixed_scene.as_ref().map(|s| crate::record::json_string(s.as_bytes()));
+        let scene = scene.as_deref().unwrap_or(b"null");
         writeln!(
             out,
-            "{{\"kind\":\"summary\",\"version\":2,\"renderer\":\"{}\",\"viewport\":{:?},\"wall_us\":{},\"cpu_us\":{},\"samples\":{},\"omitted\":{},\"drawn_frames\":{},\"session\":{},\"pid\":{},\"measurement_clock\":\"{}\",\"begin_ns\":{},\"end_ns\":{}}}",
+            "{{\"kind\":\"summary\",\"version\":2,\"renderer\":\"{}\",\"viewport\":{:?},\"wall_us\":{},\"cpu_us\":{},\"samples\":{},\"omitted\":{},\"drawn_frames\":{},\"session\":{},\"pid\":{},\"measurement_clock\":\"{}\",\"begin_ns\":{},\"end_ns\":{},\"simulation_clock\":\"{}\",\"fixed_scene\":{}}}",
             self.renderer,
             self.viewport,
             micros(elapsed),
@@ -184,7 +193,9 @@ impl Trace {
             std::process::id(),
             platform::MEASUREMENT_CLOCK,
             self.begin_ns,
-            end_ns
+            end_ns,
+            clock,
+            String::from_utf8_lossy(scene)
         )?;
         for sample in self.samples {
             writeln!(
