@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Correctness checks for native counters, not performance or display budgets."""
 
+import importlib.util
 import json
 import math
 import os
@@ -9,12 +10,45 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from process_usage import Counters, Snapshot, cpu_delta, linux_snapshot
 
 
 ROOT = Path(__file__).resolve().parent.parent
+SPEC = importlib.util.spec_from_file_location('terminal_perf', ROOT / 'tools/terminal-perf.py')
+terminal_perf = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(terminal_perf)
+
+
+class SamplingDeadline(unittest.TestCase):
+    def test_early_timeouts_do_not_shorten_the_sample(self):
+        stopped = Mock()
+        stopped.is_set.return_value = False
+        stopped.wait.return_value = False
+        with patch.object(terminal_perf.time, 'perf_counter',
+                          side_effect=[10.0, 10.187, 10.1995, 10.2]):
+            self.assertFalse(terminal_perf.wait_until(stopped, 10.2))
+        waits = [call.args[0] for call in stopped.wait.call_args_list]
+        self.assertEqual(len(waits), 3)
+        self.assertAlmostEqual(waits[0], .2)
+        self.assertAlmostEqual(waits[1], .013)
+        self.assertEqual(waits[2], .001)
+
+    def test_child_exit_interrupts_the_remaining_wait(self):
+        stopped = Mock()
+        stopped.is_set.return_value = False
+        stopped.wait.side_effect = [False, True]
+        with patch.object(terminal_perf.time, 'perf_counter', side_effect=[10.0, 10.187]):
+            self.assertTrue(terminal_perf.wait_until(stopped, 10.2))
+        self.assertEqual(stopped.wait.call_count, 2)
+
+    def test_already_stopped_child_never_starts_a_sample(self):
+        stopped = Mock()
+        stopped.is_set.return_value = True
+        self.assertTrue(terminal_perf.wait_until(stopped, 10.2))
+        stopped.wait.assert_not_called()
 
 
 class NativeCounters(unittest.TestCase):
@@ -109,6 +143,10 @@ class Reports(unittest.TestCase):
         self.assertAlmostEqual(report['application_cpu_seconds'], float(result.stdout), delta=.1)
         interval = report['interval_sample']
         self.assertGreaterEqual(interval['wall_seconds'], .2)
+        print(json.dumps({'sample_wall_seconds': interval['wall_seconds'],
+                          **{key: report[key] for key in
+                             ['python', 'elapsed_clock', 'elapsed_clock_resolution_seconds']}}),
+              flush=True)
         for sample in [report, interval]:
             for key in ['application_cpu_ms_per_second', 'terminal_cpu_ms_per_second']:
                 self.assertGreaterEqual(sample[key], 0)

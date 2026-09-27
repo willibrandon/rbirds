@@ -141,6 +141,10 @@ the same elapsed-time interval. Keep the child running longer than that window;
 an early exit records a sample error. Fixed frame counts alone compare different
 elapsed durations when pacing changes, which can also change the average
 simulation workload. Retain lifetime and equal-time samples separately.
+Elapsed time uses Python's high-resolution `perf_counter`; reports include its
+implementation and resolution. Timed waits recheck that clock until the requested
+deadline, while a child exit still cancels the sample. A timeout returning early
+must not shorten a requested measurement window.
 
 Some terminals decode images in separate helpers. For example, iTerm2 uses an
 `iTerm2SandboxedWorker` process for Sixel. Add `--helper-pid 12346` for each

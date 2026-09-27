@@ -16,6 +16,20 @@ from pathlib import Path
 from process_usage import Counters, cpu_delta
 
 
+def wait_until(stopped, deadline):
+    """Wait for an elapsed-time deadline, preserving early child cancellation."""
+    while not stopped.is_set():
+        remaining = deadline - time.perf_counter()
+        if remaining <= 0:
+            return False
+        # Windows waits and older Python monotonic clocks can have coarser
+        # resolution than the performance counter. Recheck an early timeout;
+        # retain a blocking wait even for the last fraction of a millisecond.
+        if stopped.wait(max(remaining, .001)):
+            return True
+    return True
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
@@ -85,24 +99,24 @@ def measure(args, counters, binary):
     for snapshot in [before, *helpers_before.values()]:
         if not snapshot.alive:
             raise RuntimeError("selected process already exited before launch")
-    started = time.monotonic()
+    started = time.perf_counter()
     process = subprocess.Popen(args.command)
     stopped = threading.Event()
     interval = {"error": "interval sample did not complete"} if args.sample_seconds else {}
 
     def sample_interval():
         try:
-            if stopped.wait(args.warmup_seconds):
+            if wait_until(stopped, time.perf_counter() + args.warmup_seconds):
                 raise RuntimeError("child exited during warmup")
             app_before = counters.snapshot(process.pid)
             term_before = counters.snapshot(args.terminal_pid)
             helper_before = {pid: counters.snapshot(pid) for pid in args.helper_pid}
-            sample_start = time.monotonic()
-            if stopped.wait(args.sample_seconds):
+            sample_start = time.perf_counter()
+            if wait_until(stopped, sample_start + args.sample_seconds):
                 raise RuntimeError("child exited before the interval sample finished")
             app_after = counters.snapshot(process.pid)
             term_after = counters.snapshot(args.terminal_pid)
-            sample_wall = time.monotonic() - sample_start
+            sample_wall = time.perf_counter() - sample_start
             interval.update({
                 "start_seconds_after_launch": sample_start - started,
                 "wall_seconds": sample_wall,
@@ -129,13 +143,16 @@ def measure(args, counters, binary):
         if process.returncode is None:
             process.kill()
             process.wait()
-        wall = time.monotonic() - started
+        wall = time.perf_counter() - started
         stopped.set()
         if sampler:
             sampler.join()
     report = {
         "scope": "CPU during child lifetime, including startup; not presentation timing",
         "platform": platform.platform(), "note": args.note,
+        "python": platform.python_version(),
+        "elapsed_clock": time.get_clock_info("perf_counter").implementation,
+        "elapsed_clock_resolution_seconds": time.get_clock_info("perf_counter").resolution,
         "excluded_costs": ["compositor", "GPU", "unselected helper processes"],
         "command": args.command,
         "binary_sha256": binary_hash,

@@ -35,3 +35,21 @@ report and trace, source hashes and executable hash. It excludes executables
 and unrelated windows. Reproduce the correctness checks with
 `python3 tools/test_terminal_perf.py`, or `python` on Windows. Desktop appearance,
 compositor/GPU costs and shared-machine performance remain separate checks.
+
+A later [Windows x64 run](https://github.com/willibrandon/rbirds/actions/runs/36307146574/job/108585908049)
+passed every application gate but exposed an intermittent harness timing error:
+a requested 200 ms interval was reported as 187 ms. The harness had trusted one
+timed wait and used `monotonic` for elapsed time. That left short samples exposed
+to early timeouts and coarse clock steps. Python's
+[performance counter](https://docs.python.org/3/library/time.html#time.perf_counter)
+is intended for short elapsed-time measurements; older Windows Python versions
+use [different implementations](https://github.com/python/cpython/blob/v3.12.10/Python/pytime.c)
+for `monotonic` and `perf_counter`.
+
+The harness now measures elapsed time with `perf_counter` and rechecks its
+deadline after a timeout. It continues to cancel immediately when the child
+exits, and records the clock implementation, resolution and Python version.
+The original 200 ms minimum assertion remains. Three deterministic checks
+cover early timeouts, an exit during the remaining wait and an already-stopped
+child. All twelve checks pass locally on macOS with system Python 3.9 and
+Homebrew Python 3.14. Native CI validates the same code on Windows and Linux.
