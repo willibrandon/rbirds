@@ -187,16 +187,65 @@ pub fn prepare_sixel() -> io::Result<SixelTerminal> {
 }
 
 pub fn query_is_iterm2() -> bool {
-    is_iterm2(&query_until(b"\x1b[>q", 128, 100, |reply| reply.contains(&b'\\')))
+    is_iterm2(&query_version())
+}
+
+fn query_version() -> Vec<u8> {
+    query_until(b"\x1b[>q", 128, 100, |reply| reply.windows(2).any(|s| s == b"\x1b\\"))
+}
+
+/// Older iTerm releases retain every uploaded frame's Metal texture, even
+/// after its protocol image is deleted. Refuse that path before uploading.
+/// Other terminals retain the ordinary sprite-atlas renderer.
+pub fn prepare_kitty() -> io::Result<bool> {
+    let reply = query_version();
+    let Some(version) = iterm_version(&reply) else { return Ok(false) };
+    if !iterm_kitty_cache_fixed(version) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Kitty animation needs iTerm2 3.7.3 or newer to avoid an image memory leak; use --render sixel or --render braille with this version",
+        ));
+    }
+    Ok(true)
 }
 
 /// XTVERSION: DCS >| terminal-name version ST.
 pub fn is_iterm2(reply: &[u8]) -> bool {
+    iterm_version(reply).is_some()
+}
+
+fn iterm_version(reply: &[u8]) -> Option<&[u8]> {
     const PREFIX: &[u8] = b"\x1bP>|iTerm2 ";
-    reply
-        .windows(PREFIX.len())
-        .position(|s| s == PREFIX)
-        .is_some_and(|start| reply[start + PREFIX.len()..].windows(2).any(|s| s == b"\x1b\\"))
+    let start = reply.windows(PREFIX.len()).position(|s| s == PREFIX)? + PREFIX.len();
+    let version = &reply[start..];
+    let end = version.windows(2).position(|s| s == b"\x1b\\")?;
+    Some(&version[..end])
+}
+
+fn iterm_kitty_cache_fixed(version: &[u8]) -> bool {
+    let Ok(version) = std::str::from_utf8(version) else { return false };
+    let nightly = version.ends_with("-nightly");
+    let mut components = version.strip_suffix("-nightly").unwrap_or(version).split('.');
+    let mut numbers = [0_u32; 3];
+    for number in &mut numbers {
+        let Some(component) = components.next() else { return false };
+        if component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+        let Ok(value) = component.parse() else { return false };
+        *number = value;
+    }
+    if components.next().is_some() {
+        return false;
+    }
+    let [major, minor, patch] = numbers;
+    // The fix landed September 18, then shipped in the next nightly and 3.7.3.
+    // A dated nightly's large patch number must not admit pre-fix nightlies.
+    if nightly || patch >= 20_000_000 {
+        (major, minor) >= (3, 7) && patch >= 20260919
+    } else {
+        (major, minor, patch) >= (3, 7, 3)
+    }
 }
 
 /// Call only in the empty alternate screen. Some iTerm profiles make block
@@ -304,5 +353,46 @@ pub fn wait_for_terminal_io() -> io::Result<()> {
             Err(error) => return Err(error),
             Ok(_) => return Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kitty_animation_requires_the_iterm_texture_cache_fix() {
+        for version in [
+            "3.7.3",
+            "3.7.4",
+            "3.8.0",
+            "4.0.0",
+            "3.7.20260919-nightly",
+            "3.7.20260926-nightly",
+            "3.7.20260926",
+        ] {
+            assert!(iterm_kitty_cache_fixed(version.as_bytes()), "{version}");
+        }
+        for version in [
+            "3.6.6",
+            "3.6.11",
+            "3.7.0",
+            "3.7.2",
+            "3.7.20260918-nightly",
+            "3.7.20260918",
+            "3.6.20260926-nightly",
+            "3.7.3-nightly",
+            "3.7.3beta1",
+            "",
+            "3.7",
+            "3.7.3.1",
+            "3.7.+3",
+            "3..3",
+            "3.7.4294967296",
+            "unknown",
+        ] {
+            assert!(!iterm_kitty_cache_fixed(version.as_bytes()), "{version}");
+        }
+        assert!(!iterm_kitty_cache_fixed(&[0xff]));
     }
 }

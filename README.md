@@ -43,6 +43,10 @@ emulators that do. Braille remains the default on every platform. `blocks` and
 Sixel support is negotiated when requested, and an unsupported terminal produces
 an error with guidance. See [Windows and Sixel](docs/WINDOWS.md) for details.
 
+Kitty graphics in iTerm2 require **3.7.3 or newer**. Earlier releases retain
+animation frames in memory, so rbirds rejects that path before uploading images.
+Use Sixel or a text renderer with older iTerm versions.
+
 There are no crate dependencies. Native bindings use system libraries: libc /
 libSystem on Unix and Win32 / the Microsoft C runtime on Windows. Builds use
 the Rust version pinned in `rust-toolchain.toml`; normal builds need no C source

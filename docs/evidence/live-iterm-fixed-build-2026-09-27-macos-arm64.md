@@ -47,6 +47,9 @@ each run found the test app active. There were no builds, tests, captures or
 profilers during these intervals. Guard and focus-check overhead remains part
 of the test environment.
 
+The runs include normal idle drift of flocking sliders after one minute.
+Their early and later CPU rates are not fixed-configuration comparisons.
+
 The dense scene used 4,096 birds, speed 12, four hawks, three flocks, depth,
 trails and the ember palette. All twelve CPU/trace intervals were valid and
 contained an unambiguous 900 or 901 completed submissions. The retained CPU

@@ -154,6 +154,12 @@ include pause and resume.
 ## D-009: composed Kitty frames in iTerm
 
 An iTerm XTVERSION reply selects local composition for live Kitty graphics.
+Live startup requires iTerm 3.7.3 or a dated nightly from September 19, 2026
+onward; earlier releases retain each uploaded frame's GPU texture. Affected or
+unrecognized iTerm versions exit before uploading, with Sixel/text alternatives
+in the diagnostic. Version and restoration checks cover this startup change
+under C07/C13; the [stable-release investigation](evidence/live-iterm-stable-2026-09-27-macos-arm64.md)
+records the failed reusable-texture alternative and fixed-release observations.
 iTerm 3.6.6 accepts the capability query but fails image-number placements;
 using explicit image IDs alone still incurs a display-list rebuild for every
 sprite. The renderer instead sends one cropped transparent surface, or two

@@ -12,8 +12,10 @@ join CPU intervals to submitted frames and retain the remaining measurement limi
 The [Kitty canvas clear comparison](live-kitty-clear-2026-09-27-macos-arm64.md)
 records reduced application CPU in a sparse scene, without an established total saving.
 The [iTerm memory investigation](live-iterm-memory-2026-09-27-macos-arm64.md)
-found unbounded texture retention in iTerm's Kitty renderer. The composed path
-remains unqualified for sustained use there despite its short-run CPU results.
+found unbounded texture retention in iTerm 3.6.6's Kitty renderer. The
+[stable-release qualification](live-iterm-stable-2026-09-27-macos-arm64.md)
+checks iTerm 3.7.3 and the startup guard for affected versions, following the
+[isolated nightly checks](live-iterm-fixed-build-2026-09-27-macos-arm64.md).
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

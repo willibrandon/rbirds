@@ -302,8 +302,11 @@ found rapid texture-cache growth in iTerm 3.6.6. Those short-run improvements do
 not qualify composed Kitty playback for sustained use in affected versions.
 An [isolated nightly qualification](evidence/live-iterm-fixed-build-2026-09-27-macos-arm64.md)
 did not reproduce that rapid growth in approximately three-minute default and
-dense runs, with separate captures near 60 changes/s. A working path for affected
-older versions remains unresolved.
+dense runs, with separate captures near 60 changes/s. The
+[stable 3.7.3 qualification](evidence/live-iterm-stable-2026-09-27-macos-arm64.md)
+also checks the fixed release. Live Kitty startup now requires that release or a dated
+nightly from September 19, 2026 onward, rejecting affected or unrecognized iTerm
+versions before uploading images. Older iTerm versions can use Sixel or text.
 Local alpha composition can differ slightly
 from the terminal blending separate textures, as recorded in the
 [Mac evidence](evidence/live-2026-09-26-macos-arm64.md).

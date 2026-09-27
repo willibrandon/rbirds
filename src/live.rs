@@ -350,7 +350,10 @@ fn run_live(
     }
     #[cfg(target_os = "macos")]
     let mut startup_parser = InputParser::default();
-    if sim.render_mode == RenderMode::Kitty && terminal::query_is_iterm2() {
+    if sim.render_mode == RenderMode::Kitty
+        && terminal::prepare_kitty()
+            .map_err(|error| fail(format!("Cannot enable Kitty graphics: {error}\n").as_bytes()))?
+    {
         renderer.kitty_raster = Some(crate::render::compose::KittyRaster::default());
         #[cfg(target_os = "macos")]
         if let Some(raster) = renderer.kitty_raster.as_mut() {

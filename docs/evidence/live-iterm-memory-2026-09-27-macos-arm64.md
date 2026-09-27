@@ -22,7 +22,9 @@ prunes textures whose images are absent from the current frame. A subsequent
 [isolated nightly qualification](live-iterm-fixed-build-2026-09-27-macos-arm64.md)
 did not reproduce the rapid growth across approximately three minutes each at
 default and dense settings. No installed terminal was upgraded or modified.
-The PR remains a draft pending a working path for affected older versions.
+The subsequent [stable-release qualification](live-iterm-stable-2026-09-27-macos-arm64.md)
+identifies iTerm 3.7.3 as a fixed stable release. Live Kitty startup now rejects
+affected iTerm versions before uploading and gives Sixel/text alternatives.
 The Sixel yellow-placeholder fix addresses a different image-lifetime failure.
 
 The investigation began with a ten-second intrusive sample of a one-bird Kitty
