@@ -36,6 +36,9 @@ jobs:
       - name: Native Windows gates
         shell: pwsh
         run: ./tools/verify.ps1
+      - name: Process CPU measurement checks
+        shell: pwsh
+        run: python tools/test_terminal_perf.py
 
   verify:
     timeout-minutes: 45
@@ -56,6 +59,8 @@ jobs:
           cargo --version
       - name: Pinned C reference
         run: tools/reference.sh
+      - name: Process CPU measurement checks
+        run: python3 tools/test_terminal_perf.py
       - name: All local gates
         run: tools/verify.sh
 

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Measure rbirds, a macOS terminal and selected helper processes during playback."""
+"""Measure rbirds, a terminal and selected helpers on Windows, Linux or macOS."""
 
 import argparse
-import ctypes
 import hashlib
 import json
 import math
@@ -14,17 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-
-class Usage(ctypes.Structure):
-    # sys/resource.h, rusage_info_v0. CPU counters are Mach absolute ticks.
-    _fields_ = [("uuid", ctypes.c_ubyte * 16)] + [
-        (name, ctypes.c_uint64) for name in (
-            "user", "system", "idle_wakes", "interrupt_wakes", "pageins",
-            "wired", "resident", "physical", "start", "exit")]
-
-
-class Timebase(ctypes.Structure):
-    _fields_ = [("numer", ctypes.c_uint32), ("denom", ctypes.c_uint32)]
+from process_usage import Counters, cpu_delta
 
 
 def main():
@@ -44,53 +33,34 @@ def main():
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
         args.command.pop(0)
-    if platform.system() != "Darwin" or not args.command:
-        parser.error("requires macOS and a command after --")
+    if not args.command:
+        parser.error("requires a command after --")
     if not math.isfinite(args.warmup_seconds) or args.warmup_seconds < 0:
         parser.error("warmup seconds must be finite and nonnegative")
     if args.sample_seconds is not None and (
             not math.isfinite(args.sample_seconds) or args.sample_seconds <= 0):
         parser.error("sample seconds must be finite and positive")
-    if (any(pid <= 0 or pid == args.terminal_pid for pid in args.helper_pid)
-            or len(set(args.helper_pid)) != len(args.helper_pid)):
-        parser.error("helper PIDs must be distinct positive processes other than the terminal")
+    pids = [args.terminal_pid, *args.helper_pid]
+    if any(pid <= 0 or pid > 0x7fffffff for pid in pids) or len(set(pids)) != len(pids):
+        parser.error("terminal and helper PIDs must be distinct positive process IDs")
     binary = shutil.which(args.command[0])
     if not binary:
         parser.error(f"cannot find executable: {args.command[0]}")
 
-    libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
-    libproc.proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
-    libproc.proc_pid_rusage.restype = ctypes.c_int
-    system = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
-    system.mach_timebase_info.argtypes = [ctypes.POINTER(Timebase)]
-    system.mach_timebase_info.restype = ctypes.c_int
-    timebase = Timebase()
-    if system.mach_timebase_info(ctypes.byref(timebase)) != 0 or not timebase.denom:
-        raise RuntimeError("cannot read Mach timebase")
-    tick_seconds = timebase.numer / timebase.denom / 1e9
+    with Counters() as counters:
+        report = measure(args, counters, binary)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(json.dumps(report, indent=2) + "\n")
+    raise SystemExit(report["status"] or (0 if report["measurement_valid"] else 1))
 
-    def usage(pid):
-        result = Usage()
-        if libproc.proc_pid_rusage(pid, 0, ctypes.byref(result)) != 0:
-            raise OSError(ctypes.get_errno(), "proc_pid_rusage", str(pid))
-        return result
 
-    def cpu_delta(before, after):
-        if before.exit or after.exit:
-            raise RuntimeError("selected process exited during the sample")
-        if before.start != after.start:
-            raise RuntimeError("process restarted or PID was reused")
-        ticks = after.user + after.system - before.user - before.system
-        if ticks < 0:
-            raise RuntimeError("CPU counter moved backwards")
-        return ticks * tick_seconds
-
+def measure(args, counters, binary):
     def helper_sample(before, wall):
         samples = []
         for pid, first in before.items():
             result = {"pid": pid}
             try:
-                cpu = cpu_delta(first, usage(pid))
+                cpu = cpu_delta(first, counters.snapshot(pid))
                 result.update(cpu_seconds=cpu, cpu_ms_per_second=cpu / wall * 1000)
             except (OSError, RuntimeError) as error:
                 result["error"] = str(error)
@@ -103,35 +73,35 @@ def main():
 
     # Check the units against an independent counter in this process. This
     # catches treating ARM ticks as nanoseconds (Intel often has a 1:1 ratio).
-    own = usage(os.getpid())
-    observed = (own.user + own.system) * tick_seconds
+    observed = counters.snapshot(os.getpid()).cpu_seconds
     if abs(observed - time.process_time()) > .05:
         raise RuntimeError("CPU counter units disagree with process_time")
 
-    terminal_name = subprocess.check_output(
-        ["ps", "-p", str(args.terminal_pid), "-o", "comm="], text=True).strip()
-    helper_names = {pid: subprocess.check_output(
-        ["ps", "-p", str(pid), "-o", "comm="], text=True).strip()
-        for pid in args.helper_pid}
-    helpers_before = {pid: usage(pid) for pid in args.helper_pid}
-    before = usage(args.terminal_pid)
+    terminal_name = counters.name(args.terminal_pid)
+    helper_names = {pid: counters.name(pid) for pid in args.helper_pid}
+    binary_hash = hashlib.sha256(Path(binary).read_bytes()).hexdigest()
+    helpers_before = {pid: counters.snapshot(pid) for pid in args.helper_pid}
+    before = counters.snapshot(args.terminal_pid)
+    for snapshot in [before, *helpers_before.values()]:
+        if not snapshot.alive:
+            raise RuntimeError("selected process already exited before launch")
     started = time.monotonic()
     process = subprocess.Popen(args.command)
     stopped = threading.Event()
-    interval = {}
+    interval = {"error": "interval sample did not complete"} if args.sample_seconds else {}
 
     def sample_interval():
         try:
             if stopped.wait(args.warmup_seconds):
                 raise RuntimeError("child exited during warmup")
-            app_before = usage(process.pid)
-            term_before = usage(args.terminal_pid)
-            helper_before = {pid: usage(pid) for pid in args.helper_pid}
+            app_before = counters.snapshot(process.pid)
+            term_before = counters.snapshot(args.terminal_pid)
+            helper_before = {pid: counters.snapshot(pid) for pid in args.helper_pid}
             sample_start = time.monotonic()
             if stopped.wait(args.sample_seconds):
                 raise RuntimeError("child exited before the interval sample finished")
-            app_after = usage(process.pid)
-            term_after = usage(args.terminal_pid)
+            app_after = counters.snapshot(process.pid)
+            term_after = counters.snapshot(args.terminal_pid)
             sample_wall = time.monotonic() - sample_start
             interval.update({
                 "start_seconds_after_launch": sample_start - started,
@@ -143,51 +113,60 @@ def main():
             })
             if args.helper_pid:
                 interval["terminal_helpers"] = helper_sample(helper_before, sample_wall)
-        except (OSError, RuntimeError) as error:
-            interval["error"] = str(error)
+            interval.pop("error", None)
+        except Exception as error:
+            # Keep worker failures in the report and fail the measurement.
+            interval["error"] = f"{type(error).__name__}: {error}"
 
     sampler = None
-    if args.sample_seconds is not None:
-        sampler = threading.Thread(target=sample_interval, daemon=True)
-        sampler.start()
     try:
-        _, status, child = os.wait4(process.pid, 0)
-        process.returncode = os.waitstatus_to_exitcode(status)
+        counters.prepare_child(process)
+        if args.sample_seconds is not None:
+            sampler = threading.Thread(target=sample_interval, daemon=True)
+            sampler.start()
+        application_cpu = counters.wait(process)
     finally:
         if process.returncode is None:
             process.kill()
             process.wait()
+        wall = time.monotonic() - started
         stopped.set()
         if sampler:
             sampler.join()
-    wall = time.monotonic() - started
-    after = usage(args.terminal_pid)
-    terminal_cpu = cpu_delta(before, after)
-    helpers = helper_sample(helpers_before, wall) if args.helper_pid else None
-    application_cpu = child.ru_utime + child.ru_stime
     report = {
         "scope": "CPU during child lifetime, including startup; not presentation timing",
         "platform": platform.platform(), "note": args.note,
         "excluded_costs": ["compositor", "GPU", "unselected helper processes"],
         "command": args.command,
-        "binary_sha256": hashlib.sha256(Path(binary).read_bytes()).hexdigest(),
+        "binary_sha256": binary_hash,
         "status": process.returncode, "wall_seconds": wall,
         "terminal_pid": args.terminal_pid, "terminal_process": terminal_name,
-        "mach_timebase": [timebase.numer, timebase.denom],
-        "application_cpu_seconds": application_cpu, "terminal_cpu_seconds": terminal_cpu,
+        "application_cpu_seconds": application_cpu,
         "application_cpu_ms_per_second": application_cpu / wall * 1000,
-        "terminal_cpu_ms_per_second": terminal_cpu / wall * 1000,
-        "terminal_idle_wakeups": after.idle_wakes - before.idle_wakes,
+        **counters.metadata,
     }
-    if helpers is not None:
+    try:
+        after = counters.snapshot(args.terminal_pid)
+        terminal_cpu = cpu_delta(before, after)
+        report.update(terminal_cpu_seconds=terminal_cpu,
+                      terminal_cpu_ms_per_second=terminal_cpu / wall * 1000)
+        if after.idle_wakes is not None:
+            report["terminal_idle_wakeups"] = after.idle_wakes - before.idle_wakes
+    except (OSError, RuntimeError) as error:
+        report["terminal_error"] = str(error)
+    if args.helper_pid:
+        helpers = helper_sample(helpers_before, wall)
         for sample in helpers["processes"]:
             sample["process"] = helper_names[sample["pid"]]
         report["terminal_helpers"] = helpers
     if args.sample_seconds is not None:
         report["interval_sample"] = interval
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, indent=2) + "\n")
-    raise SystemExit(process.returncode)
+    report["measurement_valid"] = (
+        "terminal_error" not in report and "error" not in interval
+        and all("cpu_seconds" in sample for sample in
+                [report.get("terminal_helpers", {}), interval.get("terminal_helpers", {})]
+                if "processes" in sample))
+    return report
 
 
 if __name__ == "__main__":

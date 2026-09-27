@@ -110,19 +110,32 @@ Performance Analyzer can separate CPU execution, readiness and waits; Linux
 `perf` and macOS sampling tools can identify active work. Account for terminal
 CPU/GPU costs alongside the application.
 
-On macOS, `tools/terminal-perf.py` records rbirds CPU and a selected terminal
-process's CPU over the child's lifetime. Launch it as a terminal's direct
+On native Windows, Linux and macOS, `tools/terminal-perf.py` records rbirds CPU
+and a selected terminal process's CPU over the child's lifetime. It needs
+Python 3.9 or later with no extra packages. Launch it as a terminal's direct
 command, or pass `--terminal-pid` explicitly when running it from a shell:
 
 ```sh
 python3 tools/terminal-perf.py --terminal-pid 12345 --output target/terminal.json --note 'terminal/version, visible, power mode, background work' -- ./target/release/rbirds --render kitty --seed 42 --frames 1800
 ```
 
+From PowerShell, use `python` and `./target/release/rbirds.exe` with the same
+arguments. Select the actual terminal process, not the shell; the default
+parent PID is correct only when the terminal launched the harness directly.
+Run the executable directly after `--`, without a shell or launcher in between.
+In WSL, Linux process counters cannot measure a Windows terminal process;
+that combination still needs separate host and guest tracing. Measuring
+`wsl.exe` from Windows would count the launcher rather than Linux rbirds.
+
 Use a dedicated terminal process: other tabs and windows in that process count
 toward its CPU total. This measurement includes startup, excludes the compositor,
 GPU and unselected helper processes, and does not establish whether the window
-was visible. Its macOS CPU
-counters are converted from Mach ticks with the host's actual timebase.
+was visible. macOS CPU counters use the host's actual Mach timebase. Linux uses
+`/proc/PID/stat` with `SC_CLK_TCK`, and Windows uses `GetProcessTimes` with a
+retained process handle. Each run checks the units against Python's independent
+process CPU clock. The APIs are described in the
+[Linux proc documentation](https://docs.kernel.org/filesystems/proc.html) and
+[Windows process timing documentation](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getprocesstimes).
 Add `--warmup-seconds 3 --sample-seconds 30` to also sample both processes over
 the same elapsed-time interval. Keep the child running longer than that window;
 an early exit records a sample error. Fixed frame counts alone compare different
@@ -137,6 +150,18 @@ still means the selected main terminal process alone. Include the helper sum
 when calculating combined CPU. Exited or replaced processes produce errors
 rather than a partial helper total. Helpers that start or restart during a run
 need process-lifetime tracing; this tool does not discover or follow them.
+On Windows, include the identified console host as a helper when it performs
+work for the measured terminal. Process creation identities and retained
+Windows handles prevent PID reuse from silently joining unrelated counters.
+
+Reports include `measurement_valid`. An incomplete interval or a failed
+terminal/helper counter invalidates the measurement and makes the harness exit
+nonzero; the JSON retains the error and the child's own `status`. Accept a run
+only when both the measurement is valid and the child exited successfully.
+`python3 tools/test_terminal_perf.py` checks counter units, child CPU accounting,
+intervals and process-exit failures. Native CI runs these checks on all six
+supported OS/architecture combinations. They check measurement correctness,
+not terminal appearance or performance budgets.
 
 For a separate macOS presentation sample, give a visible test window a title
 starting with `rbirds-perf-`, then run:
