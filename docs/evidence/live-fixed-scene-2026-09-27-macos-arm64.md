@@ -92,6 +92,17 @@ error. Another 57 release checks cover ordinary terminal playback, Sixel,
 Kitty raster/shared images, allocation failure and steady-state allocation.
 Formatting, Clippy with warnings denied, and patch whitespace checks pass.
 
+The [first CI run](https://github.com/willibrandon/rbirds/actions/runs/36327917173/job/108644154613)
+failed an older timed-alignment test on Intel macOS. That test assumed child startup, including its intentional
+200 ms delay, finished before a 350 ms sampling warm-up. A controlled extra
+400 ms startup delay reproduces its failing assertion: the trace correctly
+rejects a counter window that begins before trace coverage. The test now waits
+for explicit child readiness, requests a submission inside the sample, and
+keeps the child alive until sampling ends. Native counters and clocks remain
+in use, and it checks an exact count of one drawn frame plus an excluded idle
+tick. Application code and measurement coverage checks are unchanged.
+All 25 Python checks pass after the correction in native and Rosetta Python.
+
 [Raw evidence](live-fixed-scene-2026-09-27-macos-arm64.tar.gz) includes final and
 clearly separated preliminary reports, frame traces, drivers, source and test
 logs. Run its `analyze.py` to reproduce the table from final reports. The

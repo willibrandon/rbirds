@@ -9,10 +9,12 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
 from unittest.mock import Mock, patch
 from pathlib import Path
+from types import SimpleNamespace
 
 from process_usage import Counters, Snapshot, cpu_delta, linux_snapshot, memory_change
 from trace_alignment import align_interval, read_trace
@@ -305,23 +307,70 @@ from measurement_clock import MeasurementClock
 clock=MeasurementClock()
 time.sleep(.2)
 begin=clock.now_ns()
-frames=[]
-for i in range(150):
-    frames.append(dict(kind='frame',drawn=i%2==0,submitted_ns=clock.now_ns()))
-    time.sleep(.005)
+gate=Path({str(self.path)!r})
+def wait_for(name):
+    deadline=time.monotonic()+10
+    while not (gate/name).exists():
+        if time.monotonic()>deadline:raise TimeoutError(name)
+        time.sleep(.001)
+(gate/'ready').touch()
+wait_for('submit')
+frames=[dict(kind='frame',drawn=drawn,submitted_ns=clock.now_ns()) for drawn in [False,True]]
+(gate/'submitted').touch()
+wait_for('finish')
 summary=dict(kind='summary',version=2,session=int(os.environ['RBIRDS_TRACE_SESSION']),
              pid=os.getpid(),measurement_clock=clock.name,begin_ns=begin,end_ns=clock.now_ns(),
              samples=len(frames),omitted=0,drawn_frames=sum(r['drawn'] for r in frames))
 Path(os.environ['RBIRDS_TRACE']).write_text('\\n'.join(json.dumps(r) for r in [summary,*frames])+'\\n')
 '''
-        result, report = self.run_report(child, ['--warmup-seconds', '.35',
-                                                '--sample-seconds', '.2', '--trace', str(trace)])
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(report['measurement_valid'])
+        # Coordinate only the test: a fixed delay cannot guarantee that the
+        # child starts before, or stays alive throughout, a CI counter window.
+        # Keep native counters, the real child clock and normal timed sampling.
+        directory = self.path
+        threads = []
+        thread_type = threading.Thread
+        wait_until = terminal_perf.wait_until
+        waits = 0
+
+        def sampler_thread(**kwargs):
+            thread = thread_type(**kwargs)
+            threads.append(thread)
+            return thread
+
+        def sample_wait(stopped, deadline):
+            nonlocal waits
+            waits += 1
+            if waits == 2:
+                (directory / 'submit').touch()
+                terminal_perf.wait_for_fixture(stopped, directory, 'submitted', 10)
+            return wait_until(stopped, deadline)
+
+        class ReadyCounters(Counters):
+            def prepare_child(self, process):
+                super().prepare_child(process)
+                terminal_perf.wait_for_fixture(threading.Event(), directory, 'ready', 10)
+
+            def wait(self, process):
+                threads[0].join(timeout=10)
+                if threads[0].is_alive():
+                    raise TimeoutError('counter sampler did not finish')
+                (directory / 'finish').touch()
+                return super().wait(process)
+
+        args = SimpleNamespace(command=[sys.executable, '-c', child], terminal_pid=os.getpid(),
+                               helper_pid=[], fixture_frames=None, trace=trace, note='test',
+                               warmup_seconds=.01, sample_seconds=.2, sample_count=1,
+                               sample_gap_seconds=0)
+        with ReadyCounters() as counters, \
+                patch.object(terminal_perf.threading, 'Thread', side_effect=sampler_thread), \
+                patch.object(terminal_perf, 'wait_until', side_effect=sample_wait):
+            report = terminal_perf.measure(args, counters, sys.executable)
+        self.assertEqual(report['status'], 0, report)
+        self.assertTrue(report['measurement_valid'], report)
         interval = report['interval_sample']
         alignment = interval['trace_alignment']
-        self.assertGreater(alignment['submitted_frames_min'], 0)
-        self.assertLessEqual(alignment['submitted_frames_min'], alignment['submitted_frames_max'])
+        self.assertEqual(alignment['submitted_frames_min'], 1)
+        self.assertEqual(alignment['submitted_frames_max'], 1)
         bounds = interval['counter_read_bounds_ns']
         self.assertLess(bounds['before'][1], bounds['after'][0])
         self.assertIn('cpu_ms_per_submitted_frame', alignment)
