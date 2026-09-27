@@ -175,7 +175,6 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
     let mut weight = [0.0f64; PATCH_COLOURS];
     let mut colours = 0usize;
     let mut alpha_sum = 0.0f64;
-    let mut counted: i64 = 0;
     // The C walks the whole rectangle and skips what lies off the canvas; only
     // the pixels on it do anything, so the walk starts and stops at the canvas
     // edges, in the same order.
@@ -183,12 +182,16 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
     let y_end = (i64::from(y0) + i64::from(height)).min(i64::from(canvas.height)) as i32;
     let x_start = x0.max(0);
     let x_end = (i64::from(x0) + i64::from(width)).min(i64::from(canvas.width)) as i32;
+    if x_end <= x_start || y_end <= y_start {
+        return patch;
+    }
+    let row_bytes = (x_end - x_start) as usize * 4;
+    let counted = i64::from(x_end - x_start) * i64::from(y_end - y_start);
     for y in y_start..y_end {
-        for x in x_start..x_end {
-            let at = canvas.offset(x, y);
-            let px = &canvas.pixels[at..at + 4];
+        let start = canvas.offset(x_start, y);
+        // Check the row once, retaining the reference's pixel order.
+        for px in canvas.pixels[start..start + row_bytes].chunks_exact(4) {
             let a = f64::from(px[3]);
-            counted += 1;
             alpha_sum += a;
             if a == 0.0 {
                 continue;
@@ -210,7 +213,7 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
             weight[slot] += a;
         }
     }
-    if counted == 0 || alpha_sum == 0.0 {
+    if alpha_sum == 0.0 {
         return patch;
     }
     patch.coverage = alpha_sum / counted as f64;
@@ -228,13 +231,12 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
 /// restarting the sums in the reference's pixel order to preserve rounding.
 fn read_mean_patch(canvas: &Image, x0: i32, y0: i32, x1: i32, y1: i32) -> Patch {
     let (mut alpha_sum, mut red, mut green, mut blue) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    let mut counted = 0_i64;
+    let row_bytes = (x1 - x0) as usize * 4;
+    let counted = i64::from(x1 - x0) * i64::from(y1 - y0);
     for y in y0..y1 {
-        for x in x0..x1 {
-            let at = canvas.offset(x, y);
-            let px = &canvas.pixels[at..at + 4];
+        let start = canvas.offset(x0, y);
+        for px in canvas.pixels[start..start + row_bytes].chunks_exact(4) {
             let a = f64::from(px[3]);
-            counted += 1;
             alpha_sum += a;
             if a == 0.0 {
                 continue;
