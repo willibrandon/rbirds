@@ -11,6 +11,16 @@ use crate::config::*;
 use crate::fp::{self, mul_add};
 use crate::spatial_grid::SpatialGrid;
 
+/// The repeatedly read snapshot fields in grid traversal order.
+#[derive(Clone, Copy, Default)]
+struct Neighbor {
+    x: f64,
+    y: f64,
+    flock: i32,
+    layer: i32,
+    heading: TrigEntry,
+}
+
 impl Sim {
     /// `wind_vector`: straight down in the rain, nothing otherwise.
     pub fn wind_vector(&self) -> Vector {
@@ -352,15 +362,15 @@ impl Sim {
     /// `flock_direction`: the heading one bird wants, from its neighbours in
     /// the snapshot through the grid, in the grid's own order.
     pub fn flock_direction(&self, birds: &[Bird], grid: &SpatialGrid, target_index: usize) -> f64 {
-        self.flock_direction_with_headings::<false>(birds, grid, target_index, &[])
+        self.flock_direction_with_neighbors::<false>(birds, grid, target_index, &[])
     }
 
-    fn flock_direction_with_headings<const CACHED: bool>(
+    fn flock_direction_with_neighbors<const CACHED: bool>(
         &self,
         birds: &[Bird],
         grid: &SpatialGrid,
         target_index: usize,
-        headings: &[TrigEntry],
+        cache: &[Neighbor],
     ) -> f64 {
         let target = &birds[target_index];
         // Writing overrules flocking while it lasts.
@@ -407,12 +417,23 @@ impl Sim {
         let radius_squared = f64::from(config.vision_radius_squared);
 
         for cell_y in min_y..=max_y {
-            for &i in grid.row_items(cell_y, min_x, max_x) {
-                let i = i as usize;
+            for slot in grid.row_range(cell_y, min_x, max_x) {
+                let i = grid.indices[slot] as usize;
                 if i == target_index {
                     continue;
                 }
-                let other = &birds[i];
+                let other = if CACHED {
+                    cache[slot]
+                } else {
+                    let bird = &birds[i];
+                    Neighbor {
+                        x: bird.x,
+                        y: bird.y,
+                        flock: bird.flock,
+                        layer: bird.layer,
+                        heading: TrigEntry::default(),
+                    }
+                };
                 let dx = target.x - other.x;
                 let dy = target.y - other.y;
                 // fma: boids.c:2060:29
@@ -430,7 +451,7 @@ impl Sim {
                 if other.flock != target.flock {
                     if config.avoid_kinship > 0.0 {
                         let heading =
-                            if CACHED { headings[i] } else { trig_lookup(other.direction) };
+                            if CACHED { other.heading } else { trig_lookup(birds[i].direction) };
                         let kinship = config.avoid_kinship;
                         // fma: boids.c:2076:37
                         alignment.x = mul_add(kinship, f64::from(heading.cosine), alignment.x);
@@ -455,7 +476,7 @@ impl Sim {
                     }
                     continue;
                 }
-                let heading = if CACHED { headings[i] } else { trig_lookup(other.direction) };
+                let heading = if CACHED { other.heading } else { trig_lookup(birds[i].direction) };
                 alignment.x += f64::from(heading.cosine);
                 alignment.y += f64::from(heading.sine);
                 cohesion.x += other.x;
@@ -609,29 +630,53 @@ impl Sim {
         // A handful of birds does too few neighbour lookups to repay a cache.
         // Keep the general path for snapshots beyond the supported population.
         if self.config.birds < 32 || snapshot.len() > MAX_BIRDS as usize {
-            self.update_birds_with_headings::<false>(birds, snapshot, grid, &[]);
+            self.update_birds_with_neighbors::<false>(birds, snapshot, grid, &[]);
             return;
         }
-        // Every neighbour reads the same snapshot heading. Compute its exact
-        // table entry once per step, retaining the grid's accumulation order.
-        let mut headings = [TrigEntry::default(); MAX_BIRDS as usize];
-        let headings = &mut headings[..snapshot.len()];
-        for (heading, bird) in headings.iter_mut().zip(snapshot) {
-            *heading = trig_lookup(bird.direction);
+        // Keep small flocks' scratch space small as well. Larger snapshots
+        // use the supported population limit without allocating per step.
+        match snapshot.len() {
+            0..=128 => self.update_birds_cached::<128>(birds, snapshot, grid),
+            129..=1024 => self.update_birds_cached::<1024>(birds, snapshot, grid),
+            _ => self.update_birds_cached::<{ MAX_BIRDS as usize }>(birds, snapshot, grid),
         }
-        self.update_birds_with_headings::<true>(birds, snapshot, grid, headings);
     }
 
-    fn update_birds_with_headings<const CACHED: bool>(
+    #[inline(never)]
+    fn update_birds_cached<const CAPACITY: usize>(
         &mut self,
         birds: &mut [Bird],
         snapshot: &[Bird],
         grid: &SpatialGrid,
-        headings: &[TrigEntry],
+    ) {
+        // Pack exactly the values the neighbour loop reads, retaining their
+        // precision and the grid's accumulation order. Keep the large stack
+        // buffer in this call so uncached updates do not reserve it.
+        let mut cache = [Neighbor::default(); CAPACITY];
+        let cache = &mut cache[..snapshot.len()];
+        for (neighbor, &index) in cache.iter_mut().zip(grid.items()) {
+            let bird = &snapshot[index as usize];
+            *neighbor = Neighbor {
+                x: bird.x,
+                y: bird.y,
+                flock: bird.flock,
+                layer: bird.layer,
+                heading: trig_lookup(bird.direction),
+            };
+        }
+        self.update_birds_with_neighbors::<true>(birds, snapshot, grid, cache);
+    }
+
+    fn update_birds_with_neighbors<const CACHED: bool>(
+        &mut self,
+        birds: &mut [Bird],
+        snapshot: &[Bird],
+        grid: &SpatialGrid,
+        cache: &[Neighbor],
     ) {
         for i in 0..self.config.birds as usize {
             let mut direction =
-                self.flock_direction_with_headings::<CACHED>(snapshot, grid, i, headings);
+                self.flock_direction_with_neighbors::<CACHED>(snapshot, grid, i, cache);
             // Banking is for flocking: a bird writing a letter, and a bird in
             // the panel's turn zone, turn at once.
             if self.formation.target_of(i as i32).is_none()
@@ -675,6 +720,73 @@ impl Sim {
                 bird.trail_at = (bird.trail_at + 1) % TRAIL_LENGTH;
                 if bird.trail_held < TRAIL_LENGTH {
                     bird.trail_held += 1;
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sorted_neighbors_preserve_updates_at_every_cache_boundary() {
+        for extra in [0, 2] {
+            for count in [31, 32, 128, 129, 1024, 1025, 4094, 4096, 4097] {
+                let mut cached = Sim::new();
+                cached.config.birds = count;
+                cached.config.flocks = 3;
+                cached.config.hawks = 2;
+                cached.config.trails = true;
+                cached.config.pace_notch = 12;
+                cached.deep_look = true;
+                cached.apply_notches();
+                cached.apply_screen_size(80, 30, 641, 479);
+                cached.set_frame_seconds(1.0 / 60.0);
+                cached.rng.seed(42);
+                let mut birds = vec![Bird::default(); count as usize];
+                cached.initialize_birds(&mut birds);
+                cached.place_hawks();
+                let mut direct = cached.clone();
+                let mut expected = birds.clone();
+                let mut grid = SpatialGrid::new(12).unwrap();
+                grid.prepare(641, 479, count + 4).unwrap();
+                for step in 0..5 {
+                    let mut snapshot = birds.clone();
+                    snapshot.resize(snapshot.len() + extra, Bird::default());
+                    grid.build(count, |i| (snapshot[i].x, snapshot[i].y)).unwrap();
+                    // A shrunken flock can leave indices from its former capacity.
+                    grid.indices[count as usize..].fill(count + 3);
+                    assert!(
+                        grid.indices[..count as usize]
+                            .iter()
+                            .enumerate()
+                            .any(|(i, &j)| i != j as usize)
+                    );
+                    cached.update_birds(&mut birds, &snapshot, &grid);
+                    direct.measure_flocks(&snapshot);
+                    direct.update_birds_with_neighbors::<false>(
+                        &mut expected,
+                        &snapshot,
+                        &grid,
+                        &[],
+                    );
+                    assert_eq!(birds, expected, "count={count}, step={step}");
+                    assert_eq!(cached.rng, direct.rng);
+                    // Equality above covers all fields; compare float bits too,
+                    // including the sign of zero in stored trail coordinates.
+                    for (actual, expected) in birds.iter().zip(&expected) {
+                        let floats = |bird: &Bird| {
+                            [bird.x, bird.y, bird.direction, bird.wing_clock, bird.gliding]
+                                .into_iter()
+                                .chain(bird.trail_x)
+                                .chain(bird.trail_y)
+                                .map(f64::to_bits)
+                                .collect::<Vec<_>>()
+                        };
+                        assert_eq!(floats(actual), floats(expected));
+                    }
                 }
             }
         }

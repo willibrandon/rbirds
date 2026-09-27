@@ -275,6 +275,15 @@ Partial output writes advance a cursor through the queued frame. Retries do not
 copy the unsent suffix; appending to a partially sent queue compacts it once.
 The [output measurements](evidence/live-output-cursor-2026-09-27-macos-arm64.md)
 record the CPU saving and unchanged dense-scene delivery limit in iTerm.
+
+Flock updates pack frequently read neighbor fields in spatial-grid order,
+retaining the original accumulation order and precision. Scratch capacity
+follows population size, with no per-frame allocation. The
+[neighbor cache comparison](evidence/live-sorted-neighbors-2026-09-27-macos-arm64.md)
+records lower dense Kitty CPU near 60 Hz. Dense Sixel delivers more frames
+but uses slightly more combined CPU per second, and remains below 60 visible
+changes/s. Default-scene CPU savings were not established by this change.
+
 Live Kitty groups rotations into cropped texture placements, preserving source
 pixels and stacking order while reducing terminal image lookups. In iTerm,
 the live Kitty path instead composes sprites into at most two transparent

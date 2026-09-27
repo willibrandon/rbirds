@@ -19,6 +19,10 @@ checks iTerm 3.7.3 and the startup guard for affected versions, following the
 The [Sixel background plane comparison](live-sixel-ground-2026-09-27-macos-arm64.md)
 checks smaller output with identical pixels and lower decoder cost; dense
 playback still falls short of 60 visible changes/s.
+The [neighbor cache comparison](live-sorted-neighbors-2026-09-27-macos-arm64.md)
+checks exact simulation results with compact data in grid traversal order.
+Dense Kitty uses less CPU; dense Sixel gains throughput while total CPU rises
+slightly and presentation remains below 60 changes/s.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.
