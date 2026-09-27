@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure rbirds, a terminal and selected helpers on Windows, Linux or macOS."""
+"""Measure CPU and memory for rbirds, its terminal and selected helpers."""
 
 import argparse
 import hashlib
@@ -14,7 +14,7 @@ import threading
 import time
 from pathlib import Path
 
-from process_usage import Counters, cpu_delta
+from process_usage import Counters, cpu_delta, memory_change
 from measurement_clock import MeasurementClock
 from trace_alignment import align_interval, read_trace
 
@@ -100,8 +100,10 @@ def measure(args, counters, binary):
         for pid, first in before.items():
             result = {"pid": pid}
             try:
-                cpu = cpu_delta(first, counters.snapshot(pid))
-                result.update(cpu_seconds=cpu, cpu_ms_per_second=cpu / wall * 1000)
+                last = counters.snapshot(pid)
+                cpu = cpu_delta(first, last)
+                result.update(cpu_seconds=cpu, cpu_ms_per_second=cpu / wall * 1000,
+                              memory=memory_change(first, last))
             except (OSError, RuntimeError) as error:
                 result["error"] = str(error)
             samples.append(result)
@@ -160,6 +162,8 @@ def measure(args, counters, binary):
                     "terminal_cpu_seconds": term_cpu,
                     "application_cpu_ms_per_second": app_cpu / sample_wall * 1000,
                     "terminal_cpu_ms_per_second": term_cpu / sample_wall * 1000,
+                    "application_memory": memory_change(app_before, app_after),
+                    "terminal_memory": memory_change(term_before, term_after),
                 })
                 if args.helper_pid:
                     interval["terminal_helpers"] = helper_sample(helper_before, sample_wall)
@@ -197,6 +201,7 @@ def measure(args, counters, binary):
         "elapsed_clock_resolution_seconds": time.get_clock_info("perf_counter").resolution,
         "measurement_clock": clock.name,
         "excluded_costs": ["compositor", "GPU", "unselected helper processes"],
+        "memory_scope": "process gauges at interval endpoints; not peaks, allocation totals or system pressure",
         "command": args.command,
         "binary_sha256": binary_hash,
         "status": process.returncode, "wall_seconds": wall, "application_pid": process.pid,
@@ -209,7 +214,8 @@ def measure(args, counters, binary):
         after = counters.snapshot(args.terminal_pid)
         terminal_cpu = cpu_delta(before, after)
         report.update(terminal_cpu_seconds=terminal_cpu,
-                      terminal_cpu_ms_per_second=terminal_cpu / wall * 1000)
+                      terminal_cpu_ms_per_second=terminal_cpu / wall * 1000,
+                      terminal_memory=memory_change(before, after))
         if after.idle_wakes is not None:
             report["terminal_idle_wakeups"] = after.idle_wakes - before.idle_wakes
     except (OSError, RuntimeError) as error:

@@ -130,7 +130,9 @@ that combination still needs separate host and guest tracing. Measuring
 Use a dedicated terminal process: other tabs and windows in that process count
 toward its CPU total. This measurement includes startup, excludes the compositor,
 GPU and unselected helper processes, and does not establish whether the window
-was visible. macOS CPU counters use the host's actual Mach timebase. Linux uses
+was visible. macOS CPU counters use the kernel's `hw.tbfrequency`, including
+when Python runs through Rosetta; its translated `mach_timebase_info` does not
+describe `proc_pid_rusage` ticks. Linux uses
 `/proc/PID/stat` with `SC_CLK_TCK`, and Windows uses `GetProcessTimes` with a
 retained process handle. Each run checks the units against Python's independent
 process CPU clock. The APIs are described in the
@@ -206,12 +208,26 @@ On Windows, include the identified console host as a helper when it performs
 work for the measured terminal. Process creation identities and retained
 Windows handles prevent PID reuse from silently joining unrelated counters.
 
+CPU samples also retain application, terminal and selected-helper memory at
+both endpoints, with signed byte changes. macOS reports resident bytes and
+physical footprint from `rusage_info_v0`; Linux reports resident pages from
+`/proc/PID/stat`, converted using the native page size. Windows reports working
+set and private commit through
+[`PROCESS_MEMORY_COUNTERS_EX`](https://learn.microsoft.com/en-us/windows/win32/api/psapi/ns-psapi-process_memory_counters_ex).
+These metrics describe different quantities; do not add them together or treat
+them as interchangeable across systems. Lifetime reports retain terminal/helper
+endpoints; application memory requires a live interval before the child exits.
+Endpoint samples can miss temporary peaks and do not measure allocation totals
+or system memory pressure. Require bounded memory during sustained playback as
+well as lower CPU and correct presentation. Short CPU runs missed the
+[iTerm Kitty texture-cache growth](evidence/live-iterm-memory-2026-09-27-macos-arm64.md).
+
 Reports include `measurement_valid`. An incomplete interval or a failed
 terminal/helper counter invalidates the measurement and makes the harness exit
 nonzero; the JSON retains the error and the child's own `status`. Accept a run
 only when both the measurement is valid and the child exited successfully.
 `python3 tools/test_terminal_perf.py` checks counter units, child CPU accounting,
-intervals and process-exit failures. Native CI runs these checks on all six
+intervals, committed memory changes and process-exit failures. Native CI runs these checks on all six
 supported OS/architecture combinations. They check measurement correctness,
 not terminal appearance or performance budgets. The
 [native counter validation](evidence/terminal-counters-2026-09-27.md) retains
@@ -275,6 +291,10 @@ an unread image keeps its contents, with that frame falling back to inline
 compression. Remote or unsupported connections retain inline transport. The
 [shared-memory observations](evidence/live-iterm-shm-2026-09-27-macos-arm64.md)
 include combined CPU, dense playback, pixel integrity and cleanup checks.
+Later [memory measurements](evidence/live-iterm-memory-2026-09-27-macos-arm64.md)
+found rapid texture-cache growth in iTerm 3.6.6. Those short-run improvements do
+not qualify composed Kitty playback for sustained use in affected versions.
+The upstream cache fix still needs runtime qualification here.
 Local alpha composition can differ slightly
 from the terminal blending separate textures, as recorded in the
 [Mac evidence](evidence/live-2026-09-26-macos-arm64.md).

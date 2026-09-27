@@ -13,7 +13,7 @@ import unittest
 from unittest.mock import Mock, patch
 from pathlib import Path
 
-from process_usage import Counters, Snapshot, cpu_delta, linux_snapshot
+from process_usage import Counters, Snapshot, cpu_delta, linux_snapshot, memory_change
 from trace_alignment import align_interval, read_trace
 
 
@@ -85,16 +85,62 @@ class NativeCounters(unittest.TestCase):
                     process.wait()
 
     def test_linux_names_and_descendant_counters_do_not_shift_cpu_fields(self):
-        fields = ['S'] + ['0'] * 19
+        fields = ['S'] + ['0'] * 21
         fields[11], fields[12], fields[13], fields[14], fields[19] = (
             '125', '75', '999999', '999999', '800')
         stat = '42 (odd ) process\n(name) ' + ' '.join(fields)
-        sample = linux_snapshot(stat, 100)
-        self.assertEqual(sample, Snapshot((42, 800), 2, True))
+        sample = linux_snapshot(stat, 100, 4096)
+        self.assertEqual(sample, Snapshot((42, 800), 2, True, memory={'resident': 0}))
+        fields[21] = '123'
+        self.assertEqual(linux_snapshot('42 (pages) ' + ' '.join(fields), 100, 65536).memory,
+                         {'resident': 123 * 65536})
         fields[0] = 'Z'
-        self.assertFalse(linux_snapshot('42 (gone) ' + ' '.join(fields), 100).alive)
+        self.assertFalse(linux_snapshot('42 (gone) ' + ' '.join(fields), 100, 4096).alive)
         with self.assertRaises(RuntimeError):
-            linux_snapshot('42 (incomplete) S 0', 100)
+            linux_snapshot('42 (incomplete) S 0', 100, 4096)
+
+    def test_memory_can_fall_but_cannot_cross_processes_or_missing_metrics(self):
+        before = Snapshot((10, 100), 1, True, memory={'resident': 1000})
+        after = Snapshot((10, 100), 2, True, memory={'resident': 400})
+        self.assertEqual(memory_change(before, after), {
+            'resident': {'before_bytes': 1000, 'after_bytes': 400, 'change_bytes': -600}})
+        for invalid in [Snapshot((10, 101), 2, True, memory=after.memory),
+                        Snapshot((10, 100), 2, False, memory=after.memory),
+                        Snapshot((10, 100), 2, True)]:
+            with self.subTest(invalid=invalid), self.assertRaises(RuntimeError):
+                memory_change(before, invalid)
+
+    def test_native_memory_observes_committed_child_pages(self):
+        child = '''
+import os, sys
+print('ready', flush=True)
+sys.stdin.readline()
+pages = bytearray(os.urandom(32 * 1024 * 1024))
+print('allocated', flush=True)
+sys.stdin.readline()
+'''
+        process = subprocess.Popen([sys.executable, '-u', '-c', child],
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+        try:
+            with Counters() as counters:
+                counters.prepare_child(process)
+                self.assertEqual(process.stdout.readline().strip(), 'ready')
+                before = counters.snapshot(process.pid)
+                process.stdin.write('allocate\n')
+                process.stdin.flush()
+                self.assertEqual(process.stdout.readline().strip(), 'allocated')
+                after = counters.snapshot(process.pid)
+                memory = memory_change(before, after)
+                resident = 'working_set' if sys.platform == 'win32' else 'resident'
+                self.assertGreater(memory[resident]['change_bytes'], 16 * 1024 * 1024)
+                self.assertTrue(all(value > 0 for value in after.memory.values()))
+                print(json.dumps({'committed_child_memory': memory, **counters.metadata}), flush=True)
+        finally:
+            process.stdin.close()
+            process.stdout.close()
+            if process.poll() is None:
+                process.kill()
+            process.wait(timeout=10)
 
     def test_invalid_process_transitions_never_produce_cpu_deltas(self):
         before = Snapshot((10, 100), 1, True)
@@ -197,6 +243,14 @@ class Reports(unittest.TestCase):
             helpers = sample['terminal_helpers']
             self.assertEqual(helpers['processes'][0]['pid'], helper.pid)
             self.assertEqual(helpers['cpu_seconds'], helpers['processes'][0]['cpu_seconds'])
+            for memory in [sample['terminal_memory'], helpers['processes'][0]['memory']]:
+                self.assertTrue(memory)
+                for value in memory.values():
+                    self.assertEqual(value['after_bytes'] - value['before_bytes'],
+                                     value['change_bytes'])
+        self.assertTrue(interval['application_memory'])
+        self.assertIn('memory_counter', report)
+        self.assertIn('not peaks', report['memory_scope'])
 
     def test_incomplete_interval_is_retained_and_fails_the_command(self):
         result, report = self.run_report('pass', ['--warmup-seconds', '10',

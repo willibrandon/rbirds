@@ -42,7 +42,7 @@ jobs:
       - name: Native Windows gates
         shell: pwsh
         run: ./tools/verify.ps1
-      - name: Process CPU measurement checks
+      - name: Process CPU and memory measurement checks
         shell: pwsh
         run: python tools/test_terminal_perf.py
 
@@ -65,7 +65,7 @@ jobs:
           cargo --version
       - name: Pinned C reference
         run: tools/reference.sh
-      - name: Process CPU measurement checks
+      - name: Process CPU and memory measurement checks
         run: python3 tools/test_terminal_perf.py
       - name: Cross-process clock check
         run: |
