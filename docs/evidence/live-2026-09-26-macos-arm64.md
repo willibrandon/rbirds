@@ -64,6 +64,25 @@ frame cadence and terminal rendering change the totals; the covered-window
 result is not a substitute for these runs. Fixed frame counts also average
 different elapsed durations and therefore different parts of the simulation.
 
+A follow-up used equal thirty-second CPU intervals after three seconds of
+warmup, with 2400 frames per run, the same geometry and two alternating pairs.
+The candidate was `8dd03da`; the later iTerm Sixel changes do not affect these
+two renderers. No capture, builds or local test suites ran during this series.
+
+| Renderer | Application CPU ms/s, before → after | Terminal CPU ms/s | Combined CPU ms/s |
+| --- | ---: | ---: | ---: |
+| default | 266.7 → 235.3 | 45.8 → 85.1 | 312.5 → 320.4 |
+| Kitty graphics | 39.5 → 97.4 | 317.2 → 257.6 | 356.7 → 355.0 |
+
+These are medians of two runs. Default combined CPU was 2.5% higher; Kitty's
+0.5% difference is too small to establish a saving. Default candidate totals
+ranged from 298.7 to 342.1 ms/s, and Kitty candidate totals from 342.7 to 367.4.
+The narrower application and terminal changes are measurable, but the results
+do not meet the objective of lower total CPU with smoother playback. The
+[equal-time archive](live-equal-time-2026-09-26-macos-arm64.tar.gz) contains every
+sample and the launch script. The candidate collected bounded in-memory traces;
+the baseline predates tracing.
+
 The final visible-window samples used an optimized build of
 `tools/presentation-capture.swift`, requesting 120 Hz for twelve seconds.
 The candidate includes sprite row bounds (`8dd03da`). Each entry below is one
