@@ -158,6 +158,10 @@ Elapsed time uses Python's high-resolution `perf_counter`; reports include its
 implementation and resolution. Timed waits recheck that clock until the requested
 deadline, while a child exit still cancels the sample. A timeout returning early
 must not shorten a requested measurement window.
+Trace frame times start after terminal startup, while CPU sample offsets start
+at process launch. Those origins differ: dividing a CPU sample by frame counts
+from the same numeric trace interval does not give exact CPU per frame. Retain
+the separate scopes until measurements share a verified time origin.
 
 Some terminals decode images in separate helpers. For example, iTerm2 uses an
 `iTerm2SandboxedWorker` process for Sixel. Add `--helper-pid 12346` for each

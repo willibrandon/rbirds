@@ -175,4 +175,16 @@ impl SpatialGrid {
     pub fn cell_items(&self, cell: usize) -> &[i32] {
         &self.indices[self.offsets[cell] as usize..self.offsets[cell + 1] as usize]
     }
+
+    /// Adjacent cells share one contiguous item range, retaining cell order
+    /// and the item order within each cell. The column bounds are inclusive.
+    #[inline]
+    pub(crate) fn row_items(&self, row: i32, left: i32, right: i32) -> &[i32] {
+        if left > right {
+            return &[];
+        }
+        let first = (row * self.columns + left) as usize;
+        let end = (row * self.columns + right + 1) as usize;
+        &self.indices[self.offsets[first] as usize..self.offsets[end] as usize]
+    }
 }

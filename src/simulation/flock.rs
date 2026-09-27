@@ -407,63 +407,60 @@ impl Sim {
         let radius_squared = f64::from(config.vision_radius_squared);
 
         for cell_y in min_y..=max_y {
-            for cell_x in min_x..=max_x {
-                let cell = (cell_y * grid.columns + cell_x) as usize;
-                for &i in grid.cell_items(cell) {
-                    let i = i as usize;
-                    if i == target_index {
-                        continue;
-                    }
-                    let other = &birds[i];
-                    let dx = target.x - other.x;
-                    let dy = target.y - other.y;
-                    // fma: boids.c:2060:29
-                    if mul_add(dx, dx, dy * dy) >= radius_squared {
-                        continue;
-                    }
-                    // The far layer is another sky.
-                    if other.layer != target.layer {
-                        continue;
-                    }
-                    // Separation is physical; alignment and cohesion are social.
-                    separation.x += dx;
-                    separation.y += dy;
-                    neighbors += 1;
-                    if other.flock != target.flock {
-                        if config.avoid_kinship > 0.0 {
-                            let heading =
-                                if CACHED { headings[i] } else { trig_lookup(other.direction) };
-                            let kinship = config.avoid_kinship;
-                            // fma: boids.c:2076:37
-                            alignment.x = mul_add(kinship, f64::from(heading.cosine), alignment.x);
-                            // fma: boids.c:2077:37
-                            alignment.y = mul_add(kinship, f64::from(heading.sine), alignment.y);
-                            // fma: boids.c:2078:36
-                            cohesion.x = mul_add(kinship, other.x, cohesion.x);
-                            // fma: boids.c:2079:36
-                            cohesion.y = mul_add(kinship, other.y, cohesion.y);
-                            kin += kinship;
-                        }
-                        // Away from a stranger, hardest when it is nearest.
-                        if config.avoid_weight > 0.0 {
-                            // fma: boids.c:2086:56
-                            let distance = mul_add(dx, dx, dy * dy).sqrt();
-                            if distance > 1e-9 {
-                                let strength = 1.0 - distance / f64::from(config.vision_radius);
-                                wary.x += strength * dx / distance;
-                                wary.y += strength * dy / distance;
-                                strangers += 1;
-                            }
-                        }
-                        continue;
-                    }
-                    let heading = if CACHED { headings[i] } else { trig_lookup(other.direction) };
-                    alignment.x += f64::from(heading.cosine);
-                    alignment.y += f64::from(heading.sine);
-                    cohesion.x += other.x;
-                    cohesion.y += other.y;
-                    kin += 1.0;
+            for &i in grid.row_items(cell_y, min_x, max_x) {
+                let i = i as usize;
+                if i == target_index {
+                    continue;
                 }
+                let other = &birds[i];
+                let dx = target.x - other.x;
+                let dy = target.y - other.y;
+                // fma: boids.c:2060:29
+                if mul_add(dx, dx, dy * dy) >= radius_squared {
+                    continue;
+                }
+                // The far layer is another sky.
+                if other.layer != target.layer {
+                    continue;
+                }
+                // Separation is physical; alignment and cohesion are social.
+                separation.x += dx;
+                separation.y += dy;
+                neighbors += 1;
+                if other.flock != target.flock {
+                    if config.avoid_kinship > 0.0 {
+                        let heading =
+                            if CACHED { headings[i] } else { trig_lookup(other.direction) };
+                        let kinship = config.avoid_kinship;
+                        // fma: boids.c:2076:37
+                        alignment.x = mul_add(kinship, f64::from(heading.cosine), alignment.x);
+                        // fma: boids.c:2077:37
+                        alignment.y = mul_add(kinship, f64::from(heading.sine), alignment.y);
+                        // fma: boids.c:2078:36
+                        cohesion.x = mul_add(kinship, other.x, cohesion.x);
+                        // fma: boids.c:2079:36
+                        cohesion.y = mul_add(kinship, other.y, cohesion.y);
+                        kin += kinship;
+                    }
+                    // Away from a stranger, hardest when it is nearest.
+                    if config.avoid_weight > 0.0 {
+                        // fma: boids.c:2086:56
+                        let distance = mul_add(dx, dx, dy * dy).sqrt();
+                        if distance > 1e-9 {
+                            let strength = 1.0 - distance / f64::from(config.vision_radius);
+                            wary.x += strength * dx / distance;
+                            wary.y += strength * dy / distance;
+                            strangers += 1;
+                        }
+                    }
+                    continue;
+                }
+                let heading = if CACHED { headings[i] } else { trig_lookup(other.direction) };
+                alignment.x += f64::from(heading.cosine);
+                alignment.y += f64::from(heading.sine);
+                cohesion.x += other.x;
+                cohesion.y += other.y;
+                kin += 1.0;
             }
         }
         if neighbors != 0 {
