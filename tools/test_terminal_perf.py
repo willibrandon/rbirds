@@ -163,6 +163,61 @@ class Reports(unittest.TestCase):
         self.assertFalse(report['measurement_valid'])
         self.assertIn('error', report['interval_sample'])
 
+    def test_repeated_windows_measure_the_same_processes_with_the_requested_gap(self):
+        helper = self.sleeper()
+        result, report = self.run_report('import time; time.sleep(1.5)', [
+            '--helper-pid', str(helper.pid), '--warmup-seconds', '.05',
+            '--sample-seconds', '.2', '--sample-count', '3', '--sample-gap-seconds', '.1'])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report['measurement_valid'])
+        self.assertNotIn('interval_sample', report)
+        self.assertEqual(report['requested_interval_samples'], 3)
+        self.assertEqual(report['sample_gap_seconds'], .1)
+        self.assertEqual(len(report['interval_samples']), 3)
+        previous_end = None
+        for interval in report['interval_samples']:
+            self.assertGreaterEqual(interval['wall_seconds'], .2)
+            start = interval['start_seconds_after_launch']
+            if previous_end is not None:
+                self.assertGreaterEqual(start - previous_end, .1)
+            previous_end = start + interval['wall_seconds']
+            for key in ['application_cpu_ms_per_second', 'terminal_cpu_ms_per_second']:
+                self.assertGreaterEqual(interval[key], 0)
+                self.assertTrue(math.isfinite(interval[key]))
+            self.assertEqual(interval['terminal_helpers']['processes'][0]['pid'], helper.pid)
+            self.assertIn('cpu_seconds', interval['terminal_helpers'])
+
+    def test_exit_between_windows_preserves_completed_samples_and_fails_the_command(self):
+        result, report = self.run_report('import time; time.sleep(.7)', [
+            '--warmup-seconds', '0', '--sample-seconds', '.1',
+            '--sample-count', '3', '--sample-gap-seconds', '5'])
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertEqual(report['status'], 0)
+        self.assertFalse(report['measurement_valid'])
+        self.assertEqual(report['requested_interval_samples'], 3)
+        self.assertEqual(len(report['interval_samples']), 2)
+        first, failed = report['interval_samples']
+        self.assertGreaterEqual(first['wall_seconds'], .1)
+        self.assertNotIn('error', first)
+        self.assertIn('child exited between interval samples', failed['error'])
+        self.assertNotIn('application_cpu_ms_per_second', failed)
+
+    def test_invalid_repeat_options_do_not_launch_the_child(self):
+        for options in [
+                ['--sample-count', '0'], ['--sample-count', '-1'],
+                ['--sample-gap-seconds', '-1'], ['--sample-gap-seconds', 'nan'],
+                ['--sample-gap-seconds', 'inf'], ['--sample-count', '2'],
+                ['--sample-gap-seconds', '1']]:
+            with self.subTest(options=options):
+                output = self.path / 'invalid.json'
+                result = subprocess.run([
+                    sys.executable, str(ROOT / 'tools/terminal-perf.py'),
+                    '--output', str(output), *options, '--', sys.executable,
+                    '-c', 'print("child launched")'], capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(result.stdout, '')
+                self.assertFalse(output.exists())
+
     def test_child_failure_is_preserved(self):
         result, report = self.run_report('raise SystemExit(7)')
         self.assertEqual(result.returncode, 7)

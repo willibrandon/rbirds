@@ -141,6 +141,19 @@ the same elapsed-time interval. Keep the child running longer than that window;
 an early exit records a sample error. Fixed frame counts alone compare different
 elapsed durations when pacing changes, which can also change the average
 simulation workload. Retain lifetime and equal-time samples separately.
+Do not assume that the warm-up delay reaches a stable cost. Terminal glyph
+caches can still be filling, and startup performance matters to users too.
+Add `--sample-count 2 --sample-gap-seconds 25` with `--warmup-seconds 3
+--sample-seconds 15` to measure roughly seconds 3–18 and 43–58 in one unchanged
+run. The gap starts after the preceding sample finishes. Keep the scene and
+settings comparable, including any automatic simulation changes. Repeated
+reports use `interval_samples` and `requested_interval_samples`; the default
+single-window report retains `interval_sample`. An exit during a gap or sample
+invalidates the whole measurement while preserving completed windows and the
+next window's error. Compare early and later costs separately before calling
+either a steady-state result.
+The [iTerm text warm-up investigation](evidence/live-text-warmup-2026-09-27-macos-arm64.md)
+retains an example where both CPU and visible cadence changed between windows.
 Elapsed time uses Python's high-resolution `perf_counter`; reports include its
 implementation and resolution. Timed waits recheck that clock until the requested
 deadline, while a child exit still cancels the sample. A timeout returning early

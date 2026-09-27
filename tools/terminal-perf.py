@@ -42,7 +42,11 @@ def main():
     parser.add_argument("--sample-seconds", type=float,
                         help="also measure all selected processes over an equal elapsed-time interval")
     parser.add_argument("--warmup-seconds", type=float, default=3,
-                        help="delay before the optional interval sample (default: 3)")
+                        help="delay before the first optional interval sample (default: 3)")
+    parser.add_argument("--sample-count", type=int, default=1,
+                        help="number of interval samples in the same run (default: 1)")
+    parser.add_argument("--sample-gap-seconds", type=float, default=0,
+                        help="delay between interval samples (default: 0)")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
@@ -54,6 +58,12 @@ def main():
     if args.sample_seconds is not None and (
             not math.isfinite(args.sample_seconds) or args.sample_seconds <= 0):
         parser.error("sample seconds must be finite and positive")
+    if args.sample_count < 1:
+        parser.error("sample count must be positive")
+    if not math.isfinite(args.sample_gap_seconds) or args.sample_gap_seconds < 0:
+        parser.error("sample gap seconds must be finite and nonnegative")
+    if args.sample_seconds is None and (args.sample_count != 1 or args.sample_gap_seconds != 0):
+        parser.error("repeated sampling requires --sample-seconds")
     pids = [args.terminal_pid, *args.helper_pid]
     if any(pid <= 0 or pid > 0x7fffffff for pid in pids) or len(set(pids)) != len(pids):
         parser.error("terminal and helper PIDs must be distinct positive process IDs")
@@ -102,41 +112,47 @@ def measure(args, counters, binary):
     started = time.perf_counter()
     process = subprocess.Popen(args.command)
     stopped = threading.Event()
-    interval = {"error": "interval sample did not complete"} if args.sample_seconds else {}
+    intervals = []
 
-    def sample_interval():
-        try:
-            if wait_until(stopped, time.perf_counter() + args.warmup_seconds):
-                raise RuntimeError("child exited during warmup")
-            app_before = counters.snapshot(process.pid)
-            term_before = counters.snapshot(args.terminal_pid)
-            helper_before = {pid: counters.snapshot(pid) for pid in args.helper_pid}
-            sample_start = time.perf_counter()
-            if wait_until(stopped, sample_start + args.sample_seconds):
-                raise RuntimeError("child exited before the interval sample finished")
-            app_after = counters.snapshot(process.pid)
-            term_after = counters.snapshot(args.terminal_pid)
-            sample_wall = time.perf_counter() - sample_start
-            interval.update({
-                "start_seconds_after_launch": sample_start - started,
-                "wall_seconds": sample_wall,
-                "application_cpu_ms_per_second":
-                    cpu_delta(app_before, app_after) / sample_wall * 1000,
-                "terminal_cpu_ms_per_second":
-                    cpu_delta(term_before, term_after) / sample_wall * 1000,
-            })
-            if args.helper_pid:
-                interval["terminal_helpers"] = helper_sample(helper_before, sample_wall)
-            interval.pop("error", None)
-        except Exception as error:
-            # Keep worker failures in the report and fail the measurement.
-            interval["error"] = f"{type(error).__name__}: {error}"
+    def sample_intervals():
+        for index in range(args.sample_count):
+            interval = {"error": "interval sample did not complete"}
+            intervals.append(interval)
+            try:
+                delay = args.sample_gap_seconds if index else args.warmup_seconds
+                if wait_until(stopped, time.perf_counter() + delay):
+                    phase = "between interval samples" if index else "during warmup"
+                    raise RuntimeError(f"child exited {phase}")
+                app_before = counters.snapshot(process.pid)
+                term_before = counters.snapshot(args.terminal_pid)
+                helper_before = {pid: counters.snapshot(pid) for pid in args.helper_pid}
+                sample_start = time.perf_counter()
+                if wait_until(stopped, sample_start + args.sample_seconds):
+                    raise RuntimeError("child exited before the interval sample finished")
+                app_after = counters.snapshot(process.pid)
+                term_after = counters.snapshot(args.terminal_pid)
+                sample_wall = time.perf_counter() - sample_start
+                interval.update({
+                    "start_seconds_after_launch": sample_start - started,
+                    "wall_seconds": sample_wall,
+                    "application_cpu_ms_per_second":
+                        cpu_delta(app_before, app_after) / sample_wall * 1000,
+                    "terminal_cpu_ms_per_second":
+                        cpu_delta(term_before, term_after) / sample_wall * 1000,
+                })
+                if args.helper_pid:
+                    interval["terminal_helpers"] = helper_sample(helper_before, sample_wall)
+                interval.pop("error", None)
+            except Exception as error:
+                # Retain completed windows and the failure, then stop sampling.
+                interval["error"] = f"{type(error).__name__}: {error}"
+                break
 
     sampler = None
     try:
         counters.prepare_child(process)
         if args.sample_seconds is not None:
-            sampler = threading.Thread(target=sample_interval, daemon=True)
+            sampler = threading.Thread(target=sample_intervals, daemon=True)
             sampler.start()
         application_cpu = counters.wait(process)
     finally:
@@ -177,12 +193,18 @@ def measure(args, counters, binary):
             sample["process"] = helper_names[sample["pid"]]
         report["terminal_helpers"] = helpers
     if args.sample_seconds is not None:
-        report["interval_sample"] = interval
+        if args.sample_count == 1:
+            report["interval_sample"] = intervals[0]
+        else:
+            report["requested_interval_samples"] = args.sample_count
+            report["sample_gap_seconds"] = args.sample_gap_seconds
+            report["interval_samples"] = intervals
     report["measurement_valid"] = (
-        "terminal_error" not in report and "error" not in interval
-        and all("cpu_seconds" in sample for sample in
-                [report.get("terminal_helpers", {}), interval.get("terminal_helpers", {})]
-                if "processes" in sample))
+        "terminal_error" not in report
+        and (args.sample_seconds is None or len(intervals) == args.sample_count)
+        and all("error" not in sample for sample in intervals)
+        and all("cpu_seconds" in sample["terminal_helpers"]
+                for sample in [report, *intervals] if "terminal_helpers" in sample))
     return report
 
 
