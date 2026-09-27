@@ -78,6 +78,139 @@ fn decode(bytes: &[u8]) -> (usize, usize, Vec<[u8; 3]>) {
     )
 }
 
+// Interpret the frame's cursor moves, opaque block fills and Sixel rasters.
+// Erased text backgrounds remain None: a transparent terminal needs an
+// opaque glyph or raster at every pixel, not merely the right SGR colour.
+fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize) -> Vec<[u8; 3]> {
+    let mut pixels = vec![None; width * height];
+    let (mut at, mut row, mut col) = (0, 0, 0);
+    let mut foreground = None;
+    let mut opaque_backdrop = false;
+    while at < bytes.len() {
+        if bytes[at..].starts_with(b"\x1bP") {
+            if opaque_backdrop {
+                assert!(
+                    pixels.iter().all(Option::is_some),
+                    "paint the whole opaque backdrop before replacing its image"
+                );
+            }
+            let end = at + bytes[at..].windows(2).position(|s| s == b"\x1b\\").unwrap() + 2;
+            let (w, h, raster) = decode(&bytes[at..end]);
+            for y in 0..h {
+                for x in 0..w {
+                    pixels[(row * ch + y) * width + col * cw + x] = Some(raster[y * w + x]);
+                }
+            }
+            at = end;
+            continue;
+        }
+        let count = if bytes[at..].starts_with("█".as_bytes()) {
+            at += "█".len();
+            1
+        } else {
+            assert!(bytes[at..].starts_with(b"\x1b["), "unexpected text at {at}");
+            let start = at + 2;
+            let end = start + bytes[start..].iter().position(u8::is_ascii_alphabetic).unwrap();
+            let parameters = &bytes[start..end];
+            at = end + 1;
+            if parameters.starts_with(b"?") {
+                continue;
+            }
+            let values: Vec<usize> = if parameters.is_empty() {
+                Vec::new()
+            } else {
+                std::str::from_utf8(parameters)
+                    .unwrap()
+                    .split(';')
+                    .map(|s| s.parse().unwrap())
+                    .collect()
+            };
+            match bytes[end] {
+                b'H' => {
+                    row = values.first().copied().unwrap_or(1) - 1;
+                    col = values.get(1).copied().unwrap_or(1) - 1;
+                    continue;
+                }
+                b'm' => {
+                    foreground = values
+                        .windows(5)
+                        .find(|v| v[..2] == [38, 2])
+                        .map(|v| [v[2] as u8, v[3] as u8, v[4] as u8]);
+                    continue;
+                }
+                b'J' => {
+                    pixels.fill(None);
+                    continue;
+                }
+                b'b' => values[0],
+                other => panic!("unexpected command {other}"),
+            }
+        };
+        opaque_backdrop = true;
+        for _ in 0..count {
+            for y in row * ch..(row + 1) * ch {
+                for x in col * cw..(col + 1) * cw {
+                    pixels[y * width + x] = foreground;
+                }
+            }
+            col += 1;
+        }
+    }
+    pixels.into_iter().map(|p| p.expect("every pixel must remain opaque")).collect()
+}
+
+#[test]
+fn cropped_frames_match_full_rasters_through_clipping_trails_hawks_and_resize() {
+    use rbirds::render::Renderer;
+    use rbirds::simulation::{Bird, RenderMode, Sim};
+    let mut sim = Sim::new();
+    sim.render_mode = RenderMode::Sixel;
+    sim.config.birds = 3;
+    sim.config.trails = true;
+    sim.config.hawks = 1;
+    sim.config.flocks = 2;
+    sim.config.palette = 1;
+    sim.deep_look = true;
+    sim.settle_the_bird_size();
+    let mut renderer = Renderer::default();
+    renderer.erase_sixel_before_frame = true;
+    renderer.prepare_text_renderer(&mut sim, None, b"rbirds").unwrap();
+    let mut output = KittyGraphics::new(1).unwrap();
+    let mut reference = Sixel::default();
+    let mut birds = vec![Bird::default(); 3];
+    for (cols, rows, width, height) in
+        [(100, 32, 1400, 1088), (100, 32, 1401, 1089), (8, 5, 40, 30)]
+    {
+        sim.apply_screen_size(cols, rows, width, height);
+        for (x, y) in
+            [(300., 250.), (-5., -5.), (width as f64 - 4., height as f64 - 4.), (10000., 10000.)]
+        {
+            for (i, bird) in birds.iter_mut().enumerate() {
+                bird.x = x + i as f64 * 10.;
+                bird.y = y + i as f64 * 5.;
+                bird.layer = (i % 2) as i32;
+                bird.trail_held = 1;
+                bird.trail_at = 1;
+                bird.trail_x[0] = x - 20.;
+                bird.trail_y[0] = y - 10.;
+            }
+            sim.hawks[0].x = x + 30.;
+            sim.hawks[0].y = y - 30.;
+            output.clear();
+            renderer.queue_render_frame(&mut output, &sim, &birds).unwrap();
+            let expected = decode(reference.encode(&renderer.canvas).unwrap()).2;
+            let actual = decode_frame(
+                output.buffer(),
+                width as usize,
+                height as usize,
+                sim.screen.cell_width as usize,
+                sim.screen.cell_height as usize,
+            );
+            assert_eq!(actual, expected, "{cols}x{rows}, {width}x{height}, {x},{y}");
+        }
+    }
+}
+
 #[test]
 fn colours_runs_and_partial_bands_decode_to_the_expected_raster() {
     let mut image = Image::alloc(19, 13).unwrap();
@@ -170,9 +303,64 @@ fn frame_queue_composes_birds_repaints_after_panel_removal_and_resizes() {
             let (width, height) = (sim.screen.width as usize, sim.screen.height as usize);
             let mut expected = vec![[18, 18, 23]; width * height];
             expected[bird.y as usize * width + bird.x as usize] = [255, 0, 0];
-            assert_eq!(decode(&bytes[start..end]), (width, height, expected));
+            if erase {
+                let (cw, ch) = (sim.screen.cell_width as usize, sim.screen.cell_height as usize);
+                let (x, y) = (bird.x as usize / cw * cw, bird.y as usize / ch * ch);
+                let cursor = format!("\x1b[{};{}H", y / ch + 1, x / cw + 1);
+                assert!(bytes[..start].ends_with(cursor.as_bytes()));
+                let (w, h, pixels) = decode(&bytes[start..end]);
+                assert_eq!((w, h), (cw, ch));
+                let mut actual = vec![[18, 18, 23]; width * height];
+                for row in 0..h {
+                    actual[(y + row) * width + x..(y + row) * width + x + w]
+                        .copy_from_slice(&pixels[row * w..(row + 1) * w]);
+                }
+                assert_eq!(actual, expected);
+            } else {
+                assert_eq!(decode(&bytes[start..end]), (width, height, expected));
+            }
             assert_eq!(renderer.legend_drawn, step < 2);
         }
+    }
+}
+
+#[test]
+fn cropped_rasters_keep_source_stride_and_partial_bands() {
+    let mut image = Image::alloc(31, 19).unwrap();
+    let colours = [[255, 0, 0, 255], [0, 102, 153, 255], [255, 255, 255, 255]];
+    for y in 0..19 {
+        for x in 0..31 {
+            image.pixels[(y * 31 + x) * 4..(y * 31 + x + 1) * 4]
+                .copy_from_slice(&colours[(x + y) % colours.len()]);
+        }
+    }
+    let mut encoder = Sixel::default();
+    for (left, top, width, height) in
+        [(0, 0, 31, 19), (9, 5, 13, 7), (30, 18, 1, 1), (1, 1, 30, 18)]
+    {
+        let mut expected = Vec::new();
+        for y in top..top + height {
+            for x in left..left + width {
+                let pixel = colours[(x + y) % colours.len()];
+                expected.push([pixel[0], pixel[1], pixel[2]]);
+            }
+        }
+        let bytes = encoder.encode_region(&image, left, top, width, height).unwrap();
+        assert_eq!(decode(bytes), (width, height, expected));
+    }
+    for (left, top, width, height) in [
+        (0, 0, 0, 1),
+        (0, 0, 1, 0),
+        (31, 0, 1, 1),
+        (0, 19, 1, 1),
+        (30, 0, 2, 1),
+        (0, 18, 1, 2),
+        (usize::MAX, 0, 1, 1),
+    ] {
+        assert_eq!(
+            encoder.encode_region(&image, left, top, width, height),
+            Err(KittyError::Argument)
+        );
     }
 }
 

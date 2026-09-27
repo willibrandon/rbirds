@@ -69,7 +69,7 @@ fn counted<T>(body: impl FnOnce() -> T) -> (T, usize) {
 
 /// Allocations made by frames 30 to 150 of a live session with the panel up,
 /// hawks, trails, depth and two flocks.
-fn steady_state_allocations(render: RenderMode) -> usize {
+fn steady_state_allocations(render: RenderMode, erase_sixel: bool) -> usize {
     let mut sim = Sim::new();
     sim.config.birds = 300;
     sim.config.hawks = 2;
@@ -84,6 +84,7 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     let window = WinSize { row: 30, col: 100, xpixel: 800, ypixel: 480 };
     sim.apply_screen_size(100, 30, 800, 480);
     let mut renderer = Renderer::default();
+    renderer.erase_sixel_before_frame = erase_sixel;
     renderer.incremental_legend = true;
     let mut graphics = KittyGraphics::new(1).expect("graphics");
     if sim.drawing_with_text() || render == RenderMode::Sixel {
@@ -134,17 +135,19 @@ fn steady_state_allocations(render: RenderMode) -> usize {
 
 #[test]
 fn a_kitty_frame_allocates_nothing_in_steady_state() {
-    assert_eq!(steady_state_allocations(RenderMode::Kitty), 0);
+    assert_eq!(steady_state_allocations(RenderMode::Kitty, false), 0);
 }
 
 #[test]
 fn a_text_frame_allocates_nothing_in_steady_state() {
     for render in [RenderMode::Braille, RenderMode::Sextants, RenderMode::Blocks] {
-        assert_eq!(steady_state_allocations(render), 0, "{render:?}");
+        assert_eq!(steady_state_allocations(render, false), 0, "{render:?}");
     }
 }
 
 #[test]
 fn a_sixel_frame_allocates_nothing_in_steady_state() {
-    assert_eq!(steady_state_allocations(RenderMode::Sixel), 0);
+    for erase in [false, true] {
+        assert_eq!(steady_state_allocations(RenderMode::Sixel, erase), 0, "erase={erase}");
+    }
 }

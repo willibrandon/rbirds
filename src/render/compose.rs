@@ -18,6 +18,11 @@ pub(crate) struct SpriteRows {
     bounds: (i32, i32, i32, i32),
 }
 
+enum Coverage<'a> {
+    Cells(&'a mut [bool]),
+    Bounds(&'a mut (i32, i32, i32, i32)),
+}
+
 impl SpriteRows {
     fn new(sprite: &Image) -> Result<Self, KittyError> {
         let mut rows = Vec::new();
@@ -189,12 +194,12 @@ fn compose_with_coverage(
     frames: &[Image],
     birds: &[Bird],
     with_ground: bool,
-    mut occupied: Option<&mut [bool]>,
+    mut coverage: Option<Coverage<'_>>,
     sprite_rows: &[SpriteRows],
 ) {
     let mut blend = |canvas: &mut Image, index: usize, x: i32, y: i32| {
         let sprite = &frames[index];
-        if let Some(cells) = &mut occupied {
+        if let Some(coverage) = &mut coverage {
             let bounds = sprite_rows
                 .get(index)
                 .map_or((0, 0, sprite.width, sprite.height), |rows| rows.bounds);
@@ -207,14 +212,24 @@ fn compose_with_coverage(
                 .min(i64::from(canvas.height))
                 .min(i64::from(sim.screen.rows) * i64::from(sim.screen.cell_height));
             if right > left && bottom > top {
-                let columns = sim.screen.cols as usize;
-                let x0 = (left / i64::from(sim.screen.cell_width)) as usize;
-                let x1 = ((right - 1) / i64::from(sim.screen.cell_width)) as usize + 1;
-                let y0 = top / i64::from(sim.screen.cell_height);
-                let y1 = (bottom - 1) / i64::from(sim.screen.cell_height);
-                for row in y0..=y1 {
-                    let offset = row as usize * columns;
-                    cells[offset + x0..offset + x1].fill(true);
+                match coverage {
+                    Coverage::Cells(cells) => {
+                        let columns = sim.screen.cols as usize;
+                        let x0 = (left / i64::from(sim.screen.cell_width)) as usize;
+                        let x1 = ((right - 1) / i64::from(sim.screen.cell_width)) as usize + 1;
+                        let y0 = top / i64::from(sim.screen.cell_height);
+                        let y1 = (bottom - 1) / i64::from(sim.screen.cell_height);
+                        for row in y0..=y1 {
+                            let offset = row as usize * columns;
+                            cells[offset + x0..offset + x1].fill(true);
+                        }
+                    }
+                    Coverage::Bounds(bounds) => {
+                        bounds.0 = bounds.0.min(left as i32);
+                        bounds.1 = bounds.1.min(top as i32);
+                        bounds.2 = bounds.2.max(right as i32);
+                        bounds.3 = bounds.3.max(bottom as i32);
+                    }
                 }
             }
         }
@@ -418,7 +433,7 @@ impl Renderer {
         graphics.end_synchronized_update()
     }
 
-    /// Paint a complete Sixel raster, followed by the ordinary text panel.
+    /// Paint the Sixel frame, followed by the ordinary text panel.
     pub fn queue_sixel_frame(
         &mut self,
         graphics: &mut KittyGraphics,
@@ -431,6 +446,16 @@ impl Renderer {
             self.canvas = Image::alloc(sim.screen.width, sim.screen.height)
                 .map_err(|_| KittyError::Memory)?;
         }
+        // A cropped image must end on cell boundaries: iTerm pads partial
+        // cells with its default background. Keep the full raster when the
+        // supplied pixel geometry cannot be represented by whole cells.
+        let cropped = self.erase_sixel_before_frame
+            && sim.screen.cols > 0
+            && sim.screen.rows > 0
+            && sim.screen.cell_width > 0
+            && sim.screen.cell_height > 0
+            && sim.screen.cols.checked_mul(sim.screen.cell_width) == Some(self.canvas.width)
+            && sim.screen.rows.checked_mul(sim.screen.cell_height) == Some(self.canvas.height);
         graphics.begin_synchronized_update()?;
         // iTerm2 can release an overwritten image while its display still
         // references it, producing a full-screen brown placeholder. Retire it
@@ -443,19 +468,45 @@ impl Renderer {
             self.legend_drawn = false;
         }
         graphics.write_raw(b"\x1b[H")?;
+        let mut bounds = (self.canvas.width, self.canvas.height, 0, 0);
         compose_with_coverage(
             sim,
             &mut self.canvas,
             &self.sprites,
             birds,
             true,
-            None,
+            cropped.then_some(Coverage::Bounds(&mut bounds)),
             &self.sprite_rows,
         );
         if let Some(profile) = &mut self.profile {
             profile.composed();
         }
-        self.sixel.queue(graphics, &self.canvas)?;
+        if cropped {
+            let (cw, ch) = (sim.screen.cell_width, sim.screen.cell_height);
+            let crop = if bounds.2 > bounds.0 && bounds.3 > bounds.1 {
+                (bounds.0 / cw, bounds.1 / ch, (bounds.2 - 1) / cw + 1, (bounds.3 - 1) / ch + 1)
+            } else {
+                (0, 0, 0, 0)
+            };
+            self.sixel.queue_ground(
+                graphics,
+                sim.screen.cols as usize,
+                sim.screen.rows as usize,
+            )?;
+            graphics.write_raw(b"\x1b[0m")?;
+            if crop.2 > crop.0 && crop.3 > crop.1 {
+                graphics.write_text(crop.1, crop.0, b"")?;
+                graphics.write_raw(self.sixel.encode_region(
+                    &self.canvas,
+                    (crop.0 * cw) as usize,
+                    (crop.1 * ch) as usize,
+                    ((crop.2 - crop.0) * cw) as usize,
+                    ((crop.3 - crop.1) * ch) as usize,
+                )?)?;
+            }
+        } else {
+            self.sixel.queue(graphics, &self.canvas)?;
+        }
         graphics.write_raw(b"\x1b[H")?;
         self.queue_legend(graphics, sim)?;
         graphics.end_synchronized_update()
@@ -490,7 +541,7 @@ impl Renderer {
             &self.sprites,
             birds,
             false,
-            Some(&mut self.occupied),
+            Some(Coverage::Cells(&mut self.occupied)),
             &self.sprite_rows,
         );
         if let Some(profile) = &mut self.profile {

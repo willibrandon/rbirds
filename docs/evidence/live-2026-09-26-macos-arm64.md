@@ -480,6 +480,102 @@ both rejected patches, benchmark samples, profiles, captures, executable
 hashes and an independently checked file manifest. Neither prototype is in
 the accepted source or the current release executable.
 
+## Cropped Sixel frames in iTerm
+
+The full-window Sixel raster made iTerm decode, convert and upload empty sky
+along with the birds. The renderer now tracks the conservative bounds of all
+visible sprites, including trails and hawks, and encodes that rectangle
+directly from the canvas rows. The crop starts and ends on terminal-cell
+boundaries. An opaque full-block backdrop covers the entire viewport before
+the image is placed, inside the same synchronized update and explicit erase.
+Non-integral cell geometry retains the full raster. Other terminals retain
+their existing path; sprite resolution and simulation arithmetic are unchanged.
+
+Three simpler backdrops failed qualification. Ordinary text background colors
+matched an opaque window but became translucent when window transparency was
+enabled. Full-block glyphs only outside the crop passed a static comparison
+but left default-background rectangles during motion. A repeated capture of
+that rejected implementation found the wrong color in as much as 38.15% of
+sampled pixels. Moving the outside-only backdrop after the image also failed,
+with wrong-color regions covering as much as 34.59% of samples and missing
+birds. Painting the entire opaque backdrop before the image removed those
+rectangles.
+The precise internal iTerm invalidation behavior was not instrumented.
+
+The capture tool now accepts specific RGB colors to count in every sample,
+including colors too sparse to become dominant. It also records translucent
+samples. In separate ten-second captures of the corrected build, the unwanted
+default-background color appeared in at most one of 5,984 sampled pixels per
+frame in the ordinary window, and none in the transparent window. Screenshots
+show a uniform dark simulation background in both. These counters sample a
+window including its edges; they do not replace inspection of the image.
+
+Two foreground CPU pairs ran in before/after/after/before order, using the same
+100×32-cell, 1400×1088-pixel iTerm 3.6.6 window, seed 42 and 1,800 loop ticks.
+Each CPU interval covered twenty seconds after three seconds of warm-up.
+No capture, profiler, local build or test ran during those intervals.
+
+| Counter | Before CPU ms/s | After CPU ms/s |
+| --- | ---: | ---: |
+| Application | 411.23 | 395.40 |
+| iTerm main process | 1143.95 | 818.10 |
+| Image decoder helper | 252.31 | 134.97 |
+| Combined | 1807.49 | 1348.47 |
+
+These are medians of two runs per executable: about 25% lower combined CPU,
+with both pairs improving. The iTerm process was shared with existing sessions;
+the compositor, GPU and unselected processes remain excluded. The earlier
+31% and 27% observations belong to rejected backdrops and are not the accepted
+result.
+
+A first demanding-settings pair (4,096 birds, trails, depth, four hawks,
+three flocks and speed 12) increased combined CPU from 2574.30 to 2629.02 ms/s,
+about 2%. Two subsequent pairs in before/after/after/before order reduced it
+from 2584.21 to 2489.55 ms/s, about 4%, with both pairs improving. The initial
+increase is retained as an indication of terminal-process variability. The
+same twenty-second intervals and separate main/helper accounting were used;
+this does not establish a saving at every setting. Separate ten-second captures
+of the demanding case improved from 25.32 to 31.47 changed samples/s, with
+p99 intervals of 52.35 to 42.73 ms and maxima of 53.67 to 44.75 ms. Neither
+build achieved 60 visible updates/s at those settings.
+
+Separate ordinary and transparent-window captures measured 59.60 and 59.92
+changed samples/s, with p99 intervals of 29.34 and 27.71 ms and maxima of 37.75
+and 34.05 ms. A preceding thirty-second full-backdrop capture averaged 59.49/s
+but contained an 82.46 ms gap. Its application trace also had a 60.72 ms start
+interval and a 48.24 ms update-stage outlier. The cause of that scheduling
+outlier was not established; neither an average near 60 Hz nor the later short
+runs proves zero stalls. The earlier accepted full-raster capture averaged
+46.95 changed samples/s.
+
+Independent protocol decoding compares the reconstructed opaque viewport with
+the full raster through crop-size changes, off-screen sprites, clipping,
+trails, hawks, empty scenes and resizing. It checks that the entire opaque
+backdrop precedes each cropped image. Exact C comparisons, pause behavior,
+PTY negotiation/restoration and steady-state allocation checks pass. Static
+opaque and transparent-window comparisons of the initial block backdrop had
+zero differing bird or sky pixels; 11–16 panel pixels differed by at most two
+channel levels. The raw comparisons retain these small text differences. Short alternating
+construction comparisons for Kitty, Braille and full-raster Sixel retained
+identical byte counts, with median frame times within 1.5% of the previous
+build; these are not terminal-presentation measurements.
+
+A separate twenty-second control capture covered pause, single-step, panel
+hide/show, resize and resume. All 1,465 samples retained a dark dominant
+background. Intentional paused intervals are excluded from steady-playback
+claims. The screenshots and trace retain the event sequence.
+
+An additional temporary profile set iTerm's minimum-contrast control to 0.5.
+Both the full-raster and cropped builds retained a dark background in separate
+captures (800 and 924 samples); the profile and its own windows were removed.
+An exploratory native-inline-image backdrop was not qualified: iTerm requested
+permission to display the image. The prompt was declined and the probe stopped.
+No inline-image backdrop or profile-setting changes are part of the renderer.
+
+The [Sixel crop archive](live-sixel-crop-2026-09-26-macos-arm64.tar.gz) retains
+all variants, CPU intervals, traces, captures, validation logs and source
+patches, with executable hashes and an independently checked manifest.
+
 ## Wider atlas experiment
 
 A follow-up prototype packed sprites into two-dimensional pages, keeping the

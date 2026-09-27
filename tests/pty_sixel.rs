@@ -87,8 +87,9 @@ fn iterm_frames_retire_the_previous_image_inside_each_synchronized_update() {
     );
     assert_eq!(outcome.exit, Some(Exit::Code(0)), "{}", outcome.describe());
     outcome.assert_attributes_restored();
-    let prefix = b"\x1b[?2026h\x1b[2J\x1b[H\x1bP0;1q";
+    let prefix = b"\x1b[?2026h\x1b[2J\x1b[H\x1b[0;38;2;18;18;23m";
     assert_eq!(outcome.transcript.windows(prefix.len()).filter(|s| *s == prefix).count(), 2);
+    assert!(outcome.contains("█".as_bytes()), "paint opaque sky outside the cropped raster");
     assert!(outcome.contains(b"\x1b[?80l"));
     assert!(outcome.transcript.ends_with(rbirds::platform::ALT_SCREEN_OFF));
 }

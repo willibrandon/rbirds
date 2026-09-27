@@ -1,6 +1,6 @@
 // Visible-window sampling only; this cannot establish physical display scanout.
 // Build with: swiftc -O -parse-as-library tools/presentation-capture.swift -o target/presentation-capture
-// Run with: target/presentation-capture rbirds-perf-TITLE target/presentation.json [seconds]
+// Run with: target/presentation-capture rbirds-perf-TITLE target/presentation.json [seconds] [RRGGBB ...]
 import Foundation
 import ScreenCaptureKit
 import CoreMedia
@@ -10,6 +10,7 @@ import Darwin
 final class Recorder: NSObject, SCStreamOutput {
     var frames: [[String: Any]] = []
     var lastHash: UInt64? = nil
+    var watchedColours: [UInt32] = []
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sample.isValid,
             let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
@@ -24,6 +25,7 @@ final class Recorder: NSObject, SCStreamOutput {
         var hash: UInt64 = 1469598103934665603
         var colours: [UInt32: Int] = [:]
         var sampled = 0
+        var translucent = 0
         // Sample only the content area; title-bar changes do not count as animation.
         for y in Swift.stride(from: 40, to: height - 4, by: 8) {
             let row = address.advanced(by: y * stride).assumingMemoryBound(to: UInt32.self)
@@ -31,6 +33,7 @@ final class Recorder: NSObject, SCStreamOutput {
                 let pixel = row[x]
                 hash = (hash ^ UInt64(pixel)) &* 1099511628211
                 colours[pixel & 0x00ff_ffff, default: 0] += 1
+                if pixel >> 24 != 255 { translucent += 1 }
                 sampled += 1
             }
         }
@@ -40,6 +43,14 @@ final class Recorder: NSObject, SCStreamOutput {
         }) {
             frame["dominant_rgb"] = [(dominant.key >> 16) & 255, (dominant.key >> 8) & 255, dominant.key & 255]
             frame["dominant_fraction"] = Double(dominant.value) / Double(sampled)
+        }
+        frame["sampled_pixels"] = sampled
+        frame["translucent_samples"] = translucent
+        if !watchedColours.isEmpty {
+            frame["watched_colours"] = watchedColours.map { rgb -> [String: Any] in
+                return ["rgb": [(rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255],
+                        "samples": colours[rgb, default: 0]]
+            }
         }
         frames.append(frame)
         lastHash = hash
@@ -62,16 +73,24 @@ enum CaptureError: Error {
 
     @MainActor static func capture() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
-        guard (3...4).contains(CommandLine.arguments.count) else {
-            throw CaptureError.invalidArguments("Usage: presentation-capture rbirds-perf-TITLE output.json [seconds]")
+        guard (3...12).contains(CommandLine.arguments.count) else {
+            throw CaptureError.invalidArguments("Usage: presentation-capture rbirds-perf-TITLE output.json [seconds] [RRGGBB ...] (up to 8 colours)")
         }
-        let seconds = CommandLine.arguments.count == 4 ? Double(CommandLine.arguments[3]) ?? 0 : 12
+        let seconds = CommandLine.arguments.count >= 4 ? Double(CommandLine.arguments[3]) ?? 0 : 12
         guard seconds.isFinite, seconds >= 1, seconds <= 60 else {
             throw CaptureError.invalidArguments("Duration must be between 1 and 60 seconds")
         }
         let title = CommandLine.arguments[1], output = CommandLine.arguments[2]
         guard title.hasPrefix("rbirds-perf-") else {
             throw CaptureError.invalidArguments("Only titles starting with rbirds-perf- are accepted")
+        }
+        let watchedColours = try CommandLine.arguments.dropFirst(4).map { value -> UInt32 in
+            guard value.utf8.count == 6,
+                value.utf8.allSatisfy({ (48...57).contains($0) || (65...70).contains($0) || (97...102).contains($0) }),
+                let rgb = UInt32(value, radix: 16) else {
+                throw CaptureError.invalidArguments("Watched colours must be six hexadecimal digits")
+            }
+            return rgb
         }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         let matches = content.windows.filter { $0.title == title }
@@ -87,6 +106,7 @@ enum CaptureError: Error {
         configuration.queueDepth = 5
         configuration.showsCursor = false
         let recorder = Recorder()
+        recorder.watchedColours = watchedColours
         let queue = DispatchQueue(label: "rbirds.capture")
         let stream = SCStream(filter: filter, configuration: configuration, delegate: nil)
         try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: queue)

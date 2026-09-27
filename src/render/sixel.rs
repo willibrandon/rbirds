@@ -141,16 +141,63 @@ fn run_length(row: &[u8]) -> usize {
 }
 
 impl Sixel {
+    /// Opaque empty sky behind a whole-cell crop. Paint every cell: iTerm can
+    /// retain stale regions when glyphs only surround a moving image. Background
+    /// attributes alone become translucent; full blocks stay opaque.
+    pub(crate) fn queue_ground(
+        &mut self,
+        graphics: &mut KittyGraphics,
+        cols: usize,
+        rows: usize,
+    ) -> Result<(), KittyError> {
+        self.bytes.clear();
+        put(&mut self.bytes, b"\x1b[0;38;2")?;
+        for component in PICTURE_GROUND {
+            put(&mut self.bytes, b";")?;
+            let percent = (usize::from(component) * 100 + 127) / 255;
+            number(&mut self.bytes, (percent * 255 + 50) / 100)?;
+        }
+        put(&mut self.bytes, b"m")?;
+        for row in 0..rows {
+            put(&mut self.bytes, b"\x1b[")?;
+            number(&mut self.bytes, row + 1)?;
+            put(&mut self.bytes, ";1H█".as_bytes())?;
+            if cols > 1 {
+                put(&mut self.bytes, b"\x1b[")?;
+                number(&mut self.bytes, cols - 1)?;
+                put(&mut self.bytes, b"b")?;
+            }
+        }
+        graphics.write_raw(&self.bytes)
+    }
+
     /// Encodes an RGBA image, flattening alpha onto the picture background.
     /// Colour definitions are sent in each image so it is self-contained.
     pub fn encode(&mut self, image: &Image) -> Result<&[u8], KittyError> {
+        self.encode_region(image, 0, 0, image.width.max(0) as usize, image.height.max(0) as usize)
+    }
+
+    /// Encode a rectangle directly from the image's existing row storage.
+    pub fn encode_region(
+        &mut self,
+        image: &Image,
+        left: usize,
+        top: usize,
+        width: usize,
+        height: usize,
+    ) -> Result<&[u8], KittyError> {
         let Sixel { bytes: out, planes, dirty, colours } = self;
         out.clear();
-        let width = usize::try_from(image.width).map_err(|_| KittyError::Argument)?;
-        let height = usize::try_from(image.height).map_err(|_| KittyError::Argument)?;
+        let image_width = usize::try_from(image.width).map_err(|_| KittyError::Argument)?;
+        let image_height = usize::try_from(image.height).map_err(|_| KittyError::Argument)?;
         if width == 0
             || height == 0
-            || width.checked_mul(height).and_then(|n| n.checked_mul(4)) != Some(image.pixels.len())
+            || left > image_width
+            || top > image_height
+            || width > image_width - left
+            || height > image_height - top
+            || image_width.checked_mul(image_height).and_then(|n| n.checked_mul(4))
+                != Some(image.pixels.len())
         {
             return Err(KittyError::Argument);
         }
@@ -174,7 +221,7 @@ impl Sixel {
             let mut ends = [0; 256];
             *dirty = true;
             for dy in 0..6.min(height - y) {
-                let start = (y + dy) * width * 4;
+                let start = ((top + y + dy) * image_width + left) * 4;
                 let row = &image.pixels[start..start + width * 4];
                 // The empty sky occupies most of a frame. Classify and set
                 // eight background pixels together, without palette lookups.
