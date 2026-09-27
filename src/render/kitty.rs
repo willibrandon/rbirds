@@ -88,6 +88,9 @@ pub struct Placement {
 pub struct KittyGraphics {
     output_fd: RawFd,
     buffer: Vec<u8>,
+    /// Already-written prefix. Retries advance this cursor without moving the
+    /// remaining frame; appending compacts it once if the queue is still live.
+    written: usize,
     /// The C `capacity`, NUL slot included, which decides when `buffer` grows.
     capacity: usize,
 }
@@ -185,7 +188,7 @@ impl KittyGraphics {
         if output_fd < 0 {
             return Err(KittyError::Argument);
         }
-        Ok(KittyGraphics { output_fd, buffer: Vec::new(), capacity: 0 })
+        Ok(KittyGraphics { output_fd, buffer: Vec::new(), written: 0, capacity: 0 })
     }
 
     /// The descriptor commands are written to.
@@ -195,21 +198,22 @@ impl KittyGraphics {
 
     /// Queued bytes (the C `length`).
     pub fn len(&self) -> usize {
-        self.buffer.len()
+        self.buffer.len() - self.written
     }
 
     pub fn is_empty(&self) -> bool {
-        self.buffer.is_empty()
+        self.written == self.buffer.len()
     }
 
     /// Forgets everything queued, keeping the storage (`graphics.length = 0`).
     pub fn clear(&mut self) {
         self.buffer.clear();
+        self.written = 0;
     }
 
     /// The queued bytes.
     pub fn buffer(&self) -> &[u8] {
-        &self.buffer
+        &self.buffer[self.written..]
     }
 
     /// The C `capacity`, NUL slot included: 0 until something is queued, then
@@ -225,6 +229,10 @@ impl KittyGraphics {
     }
 
     fn reserve(&mut self, extra: usize) -> Result<(), KittyError> {
+        if self.written != 0 {
+            self.buffer.drain(..self.written);
+            self.written = 0;
+        }
         let length = self.buffer.len();
         if length == usize::MAX || extra > usize::MAX - length - 1 {
             return Err(KittyError::Memory);
@@ -293,7 +301,7 @@ impl KittyGraphics {
     }
 
     fn upload_payload(&mut self, prefix: &[u8], bytes: &[u8]) -> Result<(), KittyError> {
-        let original_length = self.buffer.len();
+        let original_length = self.len();
         let mut offset = 0;
         let mut first = true;
         while offset < bytes.len() {
@@ -361,7 +369,7 @@ impl KittyGraphics {
         placement: &Placement,
         region: [i32; 4],
     ) -> Result<(), KittyError> {
-        let original = self.buffer.len();
+        let original = self.len();
         self.place(placement)?;
         self.buffer.truncate(self.buffer.len() - 2);
         let mut line = Line::new();
@@ -492,19 +500,12 @@ impl KittyGraphics {
         self.append_bytes(b"\x1b[?2026l")
     }
 
-    fn discard_written_prefix(&mut self, written: usize) {
-        if written == 0 {
-            return;
-        }
-        self.buffer.drain(..written);
-    }
-
     fn flush_buffer(&mut self, nonblocking: bool) -> Result<(), KittyError> {
         if self.unusable() {
             return Err(KittyError::Argument);
         }
 
-        let mut written = 0;
+        let mut written = self.written;
         while written < self.buffer.len() {
             #[cfg(not(windows))]
             let result = platform::write(self.output_fd, &self.buffer[written..]);
@@ -520,7 +521,7 @@ impl KittyGraphics {
                     if code == platform::EINTR {
                         continue;
                     }
-                    self.discard_written_prefix(written);
+                    self.written = written;
                     if nonblocking && (code == platform::EAGAIN || code == platform::EWOULDBLOCK) {
                         return Err(KittyError::Again);
                     }
@@ -528,13 +529,13 @@ impl KittyGraphics {
                 }
                 Ok(0) => {
                     platform::set_errno(platform::EIO);
-                    self.discard_written_prefix(written);
+                    self.written = written;
                     return Err(KittyError::Io(platform::EIO));
                 }
                 Ok(count) => written += count,
             }
         }
-        self.buffer.clear();
+        self.clear();
         Ok(())
     }
 

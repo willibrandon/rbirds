@@ -174,17 +174,25 @@ target/presentation-capture rbirds-perf-test target/presentation.json 12
 ```
 
 This requires Screen Recording access and captures only the matching window.
-It records ScreenCaptureKit timestamps and whether a sampled content hash
-changed, plus the capture process's own CPU cost. Repeated images do not count
-as animation. Compile with optimization and run this separately from CPU
-comparisons. The compositor also does work for capture; timestamps can be
-delayed or coalesced, and sampled hashes can miss small changes. These samples
-are evidence about visible-window delivery, not physical display scanout.
+It records ScreenCaptureKit timestamps and compares every captured content pixel
+with the preceding image, excluding the title bar, border and row padding.
+`changed` uses that comparison; `sampled_changed` and `hash` retain the earlier
+eight-pixel sampling grid for comparison. Repeated images do not count as
+animation. The capture uses the window's logical dimensions and records its own
+CPU cost. Compile with optimization and run this separately from CPU comparisons.
+The compositor also does work for capture; timestamps can be delayed or
+coalesced. These samples are evidence about visible-window delivery, not physical
+display scanout. `target/presentation-capture --self-test` checks pixel comparison
+without screen-recording access; both macOS CI jobs run it.
 
 The live scheduler follows monotonic deadlines and rebases after an overrun,
 without catch-up bursts or busy waiting. macOS uses a one-shot kernel timer with
 minimal coalescing for frame deadlines. Windows waits on console input, output
 completion and cancellation events, and reuses its bounded transfer buffer.
+Partial output writes advance a cursor through the queued frame. Retries do not
+copy the unsent suffix; appending to a partially sent queue compacts it once.
+The [output measurements](evidence/live-output-cursor-2026-09-27-macos-arm64.md)
+record the CPU saving and unchanged dense-scene delivery limit in iTerm.
 Live Kitty groups rotations into cropped texture placements, preserving source
 pixels and stacking order while reducing terminal image lookups. In iTerm,
 the live Kitty path instead composes sprites into at most two transparent
@@ -206,7 +214,7 @@ The presentation capture also records the dominant sampled RGB color and its
 fraction of content pixels. Inspect these alongside timing: a full-window
 placeholder or blank flash is a rendering failure even if frames arrive on time.
 A renderer alternating between blank and valid images can even report twice
-its useful update rate. Inspect image content before interpreting changed hashes
+its useful update rate. Inspect image content before interpreting changed images
 as delivered simulation frames.
 Optional hexadecimal colors after the duration record exact sample counts,
 including colors that occupy too little of the window to be dominant. Each

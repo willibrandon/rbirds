@@ -7,10 +7,69 @@ import CoreMedia
 import AppKit
 import Darwin
 
+// Retain the content pixels, not the capture surface, which belongs to the
+// stream's buffer pool. Row comparisons ignore title bars, borders and padding.
+struct ContentChanges {
+    var previous = Data()
+    var previousWidth = 0
+    var previousHeight = 0
+
+    mutating func changed(_ address: UnsafeRawPointer, width: Int, height: Int, stride: Int) -> Bool {
+        let rowBytes = max(0, width - 8) * 4
+        let rows = max(0, height - 44)
+        var changed = width != previousWidth || height != previousHeight
+        if changed {
+            previous = Data(count: rows * rowBytes)
+            previousWidth = width
+            previousHeight = height
+        }
+        previous.withUnsafeMutableBytes { destination in
+            guard let stored = destination.baseAddress, rowBytes > 0 else { return }
+            for row in 0..<rows {
+                let source = address.advanced(by: (row + 40) * stride + 4 * 4)
+                let target = stored.advanced(by: row * rowBytes)
+                if memcmp(source, target, rowBytes) != 0 {
+                    changed = true
+                    memcpy(target, source, rowBytes)
+                }
+            }
+        }
+        return changed
+    }
+}
+
+func checkContentChanges() throws {
+    var detector = ContentChanges()
+    var bytes = Data(count: 160 * 60)
+    func changed(_ data: Data, width: Int = 32, stride: Int = 160) -> Bool {
+        data.withUnsafeBytes { detector.changed($0.baseAddress!, width: width, height: 60, stride: stride) }
+    }
+    func expect(_ condition: Bool, _ detail: String) throws {
+        if !condition { throw CaptureError.invalidArguments("pixel comparison check failed: " + detail) }
+    }
+    try expect(changed(bytes), "first frame")
+    try expect(!changed(bytes), "identical frame")
+    bytes[2 * 160 + 8 * 4] = 7 // Title bar.
+    bytes[50 * 160 + 32 * 4] = 9 // Row padding.
+    try expect(!changed(bytes), "ignore title bar and padding")
+    bytes[51 * 160 + 9 * 4] = 17 // Between the old eight-pixel sample locations.
+    try expect(changed(bytes), "single content pixel outside sampling grid")
+    try expect(!changed(bytes), "unchanged small detail")
+    try expect(changed(bytes, width: 33), "resize")
+    var padded = Data(count: 192 * 60)
+    for row in 0..<60 {
+        padded.replaceSubrange(row * 192..<row * 192 + 33 * 4,
+                               with: bytes[row * 160..<row * 160 + 33 * 4])
+    }
+    try expect(!changed(padded, width: 33, stride: 192), "same pixels with a different row stride")
+    print("Content pixel comparisons passed")
+}
+
 final class Recorder: NSObject, SCStreamOutput {
     var frames: [[String: Any]] = []
     var lastHash: UInt64? = nil
     var watchedColours: [UInt32] = []
+    var contentChanges = ContentChanges()
     func stream(_ stream: SCStream, didOutputSampleBuffer sample: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .screen, sample.isValid,
             let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
@@ -26,7 +85,8 @@ final class Recorder: NSObject, SCStreamOutput {
         var colours: [UInt32: Int] = [:]
         var sampled = 0
         var translucent = 0
-        // Sample only the content area; title-bar changes do not count as animation.
+        // Colour diagnostics stay sampled; animation detection compares every
+        // content pixel so small glyph changes cannot fall between samples.
         for y in Swift.stride(from: 40, to: height - 4, by: 8) {
             let row = address.advanced(by: y * stride).assumingMemoryBound(to: UInt32.self)
             for x in Swift.stride(from: 4, to: width - 4, by: 8) {
@@ -37,7 +97,8 @@ final class Recorder: NSObject, SCStreamOutput {
                 sampled += 1
             }
         }
-        var frame: [String: Any] = ["pts": CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)), "changed": lastHash != hash, "hash": String(hash)]
+        let changed = contentChanges.changed(address, width: width, height: height, stride: stride)
+        var frame: [String: Any] = ["pts": CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)), "changed": changed, "sampled_changed": lastHash != hash, "hash": String(hash)]
         if let dominant = colours.max(by: { a, b in
             a.value == b.value ? a.key < b.key : a.value < b.value
         }) {
@@ -64,6 +125,10 @@ enum CaptureError: Error {
 @main struct Capture {
     static func main() async {
         do {
+            if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--self-test" {
+                try checkContentChanges()
+                return
+            }
             try await capture()
         } catch {
             FileHandle.standardError.write(Data("presentation-capture: \(error)\n".utf8))
@@ -117,7 +182,7 @@ enum CaptureError: Error {
         queue.sync {}
         var finished = timespec(); clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &finished)
         let cpu = Double(finished.tv_sec - started.tv_sec) + Double(finished.tv_nsec - started.tv_nsec) / 1e9
-        let report: [String: Any] = ["scope": "ScreenCaptureKit samples of visible test window, not physical scanout", "window": title, "capture_cpu_seconds": cpu, "requested_seconds": seconds, "size": [configuration.width, configuration.height], "requested_capture_hz": 120, "frames": recorder.frames]
+        let report: [String: Any] = ["scope": "ScreenCaptureKit samples of visible test window, not physical scanout", "change_detection": "all content pixels", "hash_scope": "one pixel per 8 by 8 content block", "window": title, "capture_cpu_seconds": cpu, "requested_seconds": seconds, "size": [configuration.width, configuration.height], "requested_capture_hz": 120, "frames": recorder.frames]
         let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
         try data.write(to: URL(fileURLWithPath: output))
         print(title, recorder.frames.count, "capture CPU seconds", cpu)

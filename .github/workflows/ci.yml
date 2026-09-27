@@ -61,6 +61,12 @@ jobs:
         run: tools/reference.sh
       - name: Process CPU measurement checks
         run: python3 tools/test_terminal_perf.py
+      - name: Presentation pixel comparison checks
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          mkdir -p target
+          swiftc -O -parse-as-library tools/presentation-capture.swift -o target/presentation-capture
+          target/presentation-capture --self-test
       - name: All local gates
         run: tools/verify.sh
 
