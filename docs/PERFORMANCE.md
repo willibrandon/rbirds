@@ -161,7 +161,9 @@ only when both the measurement is valid and the child exited successfully.
 `python3 tools/test_terminal_perf.py` checks counter units, child CPU accounting,
 intervals and process-exit failures. Native CI runs these checks on all six
 supported OS/architecture combinations. They check measurement correctness,
-not terminal appearance or performance budgets.
+not terminal appearance or performance budgets. The
+[native counter validation](evidence/terminal-counters-2026-09-27.md) retains
+the initial results and a live iTerm smoke run.
 
 For a separate macOS presentation sample, give a visible test window a title
 starting with `rbirds-perf-`, then run:
