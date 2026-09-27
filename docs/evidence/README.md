@@ -32,6 +32,9 @@ terminal. Ordinary playback and display captures remain separate requirements.
 The [current Kitty checks](live-kitty-current-2026-09-27-macos-arm64.md)
 cover four rendering paths at two viewport sizes, with separate CPU and
 visible-playback runs and a retained invalid attempt.
+The [Sixel color checks](live-sixel-colours-2026-09-27-macos-arm64.md)
+fix explicit palette selection in WezTerm and reconfirm the iTerm background
+flash fix in two foreground captures.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

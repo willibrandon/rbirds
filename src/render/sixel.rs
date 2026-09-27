@@ -263,6 +263,10 @@ impl Sixel {
                         number(out, (usize::from(component) * 100 + 127) / 255)?;
                     }
                     defined[c] = true;
+                    // Some decoders (including WezTerm) only define the
+                    // palette entry here. Select it explicitly before drawing.
+                    put(out, b"#")?;
+                    number(out, c)?;
                 }
                 if c == 0 {
                     run(out, ((1 << band_height) - 1) + b'?', width)?;

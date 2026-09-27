@@ -17,6 +17,13 @@ fn number(bytes: &[u8], at: &mut usize) -> usize {
 }
 
 fn decode(bytes: &[u8]) -> (usize, usize, Vec<[u8; 3]>) {
+    decode_with_colour_selection(bytes, true)
+}
+
+fn decode_with_colour_selection(
+    bytes: &[u8],
+    definitions_select: bool,
+) -> (usize, usize, Vec<[u8; 3]>) {
     assert!(bytes.starts_with(b"\x1bP0;1q\"1;1;"));
     assert!(bytes.ends_with(b"\x1b\\"));
     let mut at = b"\x1bP0;1q\"1;1;".len();
@@ -26,13 +33,16 @@ fn decode(bytes: &[u8]) -> (usize, usize, Vec<[u8; 3]>) {
     let height = number(bytes, &mut at);
     let mut pixels = vec![None; width * height];
     let mut colours = [[0; 3]; 256];
-    let (mut x, mut y, mut colour) = (0, 0, 0);
+    let (mut x, mut y) = (0, 0);
+    // WezTerm starts green and changes the drawing colour only on an explicit
+    // selection. A palette definition alone leaves the current colour intact.
+    let mut foreground = [0, 255, 0];
     while at < bytes.len() - 2 {
         let command = bytes[at];
         at += 1;
         match command {
             b'#' => {
-                colour = number(bytes, &mut at);
+                let colour = number(bytes, &mut at);
                 if bytes[at] == b';' {
                     at += 1;
                     assert_eq!(number(bytes, &mut at), 2);
@@ -41,6 +51,11 @@ fn decode(bytes: &[u8]) -> (usize, usize, Vec<[u8; 3]>) {
                         at += 1;
                         *channel = ((number(bytes, &mut at) * 255 + 50) / 100) as u8;
                     }
+                    if definitions_select {
+                        foreground = colours[colour];
+                    }
+                } else {
+                    foreground = colours[colour];
                 }
             }
             b'$' => x = 0,
@@ -63,7 +78,7 @@ fn decode(bytes: &[u8]) -> (usize, usize, Vec<[u8; 3]>) {
                     for bit in 0..6 {
                         if bits & (1 << bit) != 0 {
                             assert!(y + bit < height, "paint past the final partial band");
-                            pixels[(y + bit) * width + column] = Some(colours[colour]);
+                            pixels[(y + bit) * width + column] = Some(foreground);
                         }
                     }
                 }
@@ -247,6 +262,26 @@ fn colours_runs_and_partial_bands_decode_to_the_expected_raster() {
     let bytes = encoder.encode(&image).unwrap();
     assert!(bytes.contains(&b'!'), "long runs must be compressed");
     assert_eq!(decode(bytes), (19, 13, expected));
+}
+
+#[test]
+fn palette_definitions_do_not_need_to_select_the_drawing_colour() {
+    let mut image = Image::alloc(2, 13).unwrap();
+    let mut expected = vec![[18, 18, 23]; 26];
+    for row in 6..13 {
+        for (column, colour) in [[255, 0, 0], [0, 102, 153]].into_iter().enumerate() {
+            let at = row * 2 + column;
+            image.pixels[at * 4..at * 4 + 4]
+                .copy_from_slice(&[colour[0], colour[1], colour[2], 255]);
+            expected[at] = colour;
+        }
+    }
+    let mut encoder = Sixel::default();
+    for _ in 0..2 {
+        let bytes = encoder.encode(&image).unwrap();
+        assert_eq!(decode_with_colour_selection(bytes, false), (2, 13, expected.clone()));
+        assert_eq!(decode(bytes), (2, 13, expected.clone()));
+    }
 }
 
 #[test]

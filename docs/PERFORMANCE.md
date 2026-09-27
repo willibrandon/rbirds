@@ -403,6 +403,9 @@ This avoids encoding cutouts around birds while preserving the final pixels.
 The [background plane comparison](evidence/live-sixel-ground-2026-09-27-macos-arm64.md)
 records lower application cost at fixed throughput and lower iTerm decoder
 cost, with a modest dense-scene cadence gain that still falls short of 60 Hz.
+New palette entries are explicitly selected before drawing, since some
+decoders separate those operations. The [color checks](evidence/live-sixel-colours-2026-09-27-macos-arm64.md)
+cover WezTerm's first-band color error and a fresh iTerm flash confirmation.
 
 Live simulation inputs can differ between runs because movement follows
 measured elapsed time. Compare output volume and unchanged frame stages
