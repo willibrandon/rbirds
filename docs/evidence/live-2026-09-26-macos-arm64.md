@@ -154,6 +154,29 @@ samples are retained and are not counted as steady-state timing evidence.
 The script also sent `l`, incorrectly intended as a panel toggle; the actual
 live toggle is `h`. This older run does not establish panel-toggle behavior.
 
+A later iTerm sample found substantial stacks in image conversion, vertical
+flipping and Metal texture creation. The terminal's mutation queue also waited
+for its separate `iTerm2SandboxedWorker` image decoder. Sampling is intrusive:
+that run included a 159 ms output wait and is excluded from cadence comparisons.
+The stacks identify work to investigate; they do not establish its CPU share.
+
+The terminal harness now accepts explicit `--helper-pid` selections. Two
+separate foreground Sixel runs measured 20-second intervals after a three-second
+warm-up, with no capture, profiler, build or test running. At 100×32 cells and
+1400×1088 pixels, application CPU was 389.19 and 417.45 ms/s, iTerm's main process
+1128.34 and 1171.96 ms/s, and the decoder helper 241.54 and 249.16 ms/s. Including
+that helper gives combined rates of 1759.08 and 1838.57 ms/s. These are current
+cost observations, not before/after improvement claims. Compositor, GPU and
+unselected processes remain excluded; this did not use a freshly launched,
+fully isolated iTerm process. The dedicated test window was foreground;
+activity in other sessions was not measured separately.
+
+Helper accounting was checked against independent `wait4` CPU totals. An exited
+helper produces an explicit error and no partial aggregate, including when the
+OS can still read its zombie-process counters. The
+[follow-up archive](live-followup-2026-09-26-macos-arm64.tar.gz) retains the sample,
+CPU observations, validation driver and selected process identities.
+
 ## Incremental construction improvements
 
 A follow-up specializes the sprite blend loops and reuses paired sine/cosine
@@ -284,6 +307,32 @@ includes resize transitions and is not a steady-state latency measurement.
 The [heading and panel archive](live-panels-2026-09-26-macos-arm64.tar.gz) retains
 these samples, the prototype results, corrected event scripts, screenshots of
 the dedicated test windows, source changes and executable hashes.
+
+## Wider atlas experiment
+
+A follow-up prototype packed sprites into two-dimensional pages, keeping the
+near birds, far birds and hawks/trails in separate images. Kitty 0.44.0 scans
+uploaded images when resolving a placement and groups adjacent placements
+sharing a texture. The prototype reduced the decoder scene from 26, 29 and
+58 strip images to three pages at sizes 4, 30 and 64. All 364 source rectangles,
+positions and drawing order remained identical. A foreground size-64 capture
+with text crossing the sprites had zero differing pixels in the checked
+content area. The decoder harness now also rejects image groups that cross
+the text layer, which matters because Kitty draws those layers separately.
+
+This did not reduce measured CPU. Two alternating foreground pairs used the
+same seed, window and 30-second interval after a three-second warm-up, without
+capture or profiling. The page prototype's median application CPU rose from
+89.30 to 99.20 ms/s, terminal CPU from 248.59 to 249.55 ms/s, and combined CPU
+from 337.89 to 348.75 ms/s. One pair improved combined CPU and the other
+regressed; application CPU increased in both. Crop placements also needed more
+protocol fields. The implementation was discarded, retaining the vertical
+strips and the additional decoder check. Reducing the image count further did
+not establish a playback benefit.
+
+The [atlas experiment archive](live-followup-2026-09-26-macos-arm64.tar.gz)
+contains both pairs, traces, source patch, executable hashes, scripts and
+captures of the dedicated static test windows.
 
 ## Quality and demanding settings
 

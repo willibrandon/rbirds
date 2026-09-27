@@ -108,14 +108,24 @@ python3 tools/terminal-perf.py --terminal-pid 12345 --output target/terminal.jso
 ```
 
 Use a dedicated terminal process: other tabs and windows in that process count
-toward its CPU total. This measurement includes startup, excludes the compositor
-and GPU, and does not establish whether the window was visible. Its macOS CPU
+toward its CPU total. This measurement includes startup, excludes the compositor,
+GPU and unselected helper processes, and does not establish whether the window
+was visible. Its macOS CPU
 counters are converted from Mach ticks with the host's actual timebase.
 Add `--warmup-seconds 3 --sample-seconds 30` to also sample both processes over
 the same elapsed-time interval. Keep the child running longer than that window;
 an early exit records a sample error. Fixed frame counts alone compare different
 elapsed durations when pacing changes, which can also change the average
 simulation workload. Retain lifetime and equal-time samples separately.
+
+Some terminals decode images in separate helpers. For example, iTerm2 uses an
+`iTerm2SandboxedWorker` process for Sixel. Add `--helper-pid 12346` for each
+identified, dedicated helper that remains alive throughout the sample. The
+report keeps their CPU counters under `terminal_helpers`; `terminal_cpu_*`
+still means the selected main terminal process alone. Include the helper sum
+when calculating combined CPU. Exited or replaced processes produce errors
+rather than a partial helper total. Helpers that start or restart during a run
+need process-lifetime tracing; this tool does not discover or follow them.
 
 For a separate macOS presentation sample, give a visible test window a title
 starting with `rbirds-perf-`, then run:

@@ -35,7 +35,12 @@ def decode(path):
         if image:
             images[image["internal_id"]] = image
     result = []
-    for layer in layers:
+    for index, layer in enumerate(layers):
+        group = layers[index:index + layer["group_count"]]
+        # Kitty draws negative and positive z in separate passes. A shared
+        # image group must finish before the text boundary.
+        assert all((member["z_index"] < 0) == (layer["z_index"] < 0)
+                   for member in group), (path, index, "image group crosses text layer")
         image = images[layer["image_id"]]
         width, height = image["width"], image["height"]
         channels = len(image["data"]) // width // height
