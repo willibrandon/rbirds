@@ -16,6 +16,9 @@ found unbounded texture retention in iTerm 3.6.6's Kitty renderer. The
 [stable-release qualification](live-iterm-stable-2026-09-27-macos-arm64.md)
 checks iTerm 3.7.3 and the startup guard for affected versions, following the
 [isolated nightly checks](live-iterm-fixed-build-2026-09-27-macos-arm64.md).
+The [Sixel background plane comparison](live-sixel-ground-2026-09-27-macos-arm64.md)
+checks smaller output with identical pixels and lower decoder cost; dense
+playback still falls short of 60 visible changes/s.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

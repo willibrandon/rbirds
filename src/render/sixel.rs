@@ -219,23 +219,25 @@ impl Sixel {
         let mut defined = [false; 256];
         for y in (0..height).step_by(6) {
             let mut ends = [0; 256];
+            let band_height = 6.min(height - y);
+            ends[0] = width;
             *dirty = true;
-            for dy in 0..6.min(height - y) {
+            for dy in 0..band_height {
                 let start = ((top + y + dy) * image_width + left) * 4;
                 let row = &image.pixels[start..start + width * 4];
-                // The empty sky occupies most of a frame. Classify and set
-                // eight background pixels together, without palette lookups.
+                // Paint a solid background before the foreground planes.
+                // Empty sky needs neither palette lookups nor plane bits.
                 for (block, pixels) in row.chunks(32).enumerate() {
                     let x = block * 8;
                     if pixels == GROUND_BLOCK {
-                        for column in &mut planes[x..x + 8] {
-                            *column |= 1 << dy;
-                        }
-                        ends[0] = ends[0].max(x + 8);
+                        continue;
                     } else {
                         for (offset, pixel) in pixels.chunks_exact(4).enumerate() {
                             let x = x + offset;
                             let c = cached_colour(colours, pixel);
+                            if c == 0 {
+                                continue;
+                            }
                             planes[c * width + x] |= 1 << dy;
                             ends[c] = ends[c].max(x + 1);
                         }
@@ -262,6 +264,10 @@ impl Sixel {
                     }
                     defined[c] = true;
                 }
+                if c == 0 {
+                    run(out, ((1 << band_height) - 1) + b'?', width)?;
+                    continue;
+                }
                 let row = &planes[c * width..c * width + end];
                 let mut x = 0;
                 while x < end {
@@ -272,7 +278,7 @@ impl Sixel {
             }
             // A colour's bits all lie before its end, and only the colours in
             // this band have any: clearing those rows leaves the planes zero.
-            for (c, &end) in ends.iter().enumerate() {
+            for (c, &end) in ends.iter().enumerate().skip(1) {
                 if end != 0 {
                     planes[c * width..c * width + end].fill(0);
                 }

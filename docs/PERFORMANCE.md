@@ -335,6 +335,12 @@ characters, and geometry that cannot be represented by whole cells, retain the
 complete raster. Other terminals keep
 the complete-raster path.
 
+Each Sixel band paints a solid background run before its foreground colors.
+This avoids encoding cutouts around birds while preserving the final pixels.
+The [background plane comparison](evidence/live-sixel-ground-2026-09-27-macos-arm64.md)
+records lower application cost at fixed throughput and lower iTerm decoder
+cost, with a modest dense-scene cadence gain that still falls short of 60 Hz.
+
 While paused, live playback keeps the last image until a key changes the scene,
 a single step is requested, the window is resized or a visible autopilot slider
 changes. Pointer reports alone do not repaint a paused image. Input and window
