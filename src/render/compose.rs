@@ -11,6 +11,36 @@ use crate::image::{Image, png};
 use crate::simulation::{Bird, RenderMode, Sim, set_image_id};
 use crate::sprites::PICTURE_GROUND;
 
+/// Nontransparent row bounds, built once for the renderer's fixed sprites.
+#[derive(Debug)]
+pub(crate) struct SpriteRows {
+    rows: Vec<(i32, i32)>,
+    bounds: (i32, i32, i32, i32),
+}
+
+impl SpriteRows {
+    fn new(sprite: &Image) -> Result<Self, KittyError> {
+        let mut rows = Vec::new();
+        rows.try_reserve_exact(sprite.height.max(0) as usize).map_err(|_| KittyError::Memory)?;
+        let mut bounds = (sprite.width, sprite.height, 0, 0);
+        if sprite.width > 0 {
+            for (y, row) in sprite.pixels.chunks_exact(sprite.width as usize * 4).enumerate() {
+                let left = row.chunks_exact(4).position(|p| p[3] != 0);
+                let right = row.chunks_exact(4).rposition(|p| p[3] != 0);
+                let span = left.zip(right).map_or((0, 0), |(a, b)| (a as i32, b as i32 + 1));
+                if span.0 < span.1 {
+                    bounds.0 = bounds.0.min(span.0);
+                    bounds.1 = bounds.1.min(y as i32);
+                    bounds.2 = bounds.2.max(span.1);
+                    bounds.3 = bounds.3.max(y as i32 + 1);
+                }
+                rows.push(span);
+            }
+        }
+        Ok(Self { rows, bounds })
+    }
+}
+
 /// `text_style`.
 pub fn text_style(mode: RenderMode) -> CellsStyle {
     match mode {
@@ -56,6 +86,17 @@ pub fn bird_placement(sim: &Sim, bird: &Bird) -> Option<Placement> {
 /// `blend_sprite`: `mix` blends edges, which a picture wants; without it the
 /// more opaque pixel takes the place, which a text terminal wants.
 pub fn blend_sprite(canvas: &mut Image, sprite: &Image, at_x: i32, at_y: i32, mix: bool) {
+    blend_rows(canvas, sprite, at_x, at_y, mix, None);
+}
+
+fn blend_rows(
+    canvas: &mut Image,
+    sprite: &Image,
+    at_x: i32,
+    at_y: i32,
+    mix: bool,
+    rows: Option<&[(i32, i32)]>,
+) {
     // Clip once, then walk contiguous rows. Most sprites have transparent
     // margins; neither those nor the clipped pixels need destination work.
     let x0 = (-i64::from(at_x)).max(0);
@@ -65,10 +106,17 @@ pub fn blend_sprite(canvas: &mut Image, sprite: &Image, at_x: i32, at_y: i32, mi
     if x0 >= x1 || y0 >= y1 {
         return;
     }
-    let length = (x1 - x0) as usize * 4;
     for y in y0..y1 {
-        let from = sprite.offset(x0 as i32, y as i32);
-        let to = canvas.offset((i64::from(at_x) + x0) as i32, (i64::from(at_y) + y) as i32);
+        let (left, right) = rows.map_or((x0, x1), |rows| {
+            let (left, right) = rows[y as usize];
+            (x0.max(i64::from(left)), x1.min(i64::from(right)))
+        });
+        if left >= right {
+            continue;
+        }
+        let length = (right - left) as usize * 4;
+        let from = sprite.offset(left as i32, y as i32);
+        let to = canvas.offset((i64::from(at_x) + left) as i32, (i64::from(at_y) + y) as i32);
         let source = sprite.pixels[from..from + length].chunks_exact(4);
         let destination = canvas.pixels[to..to + length].chunks_exact_mut(4);
         for (src, dst) in source.zip(destination) {
@@ -122,7 +170,7 @@ pub fn compose_onto(
     birds: &[Bird],
     with_ground: bool,
 ) {
-    compose_with_coverage(sim, canvas, frames, birds, with_ground, None);
+    compose_with_coverage(sim, canvas, frames, birds, with_ground, None, &[]);
 }
 
 /// A sprite's rectangle is a conservative bound on the cells it can ink.
@@ -134,15 +182,20 @@ fn compose_with_coverage(
     birds: &[Bird],
     with_ground: bool,
     mut occupied: Option<&mut [bool]>,
+    sprite_rows: &[SpriteRows],
 ) {
-    let mut blend = |canvas: &mut Image, sprite: &Image, x: i32, y: i32, mix: bool| {
+    let mut blend = |canvas: &mut Image, index: usize, x: i32, y: i32, mix: bool| {
+        let sprite = &frames[index];
         if let Some(cells) = &mut occupied {
-            let left = i64::from(x).max(0);
-            let top = i64::from(y).max(0);
-            let right = (i64::from(x) + i64::from(sprite.width))
+            let bounds = sprite_rows
+                .get(index)
+                .map_or((0, 0, sprite.width, sprite.height), |rows| rows.bounds);
+            let left = (i64::from(x) + i64::from(bounds.0)).max(0);
+            let top = (i64::from(y) + i64::from(bounds.1)).max(0);
+            let right = (i64::from(x) + i64::from(bounds.2))
                 .min(i64::from(canvas.width))
                 .min(i64::from(sim.screen.cols) * i64::from(sim.screen.cell_width));
-            let bottom = (i64::from(y) + i64::from(sprite.height))
+            let bottom = (i64::from(y) + i64::from(bounds.3))
                 .min(i64::from(canvas.height))
                 .min(i64::from(sim.screen.rows) * i64::from(sim.screen.cell_height));
             if right > left && bottom > top {
@@ -157,7 +210,14 @@ fn compose_with_coverage(
                 }
             }
         }
-        blend_sprite(canvas, sprite, x, y, mix);
+        blend_rows(
+            canvas,
+            sprite,
+            x,
+            y,
+            mix,
+            sprite_rows.get(index).map(|rows| rows.rows.as_slice()),
+        );
     };
     let shades = sim.palette_shades();
     if with_ground {
@@ -174,13 +234,13 @@ fn compose_with_coverage(
                 }
                 for step in 0..bird.trail_held {
                     let age = ((bird.trail_at - 1 - step + TRAIL_LENGTH) % TRAIL_LENGTH) as usize;
-                    let sprite = &frames[(sim.trail_set(step) * ROTATION_FRAMES
-                        + bird.frame % ROTATION_FRAMES)
-                        as usize];
+                    let index = (sim.trail_set(step) * ROTATION_FRAMES
+                        + bird.frame % ROTATION_FRAMES) as usize;
+                    let sprite = &frames[index];
                     if !sprite.is_empty() {
                         blend(
                             canvas,
-                            sprite,
+                            index,
                             bird.trail_x[age] as i32,
                             bird.trail_y[age] as i32,
                             with_ground,
@@ -198,21 +258,23 @@ fn compose_with_coverage(
                 WING_SEQUENCE[(bird.wing % WING_CYCLE) as usize],
                 bird.layer,
             );
-            let sprite = &frames[(set * ROTATION_FRAMES + bird.frame % ROTATION_FRAMES) as usize];
+            let index = (set * ROTATION_FRAMES + bird.frame % ROTATION_FRAMES) as usize;
+            let sprite = &frames[index];
             if sprite.is_empty() {
                 continue;
             }
-            blend(canvas, sprite, bird.x as i32, bird.y as i32, with_ground);
+            blend(canvas, index, bird.x as i32, bird.y as i32, with_ground);
         }
     }
     let offset = sim.hawk_draw_offset();
     for hawk in &sim.hawks[..sim.config.hawks as usize] {
         let set = sim.hawk_set(WING_SEQUENCE[(hawk.wing % WING_CYCLE) as usize]);
-        let sprite = &frames[(set * ROTATION_FRAMES + hawk.frame % ROTATION_FRAMES) as usize];
+        let index = (set * ROTATION_FRAMES + hawk.frame % ROTATION_FRAMES) as usize;
+        let sprite = &frames[index];
         if sprite.is_empty() {
             continue;
         }
-        blend(canvas, sprite, hawk.x as i32 - offset, hawk.y as i32 - offset, with_ground);
+        blend(canvas, index, hawk.x as i32 - offset, hawk.y as i32 - offset, with_ground);
     }
 }
 
@@ -244,6 +306,17 @@ impl Renderer {
         program: &[u8],
     ) -> Result<(), crate::sprites::SpriteError> {
         sim.rasterise_sprites(&mut self.sprites, sprite_path, program)?;
+        self.sprite_rows.clear();
+        self.sprite_rows
+            .try_reserve(self.sprites.len())
+            .map_err(|_| crate::sprites::SpriteError::Png(crate::image::PngError::Memory))?;
+        for sprite in &self.sprites {
+            self.sprite_rows.push(
+                SpriteRows::new(sprite).map_err(|_| {
+                    crate::sprites::SpriteError::Png(crate::image::PngError::Memory)
+                })?,
+            );
+        }
         self.cells = Cells::new(terminal_has_truecolor())
             .map_err(|_| crate::sprites::SpriteError::Png(crate::image::PngError::Memory))?;
         Ok(())
@@ -364,7 +437,15 @@ impl Renderer {
             self.legend_drawn = false;
         }
         graphics.write_raw(b"\x1b[H")?;
-        compose_onto(sim, &mut self.canvas, &self.sprites, birds, true);
+        compose_with_coverage(
+            sim,
+            &mut self.canvas,
+            &self.sprites,
+            birds,
+            true,
+            None,
+            &self.sprite_rows,
+        );
         if let Some(profile) = &mut self.profile {
             profile.composed();
         }
@@ -404,6 +485,7 @@ impl Renderer {
             birds,
             false,
             Some(&mut self.occupied),
+            &self.sprite_rows,
         );
         if let Some(profile) = &mut self.profile {
             profile.composed();
@@ -425,5 +507,45 @@ impl Renderer {
             status = graphics.end_synchronized_update();
         }
         status
+    }
+}
+
+#[cfg(test)]
+mod row_tests {
+    use super::*;
+
+    #[test]
+    fn cached_rows_preserve_blending_and_clipping_including_transparent_rgb() {
+        let mut sprite = Image::alloc(23, 19).unwrap();
+        for (i, pixel) in sprite.pixels.chunks_exact_mut(4).enumerate() {
+            let x = i % 23;
+            let y = i / 23;
+            let alpha = if (3..20).contains(&x) && (2..17).contains(&y) {
+                [0, 1, 64, 128, 254, 255][(x + y * 3) % 6]
+            } else {
+                0
+            };
+            pixel.copy_from_slice(&[(i * 13) as u8, (i * 7) as u8, i as u8, alpha]);
+        }
+        let rows = SpriteRows::new(&sprite).unwrap();
+        assert_eq!(rows.bounds, (3, 2, 20, 17));
+        for mix in [false, true] {
+            for x in [i32::MIN, -24, -17, -1, 0, 11, 31, i32::MAX] {
+                for y in [-20, -8, 0, 13, 28] {
+                    let mut reference = Image::alloc(32, 29).unwrap();
+                    for (i, pixel) in reference.pixels.chunks_exact_mut(4).enumerate() {
+                        pixel.copy_from_slice(&[90, 45, 170, (i * 3) as u8]);
+                    }
+                    let mut cached = reference.clone();
+                    blend_sprite(&mut reference, &sprite, x, y, mix);
+                    blend_rows(&mut cached, &sprite, x, y, mix, Some(&rows.rows));
+                    assert_eq!(cached.pixels, reference.pixels, "{x}, {y}, mix={mix}");
+                }
+            }
+        }
+        sprite.pixels.fill(0);
+        let empty = SpriteRows::new(&sprite).unwrap();
+        assert!(empty.rows.iter().all(|&span| span == (0, 0)));
+        assert!(empty.bounds.0 >= empty.bounds.2);
     }
 }

@@ -38,6 +38,7 @@ pub struct Renderer {
     /// Text cells touched by this frame's sprite rectangles, including trails.
     pub occupied: Vec<bool>,
     pub atlas: Option<atlas::Atlas>,
+    pub(crate) sprite_rows: Vec<compose::SpriteRows>,
 }
 
 impl Default for Renderer {
@@ -54,6 +55,7 @@ impl Default for Renderer {
             profile: None,
             occupied: Vec::new(),
             atlas: None,
+            sprite_rows: Vec::new(),
         }
     }
 }

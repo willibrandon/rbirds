@@ -333,7 +333,7 @@ fn run_live(
     grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds)
         .map_err(|error| grid_failure("Cannot prepare spatial grid", error))?;
     // The sprites, once, as pixels.
-    let built = if sim.drawing_with_text() {
+    let built = if sim.drawing_with_text() || sim.render_mode == RenderMode::Sixel {
         renderer.prepare_text_renderer(sim, sprite_path, &name)
     } else {
         sim.rasterise_sprites(&mut renderer.sprites, sprite_path, &name)

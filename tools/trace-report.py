@@ -30,6 +30,13 @@ def summarize(path, warmup):
     for interval in intervals:
         current = current + 1 if interval > 25 else 0
         longest = max(longest, current)
+    over_budget = [sum(frame[key] for key in
+                       ("wake_late_us", "update_us", "compose_us", "encode_us", "flush_us"))
+                   > 1e6 / 60 for frame in steady]
+    budget_run = longest_budget_run = 0
+    for late in over_budget:
+        budget_run = budget_run + 1 if late else 0
+        longest_budget_run = max(longest_budget_run, budget_run)
     return {
         "file": str(path), "scope": "application and output transport, not screen presentation",
         "renderer": summary["renderer"], "viewport": summary["viewport"],
@@ -47,6 +54,8 @@ def summarize(path, warmup):
         "gaps_over_50ms": sum(value > 50 for value in intervals),
         "gaps_over_100ms": sum(value > 100 for value in intervals),
         "longest_run_of_gaps_over_25ms": longest,
+        "frames_over_60hz_budget": sum(over_budget),
+        "longest_run_over_60hz_budget": longest_budget_run,
     }
 
 

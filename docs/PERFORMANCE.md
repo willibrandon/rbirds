@@ -34,6 +34,11 @@ time includes every application thread and excludes startup and sprite upload.
 The CPU rate includes the intro; the report excludes the first two seconds
 from frame interval and stage distributions. A value of 100 CPU ms/s means
 one tenth of one logical processor, regardless of the machine's core count.
+The report also counts frames whose wake-up delay plus work exceeds a 60 Hz
+budget, and the longest consecutive run of those frames. For `--unlock-fps`,
+that budget is a comparison target rather than the active pacing setting.
+`input_bytes` counts reads at the start of frames; input serviced during a
+blocked flush is not included, so it is not a complete input-latency measure.
 
 Tracing is optional. It reserves space for 65,536 frames, performs no log writes
 during playback, and writes JSON lines after a clean exit with `q` or `--frames`.
@@ -103,6 +108,22 @@ Use a dedicated terminal process: other tabs and windows in that process count
 toward its CPU total. This measurement includes startup, excludes the compositor
 and GPU, and does not establish whether the window was visible. Its macOS CPU
 counters are converted from Mach ticks with the host's actual timebase.
+
+For a separate macOS presentation sample, give a visible test window a title
+starting with `rbirds-perf-`, then run:
+
+```sh
+swiftc -O -parse-as-library tools/presentation-capture.swift -o target/presentation-capture
+target/presentation-capture rbirds-perf-test target/presentation.json 12
+```
+
+This requires Screen Recording access and captures only the matching window.
+It records ScreenCaptureKit timestamps and whether a sampled content hash
+changed, plus the capture process's own CPU cost. Repeated images do not count
+as animation. Compile with optimization and run this separately from CPU
+comparisons. The compositor also does work for capture; timestamps can be
+delayed or coalesced, and sampled hashes can miss small changes. These samples
+are evidence about visible-window delivery, not physical display scanout.
 
 The live scheduler follows monotonic deadlines and rebases after an overrun,
 without catch-up bursts or busy waiting. macOS uses a one-shot kernel timer with
