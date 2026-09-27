@@ -316,6 +316,7 @@ fn run_live(
 
     let mut grid = SpatialGrid::new(SPATIAL_CELL_SIZE)
         .map_err(|error| grid_failure("Cannot initialize spatial grid", error))?;
+    renderer.incremental_legend = true;
     // A named seed makes a run repeatable.
     let seed = if settings.requested_seed >= 0 {
         settings.requested_seed as u32

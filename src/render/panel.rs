@@ -14,7 +14,28 @@ use super::Renderer;
 use super::kitty::{KittyError, KittyGraphics};
 use crate::cfmt;
 use crate::config::*;
-use crate::simulation::Sim;
+use crate::simulation::{RenderMode, Sim};
+
+#[derive(Debug)]
+pub(crate) struct LegendCache {
+    lines: [[u8; LEGEND_LINE_MAX]; LEGEND_MAX_ROWS as usize],
+    lengths: [usize; LEGEND_MAX_ROWS as usize],
+    viewport: [i32; 4],
+    rows: usize,
+    valid: bool,
+}
+
+impl Default for LegendCache {
+    fn default() -> Self {
+        Self {
+            lines: [[0; LEGEND_LINE_MAX]; LEGEND_MAX_ROWS as usize],
+            lengths: [0; LEGEND_MAX_ROWS as usize],
+            viewport: [0; 4],
+            rows: 0,
+            valid: false,
+        }
+    }
+}
 
 /// What the panel's stats row reports, averaged over the last second.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -193,6 +214,7 @@ impl Renderer {
         sim: &Sim,
     ) -> Result<(), KittyError> {
         if sim.screen.legend_width == 0 {
+            self.legend_cache.valid = false;
             if !self.legend_drawn {
                 return Ok(());
             }
@@ -203,9 +225,33 @@ impl Renderer {
             return Ok(());
         }
         let rows = build_legend_into(sim, &self.stats, &mut self.legend);
+        // Sixel replaces the raster underneath the panel every frame, so its
+        // text must always be repainted. The other renderers preserve it.
+        let incremental = self.incremental_legend && sim.render_mode != RenderMode::Sixel;
+        let viewport = [sim.screen.cols, sim.screen.rows, sim.screen.width, sim.screen.height];
+        let cache = &mut self.legend_cache;
+        let repaint =
+            !self.legend_drawn || !cache.valid || cache.viewport != viewport || cache.rows != rows;
+        let mut wrote_last = false;
         for (row, line) in self.legend.lines[..rows].iter().enumerate() {
-            graphics.write_text(row as i32, 0, line)?;
+            if !incremental || repaint || cache.lines[row][..cache.lengths[row]] != *line {
+                graphics.write_text(row as i32, 0, line)?;
+                if incremental {
+                    cache.lines[row][..line.len()].copy_from_slice(line);
+                    cache.lengths[row] = line.len();
+                }
+                wrote_last = row == rows - 1;
+            }
         }
+        if incremental && !wrote_last {
+            // Keep the same final cursor position as a complete panel. In a
+            // Kitty session the placements have moved it elsewhere; resizing
+            // must not anchor the viewport to that last bird's position.
+            graphics.write_text(rows as i32 - 1, LEGEND_COLUMNS, b"")?;
+        }
+        cache.valid = incremental;
+        cache.viewport = viewport;
+        cache.rows = rows;
         self.legend_drawn = true;
         Ok(())
     }

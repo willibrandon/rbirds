@@ -84,6 +84,7 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     let window = WinSize { row: 30, col: 100, xpixel: 800, ypixel: 480 };
     sim.apply_screen_size(100, 30, 800, 480);
     let mut renderer = Renderer::default();
+    renderer.incremental_legend = true;
     let mut graphics = KittyGraphics::new(1).expect("graphics");
     if sim.drawing_with_text() || render == RenderMode::Sixel {
         renderer.prepare_text_renderer(&mut sim, None, b"rbirds").expect("sprites");

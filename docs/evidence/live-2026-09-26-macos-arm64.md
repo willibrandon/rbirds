@@ -147,10 +147,12 @@ There is a cost: visible changed samples fell from about 58/s with flashes to
 60 Hz. Final presentation p99 was 33.80 ms and maximum was 43.38 ms. This fixes
 the severe full-window flash; iTerm Sixel still does not meet the smoothness
 objective. The default text and Kitty renderers do not use this workaround.
-A further eighteen-second capture exercised panel toggles, a resize from
-100×32 to 120×36, trails, depth, four hawks and three flocks. None of its 1,623
+A further eighteen-second capture exercised a resize from 100×32 to 120×36,
+trails, depth, four hawks and three flocks. None of its 1,623
 samples had the yellow placeholder as the dominant color. Resize-transition
 samples are retained and are not counted as steady-state timing evidence.
+The script also sent `l`, incorrectly intended as a panel toggle; the actual
+live toggle is `h`. This older run does not establish panel-toggle behavior.
 
 ## Incremental construction improvements
 
@@ -201,6 +203,88 @@ averaged 47.76 changed samples/s, with p99 34.97 ms and maximum 45.00 ms.
 The [follow-up archive](live-kernels-2026-09-26-macos-arm64.tar.gz) contains the
 raw observations, launch scripts, source diff and executable hashes.
 
+## Heading reuse and panel updates
+
+The next follow-up computes each snapshot bird's existing heading-table entry
+once per simulation step, retaining the neighbor accumulation order. It uses
+bounded stack storage and takes the original path below 32 birds. The initial
+prototype increased one-bird construction time by about 6%; the small-flock
+fallback reduced the measured differences at one and eight birds below 1.5%,
+which is too small to establish a change. At 32 and 128 birds, the final samples
+fell from 9.55 to 9.27 and from 38.62 to 36.08 microseconds per frame. These small
+times are derived from the benchmark's rounded ceiling rate to avoid the much
+coarser three-decimal millisecond display.
+
+Against `3f1fa9e`, four alternating samples per executable measured construction
+time of 0.331 to 0.303 ms for Kitty, 1.046 to 0.963 ms with trails, depth, four
+hawks, three flocks and speed 12, and 2.884 to 2.652 ms with 4096 birds. Braille
+fell from 1.126 to 1.078 ms. Output byte counts matched in every comparison.
+These runs used 1500 frames, except the 4096-bird case used 300.
+
+Live text and Kitty sessions now send only changed panel rows. The cache is
+invalidated on geometry changes, panel removal and changes in row count; the
+cursor finishes in the same position as a full panel write. Sixel still writes
+the entire panel after each raster. The construction/reference path retains
+the original protocol, so its measurements above cover heading reuse rather
+than incremental panel output. Terminal-state tests compare text and cursor
+state through slider/statistic updates, flock-count changes, panel toggles,
+resizing and explicit redraws. Steady-state allocation checks cover the live
+panel path.
+
+A separate foreground series compared `3f1fa9e` with the follow-up build,
+using two pairs in forward/reverse order, the same dedicated Kitty window and
+thirty-second intervals after three seconds of warmup. No capture, builds or
+tests ran during those CPU samples. These commands leave the panel hidden by
+default, so this series does not measure the incremental panel optimization.
+
+| Renderer | Application CPU ms/s, before → after | Terminal CPU ms/s | Combined CPU ms/s |
+| --- | ---: | ---: | ---: |
+| default | 223.6 → 207.6 | 120.3 → 104.8 | 343.9 → 312.4 |
+| Kitty graphics | 97.3 → 92.2 | 258.0 → 245.9 | 355.3 → 338.1 |
+
+The observed default reduction was about 9% in each pair. Kitty's median reduction was
+about 5%, but individual paired totals moved in opposite directions; its
+candidate terminal samples ranged from 231.9 to 259.9 ms/s. That series does
+not establish a reliable combined Kitty saving. An earlier heading-cache-only
+series reduced application CPU slightly but increased combined CPU by about
+1.6% for default text and 4.5% for Kitty. Those samples are also retained, rather
+than treating construction gains as proof of a visible-session saving.
+
+An isolated panel series then used `--panel` on both executables. The control
+was rebuilt from the accepted follow-up source with only the live
+`incremental_legend` flag disabled; its patch and both executable hashes are
+retained. Two forward/reverse pairs used the same thirty-second intervals and
+geometry, with no capture, builds or tests during measurement.
+
+| Renderer, panel visible | Application CPU ms/s, full → incremental | Terminal CPU ms/s | Combined CPU ms/s |
+| --- | ---: | ---: | ---: |
+| default | 216.5 → 210.2 | 153.0 → 113.8 | 369.5 → 324.0 |
+| Kitty graphics | 90.7 → 92.7 | 281.8 → 254.8 | 372.5 → 347.5 |
+
+Default combined CPU fell about 12% in the median, with savings in both pairs.
+Kitty's median fell about 7%, but one pair increased and the terminal samples
+overlapped substantially. This establishes a narrower text-panel improvement
+on this machine, rather than a reliable reduction for every renderer.
+
+Separate twelve-second captures of the follow-up build, with the panel hidden,
+measured 59.70 changed samples/s for text and 59.44 for Kitty. Maximum intervals
+were 33.25 and 31.12 ms. With `--panel` explicitly enabled, the corresponding
+rates were 59.85 and 59.81, with maximum intervals 34.69 and 30.13 ms. None of
+these captures had an interval above 50 ms. A further iTerm Sixel capture had
+zero mostly-yellow samples among 1,559, but averaged 45.11 changed samples/s
+and included one 63.09 ms gap. The flicker workaround does not resolve iTerm's
+remaining presentation limit.
+
+Corrected iTerm event runs start with `--panel`, send `h` to hide it, resize from
+100×32 to 120×36, then send `h` to restore it. Both Braille and Sixel runs include
+trails, depth, four hawks, three flocks and the ember palette. Final screenshots
+show the restored panel after resizing. All 1,558 Sixel capture samples retained
+a dark dominant background; none showed the yellow placeholder. Their timing
+includes resize transitions and is not a steady-state latency measurement.
+The [heading and panel archive](live-panels-2026-09-26-macos-arm64.tar.gz) retains
+these samples, the prototype results, corrected event scripts, screenshots of
+the dedicated test windows, source changes and executable hashes.
+
 ## Quality and demanding settings
 
 Kitty's own decoder compared original uploads with packed textures at sprite
@@ -219,10 +303,13 @@ gaps above 25 ms during 1200-frame runs. Sixel had three, with a maximum of
 budget even before terminal painting.
 
 A 4200-frame default run crossed the 60-second autopilot threshold and included
-a resize, panel toggle and deliberate 250 ms reader pause. Its one long gap
+a resize and deliberate 250 ms reader pause. Its one long gap
 coincided with that pause; playback recovered without a catch-up burst.
 Large-window blocks, sextants and Sixel runs are also retained. These bounded
 runs exercise recovery; they cannot prove that a stall will never occur.
+That run's injected `l` was not a panel toggle. The PTY harness now defaults to
+the correct `h` key, matching the interactive controls rather than the `-l`
+command-line option.
 
 Pixel, C-oracle, protocol, scheduler, cancellation and allocation tests cover
 the implementation changes. A steady-state frame still allocates nothing.

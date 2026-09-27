@@ -188,7 +188,7 @@ def main():
     parser.add_argument("--pid-file", type=Path)
     parser.add_argument("--trace", type=Path)
     parser.add_argument("--input-at", type=float)
-    parser.add_argument("--input", default="l")
+    parser.add_argument("--input", default="h", help="text to inject (default: h toggles the panel)")
     parser.add_argument("--resize-at", type=float)
     parser.add_argument("--resize-cols", type=int, default=120)
     parser.add_argument("--resize-rows", type=int, default=40)

@@ -4,7 +4,9 @@
 
 use std::f64::consts::PI;
 
-use super::{Bird, Sim, Vector, direction_frame, normalized_angle, trig_lookup, turn_towards};
+use super::{
+    Bird, Sim, TrigEntry, Vector, direction_frame, normalized_angle, trig_lookup, turn_towards,
+};
 use crate::config::*;
 use crate::fp::{self, mul_add};
 use crate::spatial_grid::SpatialGrid;
@@ -350,6 +352,16 @@ impl Sim {
     /// `flock_direction`: the heading one bird wants, from its neighbours in
     /// the snapshot through the grid, in the grid's own order.
     pub fn flock_direction(&self, birds: &[Bird], grid: &SpatialGrid, target_index: usize) -> f64 {
+        self.flock_direction_with_headings::<false>(birds, grid, target_index, &[])
+    }
+
+    fn flock_direction_with_headings<const CACHED: bool>(
+        &self,
+        birds: &[Bird],
+        grid: &SpatialGrid,
+        target_index: usize,
+        headings: &[TrigEntry],
+    ) -> f64 {
         let target = &birds[target_index];
         // Writing overrules flocking while it lasts.
         if let Some((want_x, want_y)) = self.formation.target_of(target_index as i32) {
@@ -419,7 +431,8 @@ impl Sim {
                     neighbors += 1;
                     if other.flock != target.flock {
                         if config.avoid_kinship > 0.0 {
-                            let heading = trig_lookup(other.direction);
+                            let heading =
+                                if CACHED { headings[i] } else { trig_lookup(other.direction) };
                             let kinship = config.avoid_kinship;
                             // fma: boids.c:2076:37
                             alignment.x = mul_add(kinship, f64::from(heading.cosine), alignment.x);
@@ -444,7 +457,7 @@ impl Sim {
                         }
                         continue;
                     }
-                    let heading = trig_lookup(other.direction);
+                    let heading = if CACHED { headings[i] } else { trig_lookup(other.direction) };
                     alignment.x += f64::from(heading.cosine);
                     alignment.y += f64::from(heading.sine);
                     cohesion.x += other.x;
@@ -596,8 +609,32 @@ impl Sim {
     /// `update_birds`: every bird from the snapshot.
     pub fn update_birds(&mut self, birds: &mut [Bird], snapshot: &[Bird], grid: &SpatialGrid) {
         self.measure_flocks(snapshot);
+        // A handful of birds does too few neighbour lookups to repay a cache.
+        // Keep the general path for snapshots beyond the supported population.
+        if self.config.birds < 32 || snapshot.len() > MAX_BIRDS as usize {
+            self.update_birds_with_headings::<false>(birds, snapshot, grid, &[]);
+            return;
+        }
+        // Every neighbour reads the same snapshot heading. Compute its exact
+        // table entry once per step, retaining the grid's accumulation order.
+        let mut headings = [TrigEntry::default(); MAX_BIRDS as usize];
+        let headings = &mut headings[..snapshot.len()];
+        for (heading, bird) in headings.iter_mut().zip(snapshot) {
+            *heading = trig_lookup(bird.direction);
+        }
+        self.update_birds_with_headings::<true>(birds, snapshot, grid, headings);
+    }
+
+    fn update_birds_with_headings<const CACHED: bool>(
+        &mut self,
+        birds: &mut [Bird],
+        snapshot: &[Bird],
+        grid: &SpatialGrid,
+        headings: &[TrigEntry],
+    ) {
         for i in 0..self.config.birds as usize {
-            let mut direction = self.flock_direction(snapshot, grid, i);
+            let mut direction =
+                self.flock_direction_with_headings::<CACHED>(snapshot, grid, i, headings);
             // Banking is for flocking: a bird writing a letter, and a bird in
             // the panel's turn zone, turn at once.
             if self.formation.target_of(i as i32).is_none()

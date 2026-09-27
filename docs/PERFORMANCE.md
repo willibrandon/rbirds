@@ -63,6 +63,9 @@ python3 tools/live-perf.py --render kitty --output target/busy.json -- --birds 4
 Use `--binary` to alternate baseline and candidate executables. The report
 includes the binary hash, command, geometry, scripted events and raw frame
 timestamps. Its child CPU counter includes startup, unlike the live trace.
+The default injected input is `h`, the live panel toggle. Use `--panel` to start
+with the panel visible, and measure that case separately from the default
+command, which starts with it hidden.
 Receive timestamps can be grouped or delayed by the harness's own scheduling;
 correlate them with the application trace. Intentional reader pauses are recorded
 as events and must not be mistaken for spontaneous application stalls.

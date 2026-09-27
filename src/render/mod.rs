@@ -33,6 +33,9 @@ pub struct Renderer {
     pub stats: Stats,
     /// The panel's rows, rebuilt in place each frame.
     pub legend: LegendBuffers,
+    /// Live text and Kitty sessions only send panel rows that changed.
+    pub incremental_legend: bool,
+    pub(crate) legend_cache: panel::LegendCache,
     pub sixel: sixel::Sixel,
     /// iTerm2 needs explicit image retirement before replacing a Sixel frame.
     pub erase_sixel_before_frame: bool,
@@ -53,6 +56,8 @@ impl Default for Renderer {
             legend_drawn: false,
             stats: Stats::default(),
             legend: LegendBuffers::default(),
+            incremental_legend: false,
+            legend_cache: panel::LegendCache::default(),
             sixel: sixel::Sixel::default(),
             erase_sixel_before_frame: false,
             profile: None,
