@@ -205,6 +205,13 @@ The compressor chooses fixed or per-frame Huffman codes after accounting for
 the code table's cost. This reduces transport bytes without changing pixels,
 at the cost of a reusable token buffer and some additional application CPU.
 Judge it by combined application and terminal CPU, alongside visible timing.
+On a local macOS connection, iTerm can instead read these same RGBA pixels from
+private POSIX shared-memory objects. A startup query must successfully read and
+consume an object before this path is used. At most four images are outstanding;
+an unread image keeps its contents, with that frame falling back to inline
+compression. Remote or unsupported connections retain inline transport. The
+[shared-memory observations](evidence/live-iterm-shm-2026-09-27-macos-arm64.md)
+include combined CPU, dense playback, pixel integrity and cleanup checks.
 Local alpha composition can differ slightly
 from the terminal blending separate textures, as recorded in the
 [Mac evidence](evidence/live-2026-09-26-macos-arm64.md).

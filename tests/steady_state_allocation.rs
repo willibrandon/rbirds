@@ -67,6 +67,19 @@ fn counted<T>(body: impl FnOnce() -> T) -> (T, usize) {
     (result, ALLOCATIONS.with(Cell::get))
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn sharing_a_frame_and_deferring_an_unread_frame_allocate_no_rust_storage() {
+    let pixels = vec![71; 640 * 480 * 4];
+    let mut image = rbirds::platform::SharedImage::new().unwrap();
+    let (result, allocations) = counted(|| image.stage(&pixels, 640 * 4, 0, 640 * 4, 480));
+    assert!(result.unwrap());
+    assert_eq!(allocations, 0);
+    let (result, allocations) = counted(|| image.stage(&pixels, 640 * 4, 0, 640 * 4, 480));
+    assert!(!result.unwrap());
+    assert_eq!(allocations, 0);
+}
+
 /// Allocations made by frames 30 to 150 of a live session with the panel up,
 /// hawks, trails, depth and two flocks.
 fn steady_state_allocations(render: RenderMode, erase_sixel: bool, kitty_raster: bool) -> usize {

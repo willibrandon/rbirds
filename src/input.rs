@@ -28,6 +28,58 @@ pub struct InputParser {
     /// Rendering inputs, including keys consumed while output is blocked.
     /// Pointer reports do not change a paused image.
     pub(crate) revision: u64,
+    filter_graphics: bool,
+    graphics_string: bool,
+    graphics_escape: bool,
+}
+
+impl InputParser {
+    /// Carry an incomplete startup APC into the live parser. This is enabled
+    /// only for the extra local iTerm query; ordinary input retains C behavior.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn ignore_kitty_replies(&mut self, partial: &[u8]) {
+        self.filter_graphics = true;
+        self.graphics_string = false;
+        self.graphics_escape = false;
+        self.state = InputState::Normal;
+        for &key in partial {
+            if !self.skip_graphics_byte(key) {
+                self.state = if key == 0x1b { InputState::Escape } else { InputState::Normal };
+            }
+        }
+    }
+
+    fn skip_graphics_byte(&mut self, key: u8) -> bool {
+        if !self.filter_graphics {
+            return false;
+        }
+        if self.graphics_string {
+            if self.graphics_escape {
+                self.graphics_escape = false;
+                if key == b'\\' {
+                    self.graphics_string = false;
+                } else if key == 0x1b {
+                    self.graphics_escape = true;
+                } else {
+                    // A new escape sequence abandons an unterminated APC.
+                    self.graphics_string = false;
+                    self.state = InputState::Escape;
+                    return false;
+                }
+            } else if key == 0x1b {
+                self.graphics_escape = true;
+            } else if key == 0x18 || key == 0x1a {
+                self.graphics_string = false;
+            }
+            return true;
+        }
+        if self.state == InputState::Escape && key == b'_' {
+            self.state = InputState::Normal;
+            self.graphics_string = true;
+            return true;
+        }
+        false
+    }
 }
 
 /// `read_decimal`: the decimal digits at `text[*at..]`, overflow refused.
@@ -140,8 +192,16 @@ impl Sim {
     /// the rest of that read is not looked at, as in the C.
     pub fn handle_input(&mut self, parser: &mut InputParser, input: Option<&[u8]>) -> bool {
         let Some(input) = input.filter(|bytes| !bytes.is_empty()) else { return true };
-        self.last_key_at = self.clock.seconds;
+        if !parser.filter_graphics {
+            self.last_key_at = self.clock.seconds;
+        }
         for &key in input {
+            if parser.skip_graphics_byte(key) {
+                continue;
+            }
+            if parser.filter_graphics && key != 0x1b {
+                self.last_key_at = self.clock.seconds;
+            }
             if parser.state == InputState::Escape {
                 if key == b'[' || key == b'O' {
                     parser.state = InputState::Sequence;
@@ -312,5 +372,45 @@ mod tests {
         assert!(sim.handle_input(&mut parser, Some(b"0;2M")));
         assert!(sim.mouse.present);
         assert_eq!((sim.mouse.x, sim.mouse.y), (76.0, 24.0));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod kitty_reply_tests {
+    use super::*;
+
+    #[test]
+    fn late_graphics_replies_are_not_keys_at_any_read_or_query_boundary() {
+        let reply = b"\x1b_Gi=1919052146;EBADF: q h e K query failed\x1b\\";
+        for split in 0..=reply.len() {
+            let mut sim = Sim::new();
+            sim.clock.seconds = 20.0;
+            sim.last_key_at = 3.0;
+            let before = sim.config.clone();
+            let mut parser = InputParser::default();
+            parser.ignore_kitty_replies(&reply[..split]);
+            for byte in reply[split..].chunks(1) {
+                assert!(sim.handle_input(&mut parser, Some(byte)), "split {split}");
+            }
+            assert_eq!(sim.config, before, "split {split}");
+            assert!(!sim.paused);
+            assert_eq!(sim.last_key_at, 3.0);
+            assert_eq!(parser.revision, 0);
+            assert_eq!(parser.state, InputState::Normal);
+            assert!(sim.handle_input(&mut parser, Some(b"e")));
+            assert_ne!(sim.config.trails, before.trails);
+            assert_eq!(sim.last_key_at, 20.0);
+            assert!(!sim.handle_input(&mut parser, Some(b"q")));
+        }
+    }
+
+    #[test]
+    fn another_escape_sequence_can_abandon_an_unterminated_graphics_reply() {
+        let mut sim = Sim::new();
+        let mut parser = InputParser::default();
+        parser.ignore_kitty_replies(b"\x1b_Gi=1919052146;");
+        assert!(sim.handle_input(&mut parser, Some(b"\x1b[C")));
+        assert_eq!(parser.state, InputState::Normal);
+        assert!(!sim.handle_input(&mut parser, Some(b"q")));
     }
 }

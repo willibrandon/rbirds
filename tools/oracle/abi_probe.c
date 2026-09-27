@@ -36,6 +36,7 @@
 #include <unistd.h>
 #ifdef __APPLE__
 #include <sys/event.h>
+#include <sys/mman.h>
 #endif
 
 #if !defined(__APPLE__) && !defined(__linux__)
@@ -218,6 +219,20 @@ static void report(void) {
     CONST(O_RDWR);
     CONST(O_NOCTTY);
     CONST(O_CLOEXEC);
+#ifdef __APPLE__
+    SCALAR("off_t", off_t);
+    CONST(O_RDONLY);
+    CONST(O_CREAT);
+    CONST(O_EXCL);
+    CONST(PROT_READ);
+    CONST(PROT_WRITE);
+    CONST(MAP_SHARED);
+    CONST(EEXIST);
+    CONST(ENOENT);
+    CONST(SIG_BLOCK);
+    CONST(SIG_SETMASK);
+    CONST((intptr_t)MAP_FAILED);
+#endif
 
     /* Prototypes. Top-level parameter qualifiers (restrict) and attributes
      * such as noreturn are not part of the function type being compared. */
@@ -256,6 +271,14 @@ static void report(void) {
     FN(__error, int *(*)(void), "int *(void)");
 #else
     FN(__errno_location, int *(*)(void), "int *(void)");
+#endif
+#ifdef __APPLE__
+    FN(shm_open, int (*)(const char *, int, ...), "int(const char *, int, ...)");
+    FN(shm_unlink, int (*)(const char *), "int(const char *)");
+    FN(mmap, void *(*)(void *, size_t, int, int, int, off_t), "void *(void *, size_t, int, int, int, off_t)");
+    FN(munmap, int (*)(void *, size_t), "int(void *, size_t)");
+    FN(sigfillset, int (*)(sigset_t *), "int(sigset_t *)");
+    FN(sigprocmask, int (*)(int, const sigset_t *, sigset_t *), "int(int, const sigset_t *, sigset_t *)");
 #endif
 }
 

@@ -300,6 +300,34 @@ impl KittyGraphics {
         self.upload_payload(prefix.as_bytes(), bytes)
     }
 
+    #[cfg(target_os = "macos")]
+    pub(crate) fn shared_rgba(
+        &mut self,
+        image: u32,
+        width: i32,
+        height: i32,
+        name: &[u8],
+        query: bool,
+    ) -> Result<(), KittyError> {
+        let mut encoded = [0; PAYLOAD_MAX];
+        if name.is_empty() || name.len() > 32 || image == 0 || width <= 0 || height <= 0 {
+            return Err(KittyError::Argument);
+        }
+        let length = base64_encode_chunk(name, &mut encoded);
+        let mut line = Line::new();
+        line.text(if query { b"\x1b_Ga=q" } else { b"\x1b_Ga=t,q=2" })
+            .text(b",f=32,t=s,i=")
+            .uint(image)
+            .text(b",s=")
+            .int(width)
+            .text(b",v=")
+            .int(height)
+            .text(b";")
+            .text(&encoded[..length])
+            .text(b"\x1b\\");
+        self.append_line(&line)
+    }
+
     fn upload_payload(&mut self, prefix: &[u8], bytes: &[u8]) -> Result<(), KittyError> {
         let original_length = self.len();
         let mut offset = 0;

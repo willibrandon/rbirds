@@ -55,3 +55,65 @@ fn iterm_uses_explicit_ids_and_composed_surfaces_while_other_terminals_keep_atla
         assert!(outcome.transcript.ends_with(rbirds::platform::ALT_SCREEN_OFF));
     }
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn a_refused_or_unconsumed_shared_memory_query_keeps_inline_transport() {
+    for response in [
+        b"\x1b_Gi=1919052146;EBADF:unavailable\x1b\\".as_slice(),
+        b"\x1b_Gi=1919052146;OK\x1b\\",
+        b"",
+    ] {
+        let outcome = pty::run(
+            &Spec::new(
+                &Subject { exe: env!("CARGO_BIN_EXE_rbirds").into(), name: "rbirds".into() },
+                &[
+                    "--render", "kitty", "--color", "ember", "--birds", "3", "--frames", "2",
+                    "--seed", "1",
+                ],
+            )
+            .reply(Reply::whole(b"\x1b[>q", b"\x1bP>|iTerm2 3.6.6\x1b\\"))
+            .reply(Reply::whole(b"\x1b_Ga=q,f=32,t=s,i=1919052146", response)),
+        );
+        assert_eq!(outcome.exit, Some(Exit::Code(0)), "{}", outcome.describe());
+        outcome.assert_attributes_restored();
+        assert!(outcome.contains(b"a=t,q=2,f=32,o=z,i="));
+        assert!(!outcome.contains(b"a=t,q=2,f=32,t=s,i="));
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn shared_query_waits_for_a_fragmented_error_string_to_finish() {
+    use std::time::Duration;
+    use support::pty::{Action, Step};
+    let query = b"\x1b_Ga=q,f=32,t=s,i=1919052146";
+    let outcome = pty::run(
+        &Spec::new(
+            &Subject { exe: env!("CARGO_BIN_EXE_rbirds").into(), name: "rbirds".into() },
+            &[
+                "--render", "kitty", "--color", "ember", "--birds", "3", "--frames", "2", "--seed",
+                "1",
+            ],
+        )
+        .reply(Reply::whole(b"\x1b[>q", b"\x1bP>|iTerm2 3.6.6\x1b\\"))
+        .reply(Reply {
+            query: query.to_vec(),
+            fragments: vec![
+                b"\x1b_Gi=1919052146;EBADF:cannot read".to_vec(),
+                b" image\x1b".to_vec(),
+                b"\\".to_vec(),
+            ],
+            gap: Duration::from_millis(25),
+        })
+        .step(Step::after_output(b"a=t,q=2,f=32,o=z,i=", Action::Mark("inline upload"))),
+    );
+    assert_eq!(outcome.exit, Some(Exit::Code(0)), "{}", outcome.describe());
+    let last_reply = outcome
+        .events
+        .iter()
+        .find(|event| event.what.contains("1919052146") && event.what.ends_with("[2])"))
+        .unwrap_or_else(|| panic!("missing final reply fragment: {}", outcome.describe()));
+    assert!(last_reply.at <= outcome.event("mark inline upload").unwrap().at);
+    outcome.assert_attributes_restored();
+}

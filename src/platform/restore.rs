@@ -4,9 +4,10 @@
 //! `restore_terminal`.
 //!
 //! The state is process-global, as in the C, because the signal handler has
-//! no other way to reach it. Everything the handler touches is here and is
+//! no other way to reach it. The terminal state the handler touches is here and is
 //! async-signal-safe: lock-free atomics, `tcsetattr`, `write`, `errno`. No
 //! allocation, locking, formatting or unwinding happens on this path.
+//! macOS shared-image cleanup is separately audited in `shared_image.rs`.
 //!
 //! The saved attributes are kept field by field in atomics rather than as a
 //! `Termios` behind an `UnsafeCell`. The protocol is the same: they are
@@ -226,6 +227,8 @@ pub fn enter_alt_screen() {
 /// [`MOUSE_REPORT_OFF`], [`SYNC_UPDATE_END`], [`CURSOR_SHOW`],
 /// [`ALT_SCREEN_OFF`]. Async-signal-safe.
 pub fn restore_terminal() {
+    #[cfg(target_os = "macos")]
+    super::shared_image::cleanup();
     // A plain check then set, as the C's `sig_atomic_t` flag is, rather than a
     // swap: the window between them behaves exactly as the reference's does.
     if TERMINAL_RESTORED.load(Ordering::SeqCst) {

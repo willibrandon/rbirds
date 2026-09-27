@@ -237,6 +237,26 @@ pub fn rust_layout_report() -> String {
         r.constant(name, value.into());
     }
 
+    #[cfg(target_os = "macos")]
+    {
+        r.scalar::<os::off_t>("off_t");
+        for (name, value) in [
+            ("O_RDONLY", os::O_RDONLY),
+            ("O_CREAT", os::O_CREAT),
+            ("O_EXCL", os::O_EXCL),
+            ("PROT_READ", os::PROT_READ),
+            ("PROT_WRITE", os::PROT_WRITE),
+            ("MAP_SHARED", os::MAP_SHARED),
+            ("EEXIST", os::EEXIST),
+            ("ENOENT", os::ENOENT),
+            ("SIG_BLOCK", os::SIG_BLOCK),
+            ("SIG_SETMASK", os::SIG_SETMASK),
+        ] {
+            r.constant(name, value.into());
+        }
+        r.constant("(intptr_t)MAP_FAILED", -1);
+    }
+
     // Prototypes the foreign declarations were written against.
     for (name, prototype) in sys::signatures() {
         r.line(format_args!("fn {name} {prototype}"));

@@ -31,6 +31,8 @@ pub struct KittyRaster {
     canvases: [Image; 2],
     encoder: super::pixel_runs::PixelRuns,
     next_bank: u32,
+    #[cfg(target_os = "macos")]
+    pub(crate) shared: Option<[crate::platform::SharedImage; 4]>,
 }
 
 impl Default for KittyRaster {
@@ -40,6 +42,8 @@ impl Default for KittyRaster {
             canvases: [Image::empty(), Image::empty()],
             encoder: super::pixel_runs::PixelRuns::default(),
             next_bank: 0,
+            #[cfg(target_os = "macos")]
+            shared: None,
         }
     }
 }
@@ -123,15 +127,37 @@ impl KittyRaster {
             let (cols, rows) = ((right - 1) / cw + 1 - x, (bottom - 1) / ch + 1 - y);
             let width = (cols * cw).min(sim.screen.width - x * cw);
             let height = (rows * ch).min(sim.screen.height - y * ch);
-            let compressed = self.encoder.encode_region(
-                &self.canvases[plane],
-                (x * cw) as usize,
-                (y * ch) as usize,
-                width as usize,
-                height as usize,
-            )?;
             let id = self.next_bank * 2 + plane as u32 + 1;
-            graphics.upload_compressed_rgba(id, width, height, compressed)?;
+            #[cfg(target_os = "macos")]
+            let shared = if let Some(images) = self.shared.as_mut() {
+                let image = &mut images[id as usize - 1];
+                let canvas = &self.canvases[plane];
+                let stride = canvas.width as usize * 4;
+                let offset = (y * ch) as usize * stride + (x * cw) as usize * 4;
+                if image
+                    .stage(&canvas.pixels, stride, offset, width as usize * 4, height as usize)
+                    .unwrap_or(false)
+                {
+                    graphics.shared_rgba(id, width, height, image.name(), false)?;
+                    true
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+            #[cfg(not(target_os = "macos"))]
+            let shared = false;
+            if !shared {
+                let compressed = self.encoder.encode_region(
+                    &self.canvases[plane],
+                    (x * cw) as usize,
+                    (y * ch) as usize,
+                    width as usize,
+                    height as usize,
+                )?;
+                graphics.upload_compressed_rgba(id, width, height, compressed)?;
+            }
             next[plane] = Some((id, x, y, if split && plane == 0 { -1 } else { 1 }));
         }
         graphics.begin_synchronized_update()?;
@@ -702,6 +728,59 @@ impl Renderer {
 #[cfg(test)]
 mod row_tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn unread_shared_images_keep_their_frame_and_fall_back_to_identical_inline_output() {
+        let mut sim = Sim::new();
+        sim.render_mode = RenderMode::Kitty;
+        sim.config.palette = 1;
+        sim.config.birds = 2;
+        sim.config.hawks = 0;
+        sim.apply_screen_size(4, 4, 40, 40);
+        sim.screen.legend_width = 1;
+        let mut birds = [
+            Bird { x: 8.0, y: 9.0, ..Bird::default() },
+            Bird { x: 21.0, y: 21.0, layer: 1, ..Bird::default() },
+        ];
+        let far = sim.sprite_image_id(&birds[1]);
+        let mut sprites = vec![Image::empty(); far as usize];
+        for (id, rgba) in [(1, [255, 0, 0, 128]), (far, [0, 255, 0, 255])] {
+            let mut sprite = Image::alloc(3, 3).unwrap();
+            for pixel in sprite.pixels.chunks_exact_mut(4) {
+                pixel.copy_from_slice(&rgba);
+            }
+            sprites[id as usize - 1] = sprite;
+        }
+        let rows: Vec<_> = sprites.iter().map(|s| SpriteRows::new(s).unwrap()).collect();
+        let mut shared = KittyRaster {
+            shared: Some([
+                crate::platform::SharedImage::new().unwrap(),
+                crate::platform::SharedImage::new().unwrap(),
+                crate::platform::SharedImage::new().unwrap(),
+                crate::platform::SharedImage::new().unwrap(),
+            ]),
+            ..KittyRaster::default()
+        };
+        let mut inline = KittyRaster::default();
+        let mut a = KittyGraphics::new(1).unwrap();
+        let mut b = KittyGraphics::new(1).unwrap();
+        for frame in 0..6 {
+            a.clear();
+            b.clear();
+            birds[0].x += 1.0;
+            shared.queue(&mut a, &sim, &birds, &sprites, &rows, None).unwrap();
+            inline.queue(&mut b, &sim, &birds, &sprites, &rows, None).unwrap();
+            if frame < 2 {
+                let output = String::from_utf8_lossy(a.buffer());
+                assert_eq!(output.matches("t=s,").count(), 2);
+                let swap = output.find("\x1b[?2026h").unwrap();
+                assert!(output.rfind("a=t,").unwrap() < swap);
+            } else {
+                assert_eq!(a.buffer(), b.buffer(), "pending images must not be replaced");
+            }
+        }
+    }
 
     #[test]
     fn kitty_surfaces_preserve_stacking_text_layers_clipping_and_empty_frames() {

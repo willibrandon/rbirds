@@ -348,8 +348,14 @@ fn run_live(
     if sim.palette_follows_the_theme() && !terminal::learn_the_theme(&mut sim.theme) {
         sim.config.palette = crate::palette::fallback_palette();
     }
+    #[cfg(target_os = "macos")]
+    let mut startup_parser = InputParser::default();
     if sim.render_mode == RenderMode::Kitty && terminal::query_is_iterm2() {
         renderer.kitty_raster = Some(crate::render::compose::KittyRaster::default());
+        #[cfg(target_os = "macos")]
+        if let Some(raster) = renderer.kitty_raster.as_mut() {
+            raster.shared = terminal::shared_images(&mut startup_parser);
+        }
     }
     let sixel_cell = if sim.render_mode == RenderMode::Sixel {
         let options = terminal::prepare_sixel()
@@ -443,6 +449,10 @@ fn run_live(
     }
 
     let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
+    #[cfg(target_os = "macos")]
+    {
+        live.parser = startup_parser;
+    }
     live.reuse_paused_frame = true;
     if let Some(trace) = &mut trace {
         trace

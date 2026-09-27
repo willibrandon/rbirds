@@ -160,6 +160,13 @@ sprite. The renderer instead sends one cropped transparent surface, or two
 when a visible panel separates the far and near layers. Source pixels retain
 their native resolution, clipping and image-ID stacking order. A lossless
 zlib stream carries RGBA pixels through the Kitty protocol using explicit IDs.
+On macOS, a successful local shared-memory query selects raw RGBA objects
+instead. The live parser ignores late graphics replies, including a reply split
+by the query deadline, so their payload cannot act as keys. At most four private
+objects are pending; unread objects retain their contents and that frame falls
+back to inline encoding. Unavailable or remote
+connections keep the zlib path. The shared transport preserves the same pixels
+and includes normal, error, panic and caught-signal cleanup.
 Uploads alternate between two image-ID sets before a synchronized placement
 swap, avoiding invalidation of the image still being displayed.
 
@@ -170,3 +177,5 @@ recordings, C construction comparisons or other terminals' atlas path.
 The codec, composition, PTY negotiation, paused-frame and allocation tests cover
 the path; foreground observations and their limits are recorded in the
 [Mac evidence](evidence/live-2026-09-26-macos-arm64.md).
+The [local transport follow-up](evidence/live-iterm-shm-2026-09-27-macos-arm64.md)
+records the shared-memory CPU, presentation, ABI and lifecycle checks.

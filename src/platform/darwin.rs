@@ -27,6 +27,7 @@ pub type nfds_t = c_uint;
 pub type pid_t = i32;
 /// `__uint32_t`: one bit per signal.
 pub type sigset_t = u32;
+pub type off_t = i64;
 
 pub const NCCS: usize = 20;
 
@@ -138,3 +139,13 @@ pub const FD_CLOEXEC: c_int = 1;
 pub const O_RDWR: c_int = 0x0002;
 pub const O_CLOEXEC: c_int = 0x0100_0000;
 pub const O_NOCTTY: c_int = 0x0002_0000;
+pub const O_RDONLY: c_int = 0;
+pub const O_CREAT: c_int = 0x0200;
+pub const O_EXCL: c_int = 0x0800;
+pub const PROT_READ: c_int = 1;
+pub const PROT_WRITE: c_int = 2;
+pub const MAP_SHARED: c_int = 1;
+pub const EEXIST: c_int = 17;
+pub const ENOENT: c_int = 2;
+pub const SIG_BLOCK: c_int = 1;
+pub const SIG_SETMASK: c_int = 3;

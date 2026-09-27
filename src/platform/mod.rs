@@ -62,6 +62,8 @@ mod poll;
 pub mod pty;
 mod restore;
 mod scan;
+#[cfg(target_os = "macos")]
+mod shared_image;
 mod signals;
 mod termios;
 mod time;
@@ -93,6 +95,8 @@ pub use restore::{
     write_all_quietly,
 };
 pub use scan::scan_osc_rgb;
+#[cfg(target_os = "macos")]
+pub use shared_image::SharedImage;
 pub use signals::{default_sigpipe, install_signal_handlers, send_signal};
 pub use termios::{RawModeView, tcgetattr, tcsetattr};
 pub use time::{
@@ -238,6 +242,24 @@ mod sys {
         ["__errno_location", "int *(void)"]
         #[cfg(target_os = "linux")]
         fn __errno_location() -> *mut c_int;
+        ["shm_open", "int(const char *, int, ...)"]
+        #[cfg(target_os = "macos")]
+        fn shm_open(name: *const c_char, flags: c_int, ...) -> c_int;
+        ["shm_unlink", "int(const char *)"]
+        #[cfg(target_os = "macos")]
+        fn shm_unlink(name: *const c_char) -> c_int;
+        ["mmap", "void *(void *, size_t, int, int, int, off_t)"]
+        #[cfg(target_os = "macos")]
+        fn mmap(address: *mut c_void, length: usize, protection: c_int, flags: c_int, fd: c_int, offset: super::os::off_t) -> *mut c_void;
+        ["munmap", "int(void *, size_t)"]
+        #[cfg(target_os = "macos")]
+        fn munmap(address: *mut c_void, length: usize) -> c_int;
+        ["sigfillset", "int(sigset_t *)"]
+        #[cfg(target_os = "macos")]
+        fn sigfillset(set: *mut sigset_t) -> c_int;
+        ["sigprocmask", "int(int, const sigset_t *, sigset_t *)"]
+        #[cfg(target_os = "macos")]
+        fn sigprocmask(how: c_int, set: *const sigset_t, old: *mut sigset_t) -> c_int;
     }
 }
 

@@ -63,14 +63,48 @@ pub fn write_all(bytes: &[u8]) {
 /// terminator, a full buffer or the deadline. `reply_size` is the C buffer's
 /// size, NUL included.
 pub fn terminal_query(request: &[u8], reply_size: usize, milliseconds: i64) -> Vec<u8> {
-    query_until(request, reply_size, milliseconds, None)
+    query_until(request, reply_size, milliseconds, |reply| {
+        let as_c_string = match reply.iter().position(|&b| b == 0) {
+            Some(end) => &reply[..end],
+            None => reply,
+        };
+        reply.contains(&0x07)
+            || as_c_string.windows(2).any(|w| w == b"\x1b\\")
+            || reply.contains(&b'c')
+    })
+}
+
+/// A successful query must both decode our pixel and consume its local object.
+/// A remote terminal or a refused query retains the ordinary inline renderer.
+#[cfg(target_os = "macos")]
+pub(crate) fn shared_images(
+    parser: &mut crate::input::InputParser,
+) -> Option<[platform::SharedImage; 4]> {
+    use crate::render::kitty::KittyGraphics;
+    parser.ignore_kitty_replies(&[]);
+    let mut images = [
+        platform::SharedImage::new().ok()?,
+        platform::SharedImage::new().ok()?,
+        platform::SharedImage::new().ok()?,
+        platform::SharedImage::new().ok()?,
+    ];
+    if !images[0].stage(&[0; 4], 4, 0, 4, 1).ok()? {
+        return None;
+    }
+    let mut query = KittyGraphics::new(STDOUT_FILENO).ok()?;
+    query.shared_rgba(0x72626972, 1, 1, images[0].name(), true).ok()?;
+    let reply = query_until(query.buffer(), 128, 150, |reply| {
+        reply.windows(2).any(|bytes| bytes == b"\x1b\\")
+    });
+    parser.ignore_kitty_replies(&reply);
+    (reply == b"\x1b_Gi=1919052146;OK\x1b\\" && !images[0].pending().ok()?).then_some(images)
 }
 
 fn query_until(
     request: &[u8],
     reply_size: usize,
     milliseconds: i64,
-    terminator: Option<u8>,
+    finished: impl Fn(&[u8]) -> bool,
 ) -> Vec<u8> {
     let mut reply = Vec::new();
     if reply_size == 0 {
@@ -97,18 +131,7 @@ fn query_until(
             _ => break,
         };
         reply.extend_from_slice(&buffer[..got]);
-        // Every reply this program asks for ends one of these three ways,
-        // read as the C reads them: two by length, one as a C string.
-        let as_c_string = match reply.iter().position(|&b| b == 0) {
-            Some(end) => &reply[..end],
-            None => &reply[..],
-        };
-        if terminator.is_some_and(|end| reply.contains(&end))
-            || (terminator.is_none()
-                && (reply.contains(&0x07)
-                    || as_c_string.windows(2).any(|w| w == b"\x1b\\")
-                    || reply.contains(&b'c')))
-        {
+        if finished(&reply) {
             break;
         }
         if reply.len() + 1 >= reply_size {
@@ -128,14 +151,14 @@ pub struct SixelTerminal {
 /// Only probe when Sixel is explicitly requested. The ordinary renderer's
 /// startup traffic remains identical to the reference.
 pub fn prepare_sixel() -> io::Result<SixelTerminal> {
-    let capabilities = query_until(b"\x1b[c", 256, 250, Some(b'c'));
+    let capabilities = query_until(b"\x1b[c", 256, 250, |reply| reply.contains(&b'c'));
     if !has_sixel(&capabilities) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "terminal did not advertise Sixel; use Windows Terminal 1.22+ or --render braille",
         ));
     }
-    let reply = query_until(b"\x1b[16t", 128, 250, Some(b't'));
+    let reply = query_until(b"\x1b[16t", 128, 250, |reply| reply.contains(&b't'));
     let cell = parse_cell_size(&reply);
     // Some Unix terminals (including iTerm2) advertise Sixel and provide
     // exact pixel dimensions through TIOCGWINSZ, but do not implement CSI 16 t.
@@ -152,7 +175,7 @@ pub fn prepare_sixel() -> io::Result<SixelTerminal> {
     // Ask the terminal itself, including through SSH, rather than relying on
     // TERM_PROGRAM from the local shell. Unimplemented XTVERSION is harmless.
     let erase_before_frame = query_is_iterm2();
-    let mode = query_until(b"\x1b[?80$p", 128, 100, Some(b'y'));
+    let mode = query_until(b"\x1b[?80$p", 128, 100, |reply| reply.contains(&b'y'));
     let was_enabled = mode.windows(9).any(|s| s == b"\x1b[?80;1$y")
         || mode.windows(9).any(|s| s == b"\x1b[?80;3$y");
     platform::enable_sixel_mode(was_enabled);
@@ -160,7 +183,7 @@ pub fn prepare_sixel() -> io::Result<SixelTerminal> {
 }
 
 pub fn query_is_iterm2() -> bool {
-    is_iterm2(&query_until(b"\x1b[>q", 128, 100, Some(b'\\')))
+    is_iterm2(&query_until(b"\x1b[>q", 128, 100, |reply| reply.contains(&b'\\')))
 }
 
 /// XTVERSION: DCS >| terminal-name version ST.
@@ -177,7 +200,9 @@ pub fn is_iterm2(reply: &[u8]) -> bool {
 /// unexpected cursor report keeps the full-raster path. Hide and erase the
 /// probe inside a synchronized update so it cannot flash before the intro.
 pub fn sixel_backdrop_is_single_width() -> bool {
-    let reply = query_until("\x1b[?2026h\x1b[H\x1b[8m█\x1b[6n".as_bytes(), 128, 100, Some(b'R'));
+    let reply = query_until("\x1b[?2026h\x1b[H\x1b[8m█\x1b[6n".as_bytes(), 128, 100, |reply| {
+        reply.contains(&b'R')
+    });
     write_all(b"\x1b[0m\x1b[2J\x1b[H\x1b[?2026l");
     reply == b"\x1b[1;2R"
 }
