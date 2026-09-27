@@ -40,6 +40,35 @@ fn sixel_negotiates_virtual_pixels_renders_frames_and_restores_mode() {
 }
 
 #[test]
+fn wezterm_crops_only_with_confirmed_placement_and_backdrop_width() {
+    let version = b"\x1bP>|WezTerm 20240203-110809-5046fc22\x1b\\".as_slice();
+    for (version, mode, width, cropped) in [
+        (version, b"\x1b[?80;1$y".as_slice(), b"\x1b[1;2R".as_slice(), true),
+        (version, b"\x1b[?80;2$y", b"\x1b[1;2R", true),
+        (version, b"\x1b[?80;3$y", b"\x1b[1;2R", false),
+        (version, b"\x1b[?80;2$y", b"\x1b[1;3R", false),
+        (version, b"\x1b[?80;2$y", b"", false),
+        (b"\x1bP>|WezTerm unknown\x1b\\", b"\x1b[?80;2$y", b"\x1b[1;2R", false),
+    ] {
+        let outcome = pty::run(
+            &spec()
+                .reply(Reply::whole(b"\x1b[c", b"\x1b[?65;4;6;18;22c"))
+                .reply(Reply::whole(b"\x1b[16t", b"\x1b[6;20;10t"))
+                .reply(Reply::whole(b"\x1b[>q", version))
+                .reply(Reply::whole(b"\x1b[?80$p", mode))
+                // This terminal does not answer while the update is open.
+                .reply(Reply::whole(b"\x1b[?2026l\x1b[6n", width)),
+        );
+        outcome.assert_exit_code(0);
+        outcome.assert_attributes_restored();
+        let prefix = b"\x1b[?2026h\x1b[2J\x1b[H\x1b[0;38;2;17;17;22m";
+        assert_eq!(outcome.count(prefix), if cropped { 2 } else { 0 });
+        assert_eq!(outcome.count(b"\"1;1;800;480"), if cropped { 0 } else { 2 });
+        assert!(outcome.transcript.ends_with(rbirds::platform::ALT_SCREEN_OFF));
+    }
+}
+
+#[test]
 fn unsupported_or_sizeless_sixel_fails_cleanly() {
     for (capabilities, size_reply, message) in [
         (&b"\x1b[?64;22c"[..], &b""[..], "terminal did not advertise Sixel"),

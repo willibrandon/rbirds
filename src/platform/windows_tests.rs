@@ -210,6 +210,7 @@ fn hidden_console_child() {
                         cell_size: (10, 20),
                         erase_before_frame: false,
                         can_position_images: true,
+                        crop_background: None,
                     }
                 );
                 assert_eq!(emulator.join().unwrap(), b"\x1b[c\x1b[16t\x1b[>q\x1b[?80$p\x1b[?80h");

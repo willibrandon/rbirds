@@ -395,8 +395,12 @@ full-block glyphs paint the empty sky behind that rectangle, preserving the
 background even with window transparency enabled. A hidden startup cursor
 probe verifies that the block character occupies one cell. Wide or unconfirmed
 characters, and geometry that cannot be represented by whole cells, retain the
-complete raster. Other terminals keep
-the complete-raster path.
+complete raster. WezTerm `20240203-110809-5046fc22` also uses cropped frames,
+with its own RGB conversion and a background fill that avoids REP scrolling
+at the bottom-right cell. Other unqualified terminal versions keep the complete
+raster. The [WezTerm comparison](evidence/live-wezterm-placement-2026-09-27-macos-arm64.md)
+records lower CPU work per frame and higher visible throughput, alongside a
+small increase in total CPU per second. Playback there still falls short of 60 Hz.
 
 Each Sixel band paints a solid background run before its foreground colors.
 This avoids encoding cutouts around birds while preserving the final pixels.

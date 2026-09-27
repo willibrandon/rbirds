@@ -35,6 +35,9 @@ visible-playback runs and a retained invalid attempt.
 The [Sixel color checks](live-sixel-colours-2026-09-27-macos-arm64.md)
 fix explicit palette selection in WezTerm and reconfirm the iTerm background
 flash fix in two foreground captures.
+The [WezTerm placement checks](live-wezterm-placement-2026-09-27-macos-arm64.md)
+cover cropped Sixel output, terminal background and wrapping behavior, matched
+CPU comparisons and separate foreground playback checks.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

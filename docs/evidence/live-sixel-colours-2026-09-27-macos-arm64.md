@@ -19,10 +19,14 @@ Both captures also matched the model of WezTerm's separate definition and
 selection exactly. Window borders and rounded corners were excluded. The
 panel case was inspected visually and excluded from this raster comparison.
 
-The diagnostic also tried the existing iTerm crop path in WezTerm. That
-experiment remains disabled: its glyph background differs by one RGB level
-from the Sixel background, and the panel disappears despite its text being
-sent. The color-selection change fixes neither of those independent issues.
+The diagnostic also tried the existing iTerm crop path in WezTerm. At this
+stage it remained disabled: its glyph background differed by one RGB level
+from the Sixel background. A follow-up pixel comparison corrected the initial
+visual assessment of the panel: all pixels in its 532×363 region are identical
+between `static-fixed/8.png` and `static-fixed/9.png` in the archive. The
+color-selection change does not fix the background conversion difference.
+The [subsequent placement checks](live-wezterm-placement-2026-09-27-macos-arm64.md)
+address that difference and qualify the cropped path separately.
 The diagnostic forces an erase before both full and cropped frames; it does
 not qualify ordinary playback speed or CPU usage. The initial capture attempt
 used the wrong window-owner name, timed out, and is retained as a failed

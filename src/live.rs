@@ -389,7 +389,11 @@ fn run_live<const FIXED_SCENE: bool>(
         let options = terminal::prepare_sixel()
             .map_err(|error| fail(format!("Cannot enable Sixel: {error}\n").as_bytes()))?;
         renderer.erase_sixel_before_frame = options.erase_before_frame;
-        renderer.crop_sixel_frames = options.can_position_images;
+        renderer.crop_sixel_frames =
+            options.can_position_images && options.crop_background.is_some();
+        if let Some(background) = options.crop_background {
+            renderer.sixel_background = background;
+        }
         Some(options.cell_size)
     } else {
         None
@@ -447,7 +451,7 @@ fn run_live<const FIXED_SCENE: bool>(
 
     terminal.enter_alt_screen();
     terminal::write_all(b"\x1b[J");
-    if renderer.erase_sixel_before_frame {
+    if renderer.crop_sixel_frames {
         renderer.crop_sixel_frames &= terminal::sixel_backdrop_is_single_width();
     }
     terminal::apply_window_size(

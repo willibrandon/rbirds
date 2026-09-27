@@ -5,6 +5,7 @@ use rbirds::render::kitty::{KittyError, KittyGraphics};
 use rbirds::render::sixel::Sixel;
 use rbirds::terminal::{
     cell_size_from_window, graphics_window, has_sixel, is_iterm2, parse_cell_size,
+    sixel_crop_background,
 };
 
 fn number(bytes: &[u8], at: &mut usize) -> usize {
@@ -124,6 +125,7 @@ fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize)
             at = end;
             continue;
         }
+        let mut repeat = false;
         let count = if bytes[at..].starts_with("█".as_bytes()) {
             at += "█".len();
             1
@@ -166,7 +168,10 @@ fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize)
                     pixels.fill(None);
                     continue;
                 }
-                b'b' => values[0],
+                b'b' => {
+                    repeat = true;
+                    values[0]
+                }
                 other => panic!("unexpected command {other}"),
             }
         };
@@ -178,6 +183,17 @@ fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize)
                 }
             }
             col += 1;
+            // WezTerm's REP wraps immediately, including scrolling at the
+            // bottom-right cell. An ordinary character defers that wrap.
+            if repeat && col == width / cw {
+                col = 0;
+                row += 1;
+                if row == height / ch {
+                    pixels.copy_within(width * ch.., 0);
+                    pixels[(height - ch) * width..].fill(None);
+                    row -= 1;
+                }
+            }
         }
     }
     assert!(display_mode, "restore DECSDM after cursor-positioned images");
@@ -205,7 +221,7 @@ fn cropped_frames_match_full_rasters_through_clipping_trails_hawks_and_resize() 
     let mut reference = Sixel::default();
     let mut birds = vec![Bird::default(); 3];
     for (cols, rows, width, height) in
-        [(100, 32, 1400, 1088), (100, 32, 1401, 1089), (8, 5, 40, 30)]
+        [(100, 32, 1400, 1088), (100, 32, 1401, 1089), (8, 5, 40, 30), (1, 1, 2, 3), (2, 2, 4, 6)]
     {
         sim.apply_screen_size(cols, rows, width, height);
         for (x, y) in
@@ -478,5 +494,23 @@ fn iterm_workaround_requires_its_terminal_version_response() {
         b"iTerm2 3.6.6",
     ] {
         assert!(!is_iterm2(reply), "{reply:?}");
+    }
+}
+
+#[test]
+fn cropped_background_matches_the_verified_terminals_rgb_conversion() {
+    assert_eq!(sixel_crop_background(b"\x1bP>|iTerm2 3.6.6\x1b\\"), Some([18, 18, 23]));
+    assert_eq!(
+        sixel_crop_background(b"\x1bP>|WezTerm 20240203-110809-5046fc22\x1b\\\\"),
+        Some([17, 17, 22])
+    );
+    for reply in [
+        b"".as_slice(),
+        b"\x1bP>|WezTerm unknown\x1b\\",
+        b"\x1bP>|WezTerm 20240203-110809-5046fc22",
+        b"WezTerm 20240203-110809-5046fc22",
+        b"\x1bP>|other 20240203-110809-5046fc22\x1b\\",
+    ] {
+        assert_eq!(sixel_crop_background(reply), None);
     }
 }

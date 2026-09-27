@@ -147,6 +147,7 @@ pub struct SixelTerminal {
     pub cell_size: (u16, u16),
     pub erase_before_frame: bool,
     pub can_position_images: bool,
+    pub crop_background: Option<[u8; 3]>,
 }
 
 /// Only probe when Sixel is explicitly requested. The ordinary renderer's
@@ -175,7 +176,9 @@ pub fn prepare_sixel() -> io::Result<SixelTerminal> {
     })?;
     // Ask the terminal itself, including through SSH, rather than relying on
     // TERM_PROGRAM from the local shell. Unimplemented XTVERSION is harmless.
-    let erase_before_frame = query_is_iterm2();
+    let version = query_version();
+    let erase_before_frame = is_iterm2(&version);
+    let crop_background = sixel_crop_background(&version);
     let mode = query_until(b"\x1b[?80$p", 128, 100, |reply| reply.contains(&b'y'));
     let was_enabled = mode.windows(9).any(|s| s == b"\x1b[?80;1$y")
         || mode.windows(9).any(|s| s == b"\x1b[?80;3$y");
@@ -183,7 +186,7 @@ pub fn prepare_sixel() -> io::Result<SixelTerminal> {
     // confirm that resetting the mode can move an image away from the origin.
     let can_position_images = mode.windows(9).any(|s| s == b"\x1b[?80;1$y" || s == b"\x1b[?80;2$y");
     platform::enable_sixel_mode(was_enabled);
-    Ok(SixelTerminal { cell_size: cell, erase_before_frame, can_position_images })
+    Ok(SixelTerminal { cell_size: cell, erase_before_frame, can_position_images, crop_background })
 }
 
 pub fn query_is_iterm2() -> bool {
@@ -212,6 +215,19 @@ pub fn prepare_kitty() -> io::Result<bool> {
 /// XTVERSION: DCS >| terminal-name version ST.
 pub fn is_iterm2(reply: &[u8]) -> bool {
     iterm_version(reply).is_some()
+}
+
+/// Only use an opaque glyph backdrop for terminal implementations whose
+/// placement and RGB conversion have been checked against the full raster.
+pub fn sixel_crop_background(reply: &[u8]) -> Option<[u8; 3]> {
+    if is_iterm2(reply) {
+        return Some(crate::render::sixel::background_colour(true));
+    }
+    const WEZTERM: &[u8] = b"\x1bP>|WezTerm 20240203-110809-5046fc22\x1b\\";
+    reply
+        .windows(WEZTERM.len())
+        .any(|s| s == WEZTERM)
+        .then(|| crate::render::sixel::background_colour(false))
 }
 
 fn iterm_version(reply: &[u8]) -> Option<&[u8]> {
@@ -251,12 +267,14 @@ fn iterm_kitty_cache_fixed(version: &[u8]) -> bool {
 /// Call only in the empty alternate screen. Some iTerm profiles make block
 /// characters double-width, leaving gaps in the backdrop. A missing or
 /// unexpected cursor report keeps the full-raster path. Hide and erase the
-/// probe inside a synchronized update so it cannot flash before the intro.
+/// probe and end the synchronized update before asking for its position:
+/// WezTerm defers cursor reports until that update ends.
 pub fn sixel_backdrop_is_single_width() -> bool {
-    let reply = query_until("\x1b[?2026h\x1b[H\x1b[8m█\x1b[6n".as_bytes(), 128, 100, |reply| {
-        reply.contains(&b'R')
-    });
-    write_all(b"\x1b[0m\x1b[2J\x1b[H\x1b[?2026l");
+    let reply =
+        query_until("\x1b[?2026h\x1b[H\x1b[8m█\x1b[?2026l\x1b[6n".as_bytes(), 128, 100, |reply| {
+            reply.contains(&b'R')
+        });
+    write_all(b"\x1b[?2026h\x1b[0m\x1b[2J\x1b[H\x1b[?2026l");
     reply == b"\x1b[1;2R"
 }
 

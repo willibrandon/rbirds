@@ -43,6 +43,8 @@ pub struct Renderer {
     pub erase_sixel_before_frame: bool,
     /// Crop only after the terminal confirms that the opaque backdrop glyph is one cell wide.
     pub crop_sixel_frames: bool,
+    /// Match the terminal's conversion of Sixel RGB percentages to bytes.
+    pub sixel_background: [u8; 3],
     /// iTerm needs explicit image IDs and a bounded number of placements per frame.
     pub kitty_raster: Option<compose::KittyRaster>,
     pub profile: Option<crate::timing::FrameProfile>,
@@ -67,6 +69,7 @@ impl Default for Renderer {
             sixel: sixel::Sixel::default(),
             erase_sixel_before_frame: false,
             crop_sixel_frames: false,
+            sixel_background: sixel::background_colour(true),
             kitty_raster: None,
             profile: None,
             occupied: Vec::new(),

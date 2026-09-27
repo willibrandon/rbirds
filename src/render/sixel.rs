@@ -19,6 +19,13 @@ const GROUND_BLOCK: [u8; 32] = {
     bytes
 };
 
+pub(crate) fn background_colour(round: bool) -> [u8; 3] {
+    PICTURE_GROUND.map(|component| {
+        let percent = (usize::from(component) * 100 + 127) / 255;
+        ((percent * 255 + if round { 50 } else { 0 }) / 100) as u8
+    })
+}
+
 #[derive(Debug)]
 pub struct Sixel {
     bytes: Vec<u8>,
@@ -149,23 +156,28 @@ impl Sixel {
         graphics: &mut KittyGraphics,
         cols: usize,
         rows: usize,
+        background: [u8; 3],
     ) -> Result<(), KittyError> {
         self.bytes.clear();
         put(&mut self.bytes, b"\x1b[0;38;2")?;
-        for component in PICTURE_GROUND {
+        for component in background {
             put(&mut self.bytes, b";")?;
-            let percent = (usize::from(component) * 100 + 127) / 255;
-            number(&mut self.bytes, (percent * 255 + 50) / 100)?;
+            number(&mut self.bytes, usize::from(component))?;
         }
         put(&mut self.bytes, b"m")?;
         for row in 0..rows {
             put(&mut self.bytes, b"\x1b[")?;
             number(&mut self.bytes, row + 1)?;
             put(&mut self.bytes, ";1H█".as_bytes())?;
-            if cols > 1 {
+            if cols > 2 {
                 put(&mut self.bytes, b"\x1b[")?;
-                number(&mut self.bytes, cols - 1)?;
+                number(&mut self.bytes, cols - 2)?;
                 put(&mut self.bytes, b"b")?;
+            }
+            // REP eagerly wraps in WezTerm, scrolling at the bottom-right
+            // corner. Finish with an ordinary character, whose wrap is deferred.
+            if cols > 1 {
+                put(&mut self.bytes, "█".as_bytes())?;
             }
         }
         graphics.write_raw(&self.bytes)

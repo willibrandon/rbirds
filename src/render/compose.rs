@@ -621,8 +621,7 @@ impl Renderer {
         // A cropped image must end on cell boundaries: iTerm pads partial
         // cells with its default background. Keep the full raster when the
         // supplied pixel geometry cannot be represented by whole cells.
-        let cropped = self.erase_sixel_before_frame
-            && self.crop_sixel_frames
+        let cropped = self.crop_sixel_frames
             && sim.screen.cols > 0
             && sim.screen.rows > 0
             && sim.screen.cell_width > 0
@@ -634,6 +633,7 @@ impl Renderer {
         // references it, producing a full-screen brown placeholder. Retire it
         // explicitly within this synchronized update, before the replacement.
         if self.erase_sixel_before_frame
+            || cropped
             || resized
             || self.legend_drawn && sim.screen.legend_width == 0
         {
@@ -665,6 +665,7 @@ impl Renderer {
                 graphics,
                 sim.screen.cols as usize,
                 sim.screen.rows as usize,
+                self.sixel_background,
             )?;
             graphics.write_raw(b"\x1b[0m")?;
             if crop.2 > crop.0 && crop.3 > crop.1 {
