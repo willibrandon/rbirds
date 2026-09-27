@@ -7,6 +7,8 @@ The [Sixel placement correction](live-sixel-position-2026-09-27-macos-arm64.md)
 supersedes the early crop qualification and records checks through real startup.
 The [neighbor row comparison](live-neighbor-rows-2026-09-27-macos-arm64.md)
 records lower simulation cost and the measured CPU/presentation tradeoffs.
+The [clock alignment checks](live-clock-alignment-2026-09-27-macos-arm64.md)
+join CPU intervals to submitted frames and retain the remaining measurement limits.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

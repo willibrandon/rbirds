@@ -33,10 +33,13 @@ fn rbirds() -> Subject {
 fn live_trace_covers_every_flushed_frame_and_reports_cpu_time() {
     let _serial = serial();
     let path = std::env::temp_dir().join(format!("rbirds-trace-{}.jsonl", std::process::id()));
+    let before = platform::measurement_clock_ns().unwrap();
     let outcome = pty::run(
         &pty::Spec::new(&rbirds(), &["--frames", "8", "--color", "ember", "--birds", "10"])
-            .env("RBIRDS_TRACE", &path),
+            .env("RBIRDS_TRACE", &path)
+            .env("RBIRDS_TRACE_SESSION", "42"),
     );
+    let after = platform::measurement_clock_ns().unwrap();
     assert_eq!(outcome.exit, Some(pty::Exit::Code(0)), "{}", outcome.describe());
     outcome.assert_attributes_restored();
     let report = std::fs::read_to_string(&path).unwrap();
@@ -46,10 +49,29 @@ fn live_trace_covers_every_flushed_frame_and_reports_cpu_time() {
     assert!(lines[0].contains("\"samples\":8,\"omitted\":0"));
     assert!(lines[0].contains("\"cpu_us\":"));
     assert!(!lines[0].contains("\"cpu_us\":0,"));
+    assert!(lines[0].contains("\"version\":2,"));
+    assert!(lines[0].contains("\"session\":42,"));
+    assert!(lines[0].contains(platform::MEASUREMENT_CLOCK));
+    let number = |line: &str, key: &str| -> u64 {
+        line.split(&format!("\"{key}\":"))
+            .nth(1)
+            .unwrap()
+            .split([',', '}'])
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let mut previous = number(lines[0], "begin_ns");
+    let end = number(lines[0], "end_ns");
+    assert!(before <= previous && previous <= end && end <= after);
     for line in &lines[1..] {
         assert!(line.starts_with("{\"kind\":\"frame\","));
         assert!(line.contains("\"wake_late_us\":"));
         assert!(line.contains("\"flush_us\":"));
+        let submitted = number(line, "submitted_ns");
+        assert!(previous <= submitted && submitted <= end);
+        previous = submitted;
     }
 }
 

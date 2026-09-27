@@ -148,7 +148,7 @@ def run(args):
         with args.trace.open() as source:
             summary = json.loads(next(source))
             samples = [json.loads(line) for line in source]
-        if (summary.get("kind") != "summary" or summary.get("version") != 1
+        if (summary.get("kind") != "summary" or summary.get("version") not in (1, 2)
                 or len(samples) != summary["samples"]
                 or summary["samples"] + summary["omitted"] != args.frames):
             raise RuntimeError("Trace does not cover the requested loop ticks")

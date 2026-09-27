@@ -520,13 +520,15 @@ fn run_live(
         let unlimited = settings.unlock_fps && (!sim.paused || live.leaving > 0.0);
         let delay = if unlimited || last { Duration::ZERO } else { pacer.delay_after(flushed) };
         if let Some(trace) = &mut trace {
-            trace.record(
-                renderer.profile.unwrap(),
-                flushed,
-                delay,
-                frame_bytes,
-                keys.map_or(0, <[u8]>::len),
-            );
+            trace
+                .record(
+                    renderer.profile.unwrap(),
+                    flushed,
+                    delay,
+                    frame_bytes,
+                    keys.map_or(0, <[u8]>::len),
+                )
+                .map_err(|error| fail(format!("Cannot record live trace: {error}\n").as_bytes()))?;
         }
         if last {
             break;

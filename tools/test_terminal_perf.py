@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 from pathlib import Path
 
 from process_usage import Counters, Snapshot, cpu_delta, linux_snapshot
+from trace_alignment import align_interval, read_trace
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -103,6 +104,48 @@ class NativeCounters(unittest.TestCase):
                 cpu_delta(before, after)
 
 
+class TraceAlignment(unittest.TestCase):
+    def test_counter_boundary_uncertainty_bounds_the_frame_cost(self):
+        interval = {"counter_read_bounds_ns": {"before": [100, 110], "after": [200, 210]},
+                    "application_cpu_seconds": .01, "terminal_cpu_seconds": .02,
+                    "terminal_helpers": {"cpu_seconds": .005}}
+        result = align_interval(interval, (0, 300, [99, 100, 110, 111, 150, 199, 200, 210, 211]))
+        self.assertEqual(result['submitted_frames_min'], 3)
+        self.assertEqual(result['submitted_frames_max'], 7)
+        for actual, expected in zip(result['cpu_ms_per_submitted_frame']['combined'], [35 / 7, 35 / 3]):
+            self.assertAlmostEqual(actual, expected)
+        result = align_interval(interval, (0, 300, [111, 150, 199]))
+        self.assertEqual(result['submitted_frames_min'], result['submitted_frames_max'])
+        result = align_interval(interval, (0, 300, []))
+        self.assertEqual(result['submitted_frames_max'], 0)
+        self.assertNotIn('cpu_ms_per_submitted_frame', result)
+        for trace in [(105, 300, []), (0, 205, [])]:
+            with self.assertRaises(ValueError):
+                align_interval(interval, trace)
+
+    def test_trace_identity_completeness_order_and_idle_ticks(self):
+        summary = dict(kind='summary', version=2, session=9, pid=10, measurement_clock='clock',
+                       samples=3, omitted=0, drawn_frames=2, begin_ns=0, end_ns=100)
+        frames = [dict(kind='frame', drawn=drawn, submitted_ns=stamp)
+                  for stamp, drawn in [(10, True), (20, False), (30, True)]]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'trace.jsonl'
+            def write(first, rows):
+                path.write_text('\n'.join(json.dumps(row) for row in [first, *rows]) + '\n')
+            write(summary, frames)
+            self.assertEqual(read_trace(path, 9, 10, 'clock'), (0, 100, [10, 30]))
+            for change in [dict(session=8), dict(pid=11), dict(measurement_clock='wrong'),
+                           dict(version=1), dict(omitted=1), dict(samples=2),
+                           dict(drawn_frames=3), dict(begin_ns=15), dict(end_ns=25)]:
+                write({**summary, **change}, frames)
+                with self.subTest(change=change), self.assertRaises(ValueError):
+                    read_trace(path, 9, 10, 'clock')
+            for invalid in [frames[:-1], frames[::-1], [*frames[:2], {**frames[2], 'drawn': 1}]]:
+                write(summary, invalid)
+                with self.assertRaises(ValueError):
+                    read_trace(path, 9, 10, 'clock')
+
+
 class Reports(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory(prefix='rbirds-counters-')
@@ -163,6 +206,49 @@ class Reports(unittest.TestCase):
         self.assertFalse(report['measurement_valid'])
         self.assertIn('error', report['interval_sample'])
 
+    def test_trace_alignment_joins_this_child_after_delayed_startup(self):
+        trace = self.path / 'frames.jsonl'
+        child = f'''
+import json,os,sys,time
+from pathlib import Path
+sys.path.insert(0, {str(ROOT / 'tools')!r})
+from measurement_clock import MeasurementClock
+clock=MeasurementClock()
+time.sleep(.2)
+begin=clock.now_ns()
+frames=[]
+for i in range(150):
+    frames.append(dict(kind='frame',drawn=i%2==0,submitted_ns=clock.now_ns()))
+    time.sleep(.005)
+summary=dict(kind='summary',version=2,session=int(os.environ['RBIRDS_TRACE_SESSION']),
+             pid=os.getpid(),measurement_clock=clock.name,begin_ns=begin,end_ns=clock.now_ns(),
+             samples=len(frames),omitted=0,drawn_frames=sum(r['drawn'] for r in frames))
+Path(os.environ['RBIRDS_TRACE']).write_text('\\n'.join(json.dumps(r) for r in [summary,*frames])+'\\n')
+'''
+        result, report = self.run_report(child, ['--warmup-seconds', '.35',
+                                                '--sample-seconds', '.2', '--trace', str(trace)])
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(report['measurement_valid'])
+        interval = report['interval_sample']
+        alignment = interval['trace_alignment']
+        self.assertGreater(alignment['submitted_frames_min'], 0)
+        self.assertLessEqual(alignment['submitted_frames_min'], alignment['submitted_frames_max'])
+        bounds = interval['counter_read_bounds_ns']
+        self.assertLess(bounds['before'][1], bounds['after'][0])
+        self.assertIn('cpu_ms_per_submitted_frame', alignment)
+
+    def test_missing_or_stale_trace_invalidates_alignment_without_losing_cpu(self):
+        trace = self.path / 'frames.jsonl'
+        for contents in [None, '{"kind":"summary","version":1}\n', '[]\n', 'not json\n']:
+            if contents is not None:
+                trace.write_text(contents)
+            result, report = self.run_report('import time;time.sleep(.5)', [
+                '--warmup-seconds', '0', '--sample-seconds', '.1', '--trace', str(trace)])
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertFalse(report['measurement_valid'])
+            self.assertIn('error', report['trace'])
+            self.assertIn('application_cpu_seconds', report['interval_sample'])
+
     def test_repeated_windows_measure_the_same_processes_with_the_requested_gap(self):
         helper = self.sleeper()
         result, report = self.run_report('import time; time.sleep(1.5)', [
@@ -202,12 +288,13 @@ class Reports(unittest.TestCase):
         self.assertIn('child exited between interval samples', failed['error'])
         self.assertNotIn('application_cpu_ms_per_second', failed)
 
-    def test_invalid_repeat_options_do_not_launch_the_child(self):
+    def test_invalid_sampling_options_do_not_launch_the_child(self):
         for options in [
                 ['--sample-count', '0'], ['--sample-count', '-1'],
                 ['--sample-gap-seconds', '-1'], ['--sample-gap-seconds', 'nan'],
                 ['--sample-gap-seconds', 'inf'], ['--sample-count', '2'],
-                ['--sample-gap-seconds', '1']]:
+                ['--sample-gap-seconds', '1'], ['--trace', str(self.path / 'trace.jsonl')],
+                ['--trace', str(self.path / 'invalid.json'), '--sample-seconds', '1']]:
             with self.subTest(options=options):
                 output = self.path / 'invalid.json'
                 result = subprocess.run([

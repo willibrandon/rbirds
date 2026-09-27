@@ -72,6 +72,7 @@ impl Default for FrameProfile {
 
 struct Sample {
     drawn: bool,
+    submitted_ns: u64,
     start_us: u64,
     wake_late_us: u64,
     update_us: u64,
@@ -85,6 +86,8 @@ struct Sample {
 
 pub struct Trace {
     file: File,
+    session: u64,
+    begin_ns: u64,
     started: Instant,
     cpu_started: Duration,
     samples: Vec<Sample>,
@@ -105,6 +108,9 @@ impl Trace {
         samples.try_reserve_exact(MAX_SAMPLES).map_err(io::Error::other)?;
         Ok(Some(Self {
             file: File::create(path)?,
+            session: std::env::var("RBIRDS_TRACE_SESSION")
+                .map_or(Ok(0), |s| s.parse::<u64>().map_err(io::Error::other))?,
+            begin_ns: platform::measurement_clock_ns()?,
             started: Instant::now(),
             cpu_started: platform::process_cpu_time()?,
             samples,
@@ -119,6 +125,7 @@ impl Trace {
     pub fn begin(&mut self, renderer: &'static str, viewport: [i32; 4]) -> io::Result<()> {
         self.cpu_started = platform::process_cpu_time()?;
         self.started = Instant::now();
+        self.begin_ns = platform::measurement_clock_ns()?;
         self.renderer = renderer;
         self.viewport = viewport;
         Ok(())
@@ -131,17 +138,20 @@ impl Trace {
         sleep: Duration,
         bytes: usize,
         input_bytes: usize,
-    ) {
+    ) -> io::Result<()> {
         // Every renderer brackets a submitted frame with synchronized-update
         // markers. Only an unchanged paused tick has no queued bytes.
         let drawn = bytes != 0;
         self.drawn_frames += u64::from(drawn);
         if self.samples.len() == MAX_SAMPLES {
             self.omitted += 1;
-            return;
+            return Ok(());
         }
         self.samples.push(Sample {
             drawn,
+            // Observed after successful output flush, before the frame sleep.
+            // This measures submission, not terminal display or scanout.
+            submitted_ns: platform::measurement_clock_ns()?,
             start_us: micros(profile.started.duration_since(self.started)),
             wake_late_us: micros(profile.started.saturating_duration_since(profile.target)),
             update_us: micros(profile.updated.duration_since(profile.started)),
@@ -152,27 +162,34 @@ impl Trace {
             bytes,
             input_bytes,
         });
+        Ok(())
     }
 
     pub fn finish(self) -> io::Result<()> {
+        let end_ns = platform::measurement_clock_ns()?;
         let elapsed = self.started.elapsed();
         let cpu = platform::process_cpu_time()?.saturating_sub(self.cpu_started);
         let mut out = BufWriter::new(self.file);
         writeln!(
             out,
-            "{{\"kind\":\"summary\",\"version\":1,\"renderer\":\"{}\",\"viewport\":{:?},\"wall_us\":{},\"cpu_us\":{},\"samples\":{},\"omitted\":{},\"drawn_frames\":{}}}",
+            "{{\"kind\":\"summary\",\"version\":2,\"renderer\":\"{}\",\"viewport\":{:?},\"wall_us\":{},\"cpu_us\":{},\"samples\":{},\"omitted\":{},\"drawn_frames\":{},\"session\":{},\"pid\":{},\"measurement_clock\":\"{}\",\"begin_ns\":{},\"end_ns\":{}}}",
             self.renderer,
             self.viewport,
             micros(elapsed),
             micros(cpu),
             self.samples.len(),
             self.omitted,
-            self.drawn_frames
+            self.drawn_frames,
+            self.session,
+            std::process::id(),
+            platform::MEASUREMENT_CLOCK,
+            self.begin_ns,
+            end_ns
         )?;
         for sample in self.samples {
             writeln!(
                 out,
-                "{{\"kind\":\"frame\",\"drawn\":{},\"start_us\":{},\"wake_late_us\":{},\"update_us\":{},\"compose_us\":{},\"encode_us\":{},\"flush_us\":{},\"sleep_us\":{},\"bytes\":{},\"input_bytes\":{}}}",
+                "{{\"kind\":\"frame\",\"drawn\":{},\"start_us\":{},\"wake_late_us\":{},\"update_us\":{},\"compose_us\":{},\"encode_us\":{},\"flush_us\":{},\"sleep_us\":{},\"bytes\":{},\"input_bytes\":{},\"submitted_ns\":{}}}",
                 sample.drawn,
                 sample.start_us,
                 sample.wake_late_us,
@@ -182,7 +199,8 @@ impl Trace {
                 sample.flush_us,
                 sample.sleep_us,
                 sample.bytes,
-                sample.input_bytes
+                sample.input_bytes,
+                sample.submitted_ns
             )?;
         }
         out.flush()

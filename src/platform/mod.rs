@@ -100,7 +100,8 @@ pub use shared_image::SharedImage;
 pub use signals::{default_sigpipe, install_signal_handlers, send_signal};
 pub use termios::{RawModeView, tcgetattr, tcsetattr};
 pub use time::{
-    FrameSleeper, Timespec, clock_gettime, monotonic_now, nanosleep, process_cpu_time, time_now,
+    FrameSleeper, MEASUREMENT_CLOCK, Timespec, clock_gettime, measurement_clock_ns, monotonic_now,
+    nanosleep, process_cpu_time, time_now,
 };
 pub use trig::sin_cos;
 pub use tty::{WinSize, is_terminal, set_window_size, window_size, window_size_or_zero};

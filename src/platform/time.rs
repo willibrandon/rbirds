@@ -97,6 +97,15 @@ pub fn monotonic_now() -> Timespec {
     clock_gettime(CLOCK_MONOTONIC).unwrap_or_default()
 }
 
+/// A named, system-wide timebase for joining traces from separate processes.
+pub const MEASUREMENT_CLOCK: &str = "clock_gettime(CLOCK_MONOTONIC)";
+
+pub fn measurement_clock_ns() -> io::Result<u64> {
+    let now = clock_gettime(CLOCK_MONOTONIC)?;
+    let nanos = i128::from(now.tv_sec) * 1_000_000_000 + i128::from(now.tv_nsec);
+    u64::try_from(nanos).map_err(io::Error::other)
+}
+
 /// User and kernel CPU time across all threads, independent of wall-clock waits.
 pub fn process_cpu_time() -> io::Result<std::time::Duration> {
     let time = clock_gettime(super::os::CLOCK_PROCESS_CPUTIME_ID)?;

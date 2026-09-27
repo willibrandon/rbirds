@@ -146,6 +146,11 @@ unsafe extern "system" {
     fn ResetEvent(event: Handle) -> i32;
     fn WaitForMultipleObjects(count: u32, handles: *const Handle, all: i32, timeout: u32) -> u32;
     fn GetCurrentProcess() -> Handle;
+    // BOOL QueryPerformance{Counter,Frequency}(LARGE_INTEGER *);
+    // LARGE_INTEGER's QuadPart is a signed, eight-byte aligned 64-bit integer
+    // on both supported Windows targets.
+    fn QueryPerformanceCounter(value: *mut i64) -> i32;
+    fn QueryPerformanceFrequency(value: *mut i64) -> i32;
     fn GetProcessTimes(
         process: Handle,
         created: *mut FileTime,
@@ -261,6 +266,30 @@ pub fn monotonic_now() -> Timespec {
     static EPOCH: OnceLock<Instant> = OnceLock::new();
     let elapsed = EPOCH.get_or_init(Instant::now).elapsed();
     Timespec { tv_sec: elapsed.as_secs() as i64, tv_nsec: i64::from(elapsed.subsec_nanos()) }
+}
+
+pub const MEASUREMENT_CLOCK: &str = "QueryPerformanceCounter";
+
+/// System-wide QPC, not the simulation's process-local Instant epoch.
+pub fn measurement_clock_ns() -> io::Result<u64> {
+    static FREQUENCY: OnceLock<i64> = OnceLock::new();
+    let frequency = if let Some(&value) = FREQUENCY.get() {
+        value
+    } else {
+        let mut value = 0;
+        // SAFETY: a live, aligned LARGE_INTEGER-sized output, as in profileapi.h.
+        check(unsafe { QueryPerformanceFrequency(&mut value) })?;
+        if value <= 0 {
+            return Err(io::Error::other("invalid QPC frequency"));
+        }
+        let _ = FREQUENCY.set(value);
+        value
+    };
+    let mut ticks = 0;
+    // SAFETY: a live, aligned signed 64-bit output; no pointer is retained.
+    check(unsafe { QueryPerformanceCounter(&mut ticks) })?;
+    let nanos = i128::from(ticks) * 1_000_000_000 / i128::from(frequency);
+    u64::try_from(nanos).map_err(io::Error::other)
 }
 pub fn nanosleep(delay: &Timespec) -> io::Result<()> {
     if delay.tv_sec < 0 || !(0..1_000_000_000).contains(&delay.tv_nsec) {

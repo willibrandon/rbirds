@@ -7,6 +7,7 @@ import json
 import math
 import os
 import platform
+import secrets
 import shutil
 import subprocess
 import threading
@@ -14,6 +15,8 @@ import time
 from pathlib import Path
 
 from process_usage import Counters, cpu_delta
+from measurement_clock import MeasurementClock
+from trace_alignment import align_interval, read_trace
 
 
 def wait_until(stopped, deadline):
@@ -47,6 +50,8 @@ def main():
                         help="number of interval samples in the same run (default: 1)")
     parser.add_argument("--sample-gap-seconds", type=float, default=0,
                         help="delay between interval samples (default: 0)")
+    parser.add_argument("--trace", type=Path,
+                        help="record rbirds submissions and align them with CPU intervals")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
@@ -64,6 +69,10 @@ def main():
         parser.error("sample gap seconds must be finite and nonnegative")
     if args.sample_seconds is None and (args.sample_count != 1 or args.sample_gap_seconds != 0):
         parser.error("repeated sampling requires --sample-seconds")
+    if args.trace and args.sample_seconds is None:
+        parser.error("trace alignment requires --sample-seconds")
+    if args.trace and args.trace.resolve() == args.output.resolve():
+        parser.error("trace and CPU report must use different paths")
     pids = [args.terminal_pid, *args.helper_pid]
     if any(pid <= 0 or pid > 0x7fffffff for pid in pids) or len(set(pids)) != len(pids):
         parser.error("terminal and helper PIDs must be distinct positive process IDs")
@@ -79,6 +88,13 @@ def main():
 
 
 def measure(args, counters, binary):
+    clock = MeasurementClock()
+    session = secrets.randbits(64)
+    environment = os.environ.copy()
+    if args.trace:
+        args.trace.parent.mkdir(parents=True, exist_ok=True)
+        environment["RBIRDS_TRACE"] = str(args.trace.resolve())
+        environment["RBIRDS_TRACE_SESSION"] = str(session)
     def helper_sample(before, wall):
         samples = []
         for pid, first in before.items():
@@ -110,7 +126,7 @@ def measure(args, counters, binary):
         if not snapshot.alive:
             raise RuntimeError("selected process already exited before launch")
     started = time.perf_counter()
-    process = subprocess.Popen(args.command)
+    process = subprocess.Popen(args.command, env=environment)
     stopped = threading.Event()
     intervals = []
 
@@ -123,25 +139,35 @@ def measure(args, counters, binary):
                 if wait_until(stopped, time.perf_counter() + delay):
                     phase = "between interval samples" if index else "during warmup"
                     raise RuntimeError(f"child exited {phase}")
+                first_lo = clock.now_ns()
                 app_before = counters.snapshot(process.pid)
                 term_before = counters.snapshot(args.terminal_pid)
                 helper_before = {pid: counters.snapshot(pid) for pid in args.helper_pid}
+                first_hi = clock.now_ns()
                 sample_start = time.perf_counter()
                 if wait_until(stopped, sample_start + args.sample_seconds):
                     raise RuntimeError("child exited before the interval sample finished")
+                last_lo = clock.now_ns()
                 app_after = counters.snapshot(process.pid)
                 term_after = counters.snapshot(args.terminal_pid)
                 sample_wall = time.perf_counter() - sample_start
+                app_cpu = cpu_delta(app_before, app_after)
+                term_cpu = cpu_delta(term_before, term_after)
                 interval.update({
                     "start_seconds_after_launch": sample_start - started,
                     "wall_seconds": sample_wall,
-                    "application_cpu_ms_per_second":
-                        cpu_delta(app_before, app_after) / sample_wall * 1000,
-                    "terminal_cpu_ms_per_second":
-                        cpu_delta(term_before, term_after) / sample_wall * 1000,
+                    "application_cpu_seconds": app_cpu,
+                    "terminal_cpu_seconds": term_cpu,
+                    "application_cpu_ms_per_second": app_cpu / sample_wall * 1000,
+                    "terminal_cpu_ms_per_second": term_cpu / sample_wall * 1000,
                 })
                 if args.helper_pid:
                     interval["terminal_helpers"] = helper_sample(helper_before, sample_wall)
+                last_hi = clock.now_ns()
+                if not first_lo <= first_hi < last_lo <= last_hi:
+                    raise RuntimeError("measurement clock did not advance across the CPU window")
+                interval["counter_read_bounds_ns"] = {
+                    "before": [first_lo, first_hi], "after": [last_lo, last_hi]}
                 interval.pop("error", None)
             except Exception as error:
                 # Retain completed windows and the failure, then stop sampling.
@@ -169,10 +195,11 @@ def measure(args, counters, binary):
         "python": platform.python_version(),
         "elapsed_clock": time.get_clock_info("perf_counter").implementation,
         "elapsed_clock_resolution_seconds": time.get_clock_info("perf_counter").resolution,
+        "measurement_clock": clock.name,
         "excluded_costs": ["compositor", "GPU", "unselected helper processes"],
         "command": args.command,
         "binary_sha256": binary_hash,
-        "status": process.returncode, "wall_seconds": wall,
+        "status": process.returncode, "wall_seconds": wall, "application_pid": process.pid,
         "terminal_pid": args.terminal_pid, "terminal_process": terminal_name,
         "application_cpu_seconds": application_cpu,
         "application_cpu_ms_per_second": application_cpu / wall * 1000,
@@ -205,6 +232,17 @@ def measure(args, counters, binary):
         and all("error" not in sample for sample in intervals)
         and all("cpu_seconds" in sample["terminal_helpers"]
                 for sample in [report, *intervals] if "terminal_helpers" in sample))
+    if args.trace:
+        report["trace"] = {"path": str(args.trace.resolve()), "session": session,
+                           "scope": "completed output submissions, not displayed frames"}
+        try:
+            trace = read_trace(args.trace, session, process.pid, clock.name)
+            for interval in intervals:
+                if "error" not in interval:
+                    interval["trace_alignment"] = align_interval(interval, trace)
+        except (OSError, ValueError, KeyError, TypeError, StopIteration) as error:
+            report["trace"]["error"] = f"{type(error).__name__}: {error}"
+            report["measurement_valid"] = False
     return report
 
 

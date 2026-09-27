@@ -160,8 +160,39 @@ deadline, while a child exit still cancels the sample. A timeout returning early
 must not shorten a requested measurement window.
 Trace frame times start after terminal startup, while CPU sample offsets start
 at process launch. Those origins differ: dividing a CPU sample by frame counts
-from the same numeric trace interval does not give exact CPU per frame. Retain
-the separate scopes until measurements share a verified time origin.
+from the same numeric trace interval does not give CPU per frame.
+
+Add `--trace target/submissions.jsonl` to an interval measurement to join its
+CPU counters with completed output submissions. Trace version 2 records a
+system-wide nanosecond timestamp after each successful output flush and before
+sleeping. The harness reads the same named clock: `CLOCK_MONOTONIC` on Unix or
+[QueryPerformanceCounter](https://learn.microsoft.com/en-us/windows/win32/api/profileapi/nf-profileapi-queryperformancecounter)
+on Windows, with integer conversion using its
+[reported frequency](https://learn.microsoft.com/en-us/windows/win32/api/profileapi/nf-profileapi-queryperformancefrequency).
+This does not assume that Rust `Instant` and Python `perf_counter` share an epoch.
+Native CI brackets Rust clock reads between Python reads in separate processes
+on all six targets; the check is also available through
+`cargo build --release --example measurement-clock` followed by
+`python3 tools/check-measurement-clock.py target/release/examples/measurement-clock`
+(use `python` and the `.exe` suffix on Windows).
+
+Each group of CPU counter reads has a before/after timestamp bracket.
+`trace_alignment` reports the minimum and maximum number of submissions that
+can fall between those readings. With a positive minimum, it also reports a
+range for application, terminal, selected-helper and combined CPU milliseconds
+per submitted frame. An event on a bracket edge remains uncertain; paused ticks
+are excluded. These bounds concern frame-count uncertainty, not CPU-counter
+quantization or unrelated work in a shared terminal process. Work that straddles
+a sample boundary cannot be attributed to an individual frame. No ratio is
+reported when the minimum count is zero.
+
+A random session identifier and child PID associate the trace with this run.
+Missing, stale, unsupported or incomplete traces, omitted samples, nonmonotonic
+timestamps and intervals outside trace coverage invalidate the measurement;
+the CPU observations and diagnostic remain in the JSON. Version 1 traces remain
+usable by the PTY harness but cannot be aligned this way. Normal playback without
+tracing makes no additional measurement-clock calls. This measures successful
+output submission; visible frame timing still needs a separate display capture.
 
 Some terminals decode images in separate helpers. For example, iTerm2 uses an
 `iTerm2SandboxedWorker` process for Sixel. Add `--helper-pid 12346` for each
