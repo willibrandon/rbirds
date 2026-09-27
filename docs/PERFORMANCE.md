@@ -8,7 +8,9 @@ terminal separately. Moving work into the emulator does not make it free.
 `--bench` remains a deterministic construction benchmark and C comparison.
 It does not write frames, sleep between them, handle live input or measure a
 terminal. Its default renderer is Kitty; the live default is Braille. Keep
-those measurements, but use live runs to judge CPU use and playback.
+those measurements, but use live runs to judge CPU use and playback. Live Kitty
+also groups sprite rotations into textures; the C construction comparison
+continues to emit the reference protocol.
 
 ## Capturing the live path
 
@@ -89,9 +91,23 @@ Performance Analyzer can separate CPU execution, readiness and waits; Linux
 `perf` and macOS sampling tools can identify active work. Account for terminal
 CPU/GPU costs alongside the application.
 
+On macOS, `tools/terminal-perf.py` records rbirds CPU and a selected terminal
+process's CPU over the child's lifetime. Launch it as a terminal's direct
+command, or pass `--terminal-pid` explicitly when running it from a shell:
+
+```sh
+python3 tools/terminal-perf.py --terminal-pid 12345 --output target/terminal.json --note 'terminal/version, visible, power mode, background work' -- ./target/release/rbirds --render kitty --seed 42 --frames 1800
+```
+
+Use a dedicated terminal process: other tabs and windows in that process count
+toward its CPU total. This measurement includes startup, excludes the compositor
+and GPU, and does not establish whether the window was visible. Its macOS CPU
+counters are converted from Mach ticks with the host's actual timebase.
+
 The live scheduler follows monotonic deadlines and rebases after an overrun,
 without catch-up bursts or busy waiting. macOS uses a one-shot kernel timer with
 minimal coalescing for frame deadlines. Windows waits on console input, output
 completion and cancellation events, and reuses its bounded transfer buffer.
-Rendering optimizations retain the same pixels, cell output and simulation
-arithmetic. Bird count, resolution and quality are never reduced automatically.
+Live Kitty groups rotations into cropped texture placements, preserving source
+pixels and stacking order while reducing terminal image lookups. Rendering
+optimizations retain the same pixels, cell output and simulation arithmetic. Bird count, resolution and quality are never reduced automatically.

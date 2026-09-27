@@ -330,6 +330,32 @@ impl KittyGraphics {
         self.append_line(&line)
     }
 
+    pub(crate) fn place_region(
+        &mut self,
+        placement: &Placement,
+        region: [i32; 4],
+    ) -> Result<(), KittyError> {
+        let original = self.buffer.len();
+        self.place(placement)?;
+        self.buffer.truncate(self.buffer.len() - 2);
+        let mut line = Line::new();
+        if region[0] != 0 {
+            line.text(b",x=").int(region[0]);
+        }
+        if region[1] != 0 {
+            line.text(b",y=").int(region[1]);
+        }
+        if region[2] != 0 {
+            line.text(b",w=").int(region[2]);
+        }
+        line.text(b",h=").int(region[3]).text(b"\x1b\\");
+        if let Err(error) = self.append_line(&line) {
+            self.buffer.truncate(original);
+            return Err(error);
+        }
+        Ok(())
+    }
+
     /// `kitty_graphics_delete_placement`.
     pub fn delete_placement(&mut self, image_id: u32, placement_id: u32) -> Result<(), KittyError> {
         if self.unusable() || image_id == 0 || placement_id == 0 {

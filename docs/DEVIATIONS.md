@@ -1,7 +1,8 @@
 # Deviations
 
 D-001 through D-003 are proposed changes. D-004 and D-005 describe the accepted
-Sixel and Windows additions. D-006 describes the live pacing change. Test results are in [the evidence index](evidence/README.md).
+Sixel and Windows additions. D-006 and D-007 describe live pacing and Kitty
+sprite grouping. Test results are in [the evidence index](evidence/README.md).
 
 The first three entries cover C behavior that is undefined, and so can't be reproduced
 without reproducing memory corruption or an implementation-defined accident.
@@ -109,3 +110,20 @@ recordings and benchmark behavior. `--unlock-fps` still disables pacing.
 The scheduler tests in `src/timing.rs`, ABI probe, PTY lifecycle tests and live
 measurements cover the change. `RBIRDS_TRACE` is an optional developer diagnostic;
 it does not add an option to the user-facing CLI. See [PERFORMANCE.md](PERFORMANCE.md).
+
+## D-007: live Kitty sprite textures
+
+Live Kitty playback packs rotations into vertical image strips and places their
+source rectangles. The protocol's source pixels, pixel offsets and draw order
+are preserved; uploads and placement bytes differ. Text, Sixel, recordings and
+the C construction benchmark retain their existing formats. Explicit z values
+preserve the original image ordering within the near and far layers. Repeated
+border pixels preserve filtering at crop edges, and strips stay within 2048
+pixels high for the supported sprite sizes.
+
+The purpose is to reduce image lookup and texture switching in the terminal.
+`render::atlas` tests compare decoded pixels and placement fields;
+`tools/kitty-atlas-check.sh` checks the terminal's own decoding at sizes 4, 30
+and 64, including overlapping birds, trails, depth and hawks. This changes the
+live Kitty part of C12 and C15; exact C comparisons still cover the reference
+protocol construction path. It does not change simulation arithmetic.

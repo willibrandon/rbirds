@@ -22,6 +22,14 @@ def percentile(values, fraction):
     return sorted(values)[max(0, math.ceil(len(values) * fraction) - 1)] if values else None
 
 
+def longest_gap_run(intervals, threshold=25):
+    longest = current = 0
+    for interval in intervals:
+        current = current + 1 if interval > threshold else 0
+        longest = max(longest, current)
+    return longest
+
+
 def run(args):
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ,
@@ -72,11 +80,11 @@ def run(args):
             if now - started > args.timeout:
                 raise TimeoutError(f"Live run exceeded {args.timeout} seconds")
             elapsed = now - started
-            if args.input_at is not None and not sent_input and elapsed >= args.input_at:
+            if usage is None and master_open and args.input_at is not None and not sent_input and elapsed >= args.input_at:
                 os.write(master, args.input.encode())
                 sent_input = True
                 events.append({"at": elapsed, "input": args.input})
-            if args.resize_at is not None and not resized and elapsed >= args.resize_at:
+            if usage is None and master_open and args.resize_at is not None and not resized and elapsed >= args.resize_at:
                 fcntl.ioctl(master, termios.TIOCSWINSZ,
                             struct.pack("HHHH", args.resize_rows, args.resize_cols,
                                         args.resize_cols * args.cell_width, args.resize_rows * args.cell_height))
@@ -145,6 +153,7 @@ def run(args):
         "viewport": [args.cols, args.rows, args.cell_width, args.cell_height],
         "wall_seconds": elapsed, "process_cpu_seconds": cpu_seconds,
         "cpu_ms_per_second_including_startup": cpu_seconds * 1000 / elapsed,
+        "cpu_ms_per_frame_including_startup": cpu_seconds * 1000 / len(frames) if frames else None,
         "received_frames": len(frames), "received_bytes": total_bytes,
         "warmup_seconds": args.warmup,
         "interval_ms": {"p50": percentile(intervals, .5), "p95": percentile(intervals, .95),
@@ -153,6 +162,7 @@ def run(args):
         "gaps_over_25ms": sum(value > 25 for value in intervals),
         "gaps_over_50ms": sum(value > 50 for value in intervals),
         "gaps_over_100ms": sum(value > 100 for value in intervals),
+        "longest_run_of_gaps_over_25ms": longest_gap_run(intervals),
         "frame_received_seconds": frames,
     }
     if len(frames) != args.frames:
@@ -188,8 +198,14 @@ def main():
     args = parser.parse_args()
     if args.arguments[:1] == ["--"]:
         args.arguments.pop(0)
-    if args.frames < 2 or min(args.cols, args.rows, args.cell_width, args.cell_height) < 1:
+    if args.frames < 2 or min(args.cols, args.rows, args.cell_width, args.cell_height,
+                             args.resize_cols, args.resize_rows) < 1:
         parser.error("frames must be at least 2 and dimensions must be positive")
+    if max(args.cols * args.cell_width, args.rows * args.cell_height,
+           args.resize_cols * args.cell_width, args.resize_rows * args.cell_height) > 65535:
+        parser.error("pixel dimensions must fit the terminal's 16-bit size fields")
+    if args.timeout <= 0 or args.warmup < 0 or args.pause_for < 0:
+        parser.error("timeout must be positive; warmup and pause duration cannot be negative")
     run(args)
 
 

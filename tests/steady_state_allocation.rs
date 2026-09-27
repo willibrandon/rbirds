@@ -84,8 +84,16 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     let window = WinSize { row: 30, col: 100, xpixel: 800, ypixel: 480 };
     sim.apply_screen_size(100, 30, 800, 480);
     let mut renderer = Renderer::default();
+    let mut graphics = KittyGraphics::new(1).expect("graphics");
     if sim.drawing_with_text() || render == RenderMode::Sixel {
         renderer.prepare_text_renderer(&mut sim, None, b"rbirds").expect("sprites");
+    } else {
+        sim.rasterise_sprites(&mut renderer.sprites, None, b"rbirds").expect("sprites");
+        renderer.atlas = Some(
+            rbirds::render::atlas::Atlas::queue_upload(&mut graphics, &renderer.sprites)
+                .expect("atlas"),
+        );
+        rbirds::sprites::free_sprites(&mut renderer.sprites);
     }
     let mut grid = SpatialGrid::new(12).expect("grid");
     grid.prepare(800, 480, 300).expect("prepare");
@@ -96,7 +104,6 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     let mut snapshot = birds.clone();
     sim.initialize_birds(&mut birds);
     sim.place_hawks();
-    let mut graphics = KittyGraphics::new(1).expect("graphics");
     let mut live = LiveLoop::new(Timespec { tv_sec: 10, tv_nsec: 0 }, 300);
     let mut total = 0;
     for frame in 1..=150 {

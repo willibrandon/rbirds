@@ -302,7 +302,11 @@ impl Renderer {
                         ghost.y = bird.trail_y[age];
                         if let Some(mut placement) = bird_placement(sim, &ghost) {
                             placement.image_id = set_image_id(sim.trail_set(step), ghost.frame);
-                            graphics.place(&placement)?;
+                            if let Some(atlas) = &self.atlas {
+                                atlas.place(graphics, &placement)?;
+                            } else {
+                                graphics.place(&placement)?;
+                            }
                         }
                     }
                 }
@@ -312,7 +316,11 @@ impl Renderer {
                     continue;
                 }
                 if let Some(placement) = bird_placement(sim, bird) {
-                    graphics.place(&placement)?;
+                    if let Some(atlas) = &self.atlas {
+                        atlas.place(graphics, &placement)?;
+                    } else {
+                        graphics.place(&placement)?;
+                    }
                 }
             }
         }
@@ -326,7 +334,11 @@ impl Renderer {
             };
             if let Some(mut placement) = bird_placement(sim, &as_bird) {
                 placement.image_id = sim.hawk_image_id(hawk);
-                graphics.place(&placement)?;
+                if let Some(atlas) = &self.atlas {
+                    atlas.place(graphics, &placement)?;
+                } else {
+                    graphics.place(&placement)?;
+                }
             }
         }
         self.queue_legend(graphics, sim)?;

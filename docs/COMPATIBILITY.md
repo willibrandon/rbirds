@@ -24,7 +24,7 @@ Allowed normalized fields are limited to:
 1. Product identity: command names in known help/completion/error locations, version product/version fields, and the cast header's title. The help tagline uses a plain hyphen. Record the rbirds version actually used. Do not replace arbitrary substrings in user paths or file contents.
 2. The cast header's wall-clock `timestamp`. Recording event timestamps and output bytes remain exact.
 3. Harness-generated absolute temporary paths, only where the fixture declares a path field.
-4. Measured durations, derived FPS, and live performance-panel statistics. Validate their field format and meaning separately. Output byte counts remain exact for the same deterministic frames.
+4. Measured durations, derived FPS, and live performance-panel statistics. Validate their field format and meaning separately. Output byte counts remain exact for the reference construction path. Live Kitty groups sprite textures as described in D-007; its protocol bytes differ while its source pixels, placement and stacking order remain equivalent.
 5. Sixel's added help text, example, completion choices and invalid-render diagnostic (D-004). `tests/cli_differential.rs` applies those literal additions to expected C output. The rest of the output must match.
 
 OS-provided error text is compared against the same-target C execution; cross-OS wording need not match. Freeze the environment for each comparison and preserve behavior under additional environments as separate cases. Do not strip all stderr, ANSI sequences, whitespace, metadata, or numeric fields to obtain a match.

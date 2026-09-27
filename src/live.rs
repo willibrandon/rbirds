@@ -20,7 +20,7 @@ use crate::image::{Image, PngError, png};
 use crate::input::InputParser;
 use crate::platform::{self, STDIN_FILENO, Timespec, WinSize};
 use crate::render::Renderer;
-use crate::render::compose::{compose_onto, text_style, upload_sprite_sets};
+use crate::render::compose::{compose_onto, text_style};
 use crate::render::kitty::{KittyError, KittyGraphics};
 use crate::simulation::{Bird, RenderMode, Sim};
 use crate::spatial_grid::{SpatialGrid, status_string};
@@ -374,7 +374,11 @@ fn run_live(
     sim.begin_the_intro();
     if sim.render_mode == RenderMode::Kitty {
         terminal.mark_sprites_uploaded();
-        let uploaded = upload_sprite_sets(sim, &mut graphics, &renderer.sprites);
+        let uploaded = crate::render::atlas::Atlas::upload(
+            &mut graphics,
+            &renderer.sprites[..(sim.sprite_set_count() * ROTATION_FRAMES) as usize],
+        )
+        .map(|atlas| renderer.atlas = Some(atlas));
         free_sprites(&mut renderer.sprites);
         if let Err(error) = uploaded {
             return Err(fail(

@@ -5,6 +5,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod atlas;
 pub mod cells;
 pub mod compose;
 pub mod kitty;
@@ -36,6 +37,7 @@ pub struct Renderer {
     pub profile: Option<crate::timing::FrameProfile>,
     /// Text cells touched by this frame's sprite rectangles, including trails.
     pub occupied: Vec<bool>,
+    pub atlas: Option<atlas::Atlas>,
 }
 
 impl Default for Renderer {
@@ -51,6 +53,7 @@ impl Default for Renderer {
             sixel: sixel::Sixel::default(),
             profile: None,
             occupied: Vec::new(),
+            atlas: None,
         }
     }
 }
