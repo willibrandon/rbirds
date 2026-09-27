@@ -256,8 +256,11 @@ record the CPU saving and unchanged dense-scene delivery limit in iTerm.
 Live Kitty groups rotations into cropped texture placements, preserving source
 pixels and stacking order while reducing terminal image lookups. In iTerm,
 the live Kitty path instead composes sprites into at most two transparent
-surfaces, keeping far birds below the text and near birds above it. Explicit
-image IDs avoid iTerm's image-number addressing failure; the bounded placement
+surfaces, keeping far birds below the text and near birds above it. Clearing
+covers only the preceding frame's painted span on each retained surface;
+the [canvas comparison](evidence/live-kitty-clear-2026-09-27-macos-arm64.md)
+records a sparse-scene application saving and the limits of the total CPU result.
+Explicit image IDs avoid iTerm's image-number addressing failure; the bounded placement
 count avoids its repeated display-list rebuilds. Native pixels are transported
 with lossless RGBA compression. Two sets of image IDs keep the displayed frame
 alive while its replacement uploads; only the placement swap is synchronized.

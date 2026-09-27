@@ -29,6 +29,7 @@ enum Coverage<'a> {
 pub struct KittyRaster {
     placements: Vec<(Placement, usize)>,
     canvases: [Image; 2],
+    painted: [(i32, i32, i32, i32); 2],
     encoder: super::pixel_runs::PixelRuns,
     next_bank: u32,
     #[cfg(target_os = "macos")]
@@ -40,6 +41,7 @@ impl Default for KittyRaster {
         Self {
             placements: Vec::new(),
             canvases: [Image::empty(), Image::empty()],
+            painted: [(0, 0, 0, 0); 2],
             encoder: super::pixel_runs::PixelRuns::default(),
             next_bank: 0,
             #[cfg(target_os = "macos")]
@@ -79,13 +81,25 @@ impl KittyRaster {
         let split = sim.screen.legend_width > 0;
         let planes = if split { 2 } else { 1 };
         let mut bounds = [(sim.screen.width, sim.screen.height, 0, 0); 2];
-        for canvas in &mut self.canvases[..planes] {
+        for (plane, canvas) in self.canvases[..planes].iter_mut().enumerate() {
             if canvas.width != sim.screen.width || canvas.height != sim.screen.height {
                 *canvas = Image::alloc(sim.screen.width, sim.screen.height)
                     .map_err(|_| KittyError::Memory)?;
+                self.painted[plane] = (0, 0, 0, 0);
                 self.encoder.reserve(canvas.pixels.len())?;
             }
-            canvas.pixels.fill(0);
+            // Everything outside the preceding frame's painted bounds is
+            // already transparent. Hidden planes retain their own bounds
+            // until they are used again, including after a panel toggle.
+            let (left, top, right, bottom) = self.painted[plane];
+            if left < right && top < bottom {
+                let stride = canvas.width as usize * 4;
+                // A contiguous clear also crosses the already-transparent
+                // row margins, avoiding one small fill call per scanline.
+                let from = top as usize * stride + left as usize * 4;
+                let to = (bottom - 1) as usize * stride + right as usize * 4;
+                canvas.pixels[from..to].fill(0);
+            }
         }
         let (cw, ch) = (sim.screen.cell_width, sim.screen.cell_height);
         for (placement, _) in &self.placements {
@@ -112,6 +126,7 @@ impl KittyRaster {
                 blend_rows::<true, false>(canvas, sprite, x, y, rows.map(|r| r.rows.as_slice()));
             }
         }
+        self.painted[..planes].copy_from_slice(&bounds[..planes]);
         if let Some(profile) = profile {
             profile.composed();
         }
@@ -733,6 +748,52 @@ impl Renderer {
 #[cfg(test)]
 mod row_tests {
     use super::*;
+
+    #[test]
+    fn retained_kitty_surfaces_match_fresh_frames_after_moves_toggles_and_resize() {
+        let mut sim = Sim::new();
+        sim.render_mode = RenderMode::Kitty;
+        sim.config.palette = 1;
+        sim.config.hawks = 0;
+        let mut birds = [Bird::default(), Bird { layer: 1, ..Bird::default() }];
+        let far = sim.sprite_image_id(&birds[1]);
+        let mut sprites = vec![Image::empty(); far as usize];
+        for (id, colour) in [(1, [180, 40, 90]), (far, [30, 220, 70])] {
+            let mut sprite = Image::alloc(7, 5).unwrap();
+            for (i, p) in sprite.pixels.chunks_exact_mut(4).enumerate() {
+                p.copy_from_slice(&[colour[0], colour[1], colour[2], [0, 128, 255][i % 3]]);
+            }
+            sprites[id as usize - 1] = sprite;
+        }
+        let rows: Vec<_> = sprites.iter().map(|s| SpriteRows::new(s).unwrap()).collect();
+        let mut retained = KittyRaster::default();
+        let mut actual = KittyGraphics::new(1).unwrap();
+        let mut expected = KittyGraphics::new(1).unwrap();
+        for frame in 0..40 {
+            let (width, height) = [(40, 40), (25, 35), (60, 20), (40, 40)][frame / 10];
+            sim.apply_screen_size(4, 4, width, height);
+            sim.screen.legend_width = i32::from(frame % 6 >= 3);
+            sim.config.birds = if frame % 7 == 0 { 0 } else { 2 };
+            birds[0].x = [-5.0, 0.0, 8.0, 23.0, 39.0][frame % 5];
+            birds[0].y = [39.0, 10.0, -3.0, 0.0][frame % 4];
+            birds[1].x = width as f64 - birds[0].x;
+            birds[1].y = height as f64 - birds[0].y;
+            // A new canvas provides an independent clearing reference on
+            // every frame, with matching image IDs for an exact wire check.
+            let mut fresh = KittyRaster { next_bank: retained.next_bank, ..KittyRaster::default() };
+            actual.clear();
+            expected.clear();
+            retained.queue(&mut actual, &sim, &birds, &sprites, &rows, None).unwrap();
+            fresh.queue(&mut expected, &sim, &birds, &sprites, &rows, None).unwrap();
+            for plane in 0..if sim.screen.legend_width > 0 { 2 } else { 1 } {
+                assert_eq!(
+                    retained.canvases[plane], fresh.canvases[plane],
+                    "frame {frame}, plane {plane}"
+                );
+            }
+            assert_eq!(actual.buffer(), expected.buffer(), "frame {frame}");
+        }
+    }
 
     #[cfg(target_os = "macos")]
     #[test]

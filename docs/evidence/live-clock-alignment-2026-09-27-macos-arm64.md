@@ -16,7 +16,9 @@ On this M4 Pro / macOS 26.5.2, twenty Rust readings each fell between the
 surrounding Python readings of `CLOCK_MONOTONIC`. The same check passed with
 the Rust executable running through Rosetta. Native CI now runs this check on
 both architectures of macOS, Linux and Windows; those new CI results were pending
-when this report was written. Windows uses QPC and its reported frequency, with
+when this report was written. They subsequently passed on all six native targets
+in [run 36315168257](https://github.com/willibrandon/rbirds/actions/runs/36315168257).
+Windows uses QPC and its reported frequency, with
 integer nanosecond conversion. Neither path assumes an `Instant` or
 `perf_counter` epoch.
 
@@ -67,6 +69,10 @@ materially. Skipping blend arithmetic over transparent destinations preserved
 the compared Kitty bytes but increased composition time from 260 to 371 µs at
 defaults and from 2,450 to 3,194 µs in the dense scene. Their source patches,
 drivers, measurements and artifact hashes are retained; neither is in the code.
+That Kitty helper did not learn or settle a theme, so its default sprites had
+zero-valued theme tints. Those isolated composition timings do not represent
+the fallback palette or actual terminal defaults. The GUI observations below
+used the learned iTerm theme and are unaffected by this limitation.
 
 A separate confirmation of the preceding `b804229` build retained dark dominant
 backgrounds in all 5,570 captured samples across default Sixel, dense Sixel and
