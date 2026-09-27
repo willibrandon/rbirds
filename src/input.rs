@@ -25,6 +25,9 @@ pub struct InputParser {
     pub state: InputState,
     pub sequence: [u8; 32],
     pub sequence_length: usize,
+    /// Rendering inputs, including keys consumed while output is blocked.
+    /// Pointer reports do not change a paused image.
+    pub(crate) revision: u64,
 }
 
 /// `read_decimal`: the decimal digits at `text[*at..]`, overflow refused.
@@ -160,6 +163,7 @@ impl Sim {
                         self.read_mouse_report(&body[..length]);
                     } else if parser.sequence_length == 0 {
                         // A bare arrow, not a modified one.
+                        parser.revision = parser.revision.wrapping_add(1);
                         self.konami_note(key);
                     }
                     continue;
@@ -174,6 +178,8 @@ impl Sim {
                 parser.state = InputState::Escape;
                 continue;
             }
+
+            parser.revision = parser.revision.wrapping_add(1);
 
             if key == b'b' || key == b'a' {
                 self.konami_note(key);

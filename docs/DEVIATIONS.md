@@ -127,3 +127,25 @@ The purpose is to reduce image lookup and texture switching in the terminal.
 and 64, including overlapping birds, trails, depth and hawks. This changes the
 live Kitty part of C12 and C15; exact C comparisons still cover the reference
 protocol construction path. It does not change simulation arithmetic.
+
+## D-008: unchanged paused live frames
+
+Live playback skips the grid rebuild, composition and output when a paused
+scene is unchanged. Input revisions include keys consumed during a blocked
+flush. Resize, single-step, population changes and visible autopilot changes
+invalidate the held frame. Pointer reports update the simulation's mouse state
+without repainting a paused image. Quit still plays the outro, and input/window
+polling remains at 60 Hz even with unlocked animation.
+
+The live panel shows zero frame cost, bytes and rate while paused, with a fresh
+statistics window on resume. The frame-limit counter and simulation clock keep
+advancing. Traces distinguish idle ticks from submitted frames. The construction
+and C-oracle path retains its original per-tick output by default. This changes
+the paused live output and statistics portions of C12/C15, not simulation
+arithmetic or the reference construction benchmark.
+
+`tests/paused_live.rs` compares state and submitted bytes with full rendering in
+all five renderers through controls, resize, autopilot and the outro. The PTY
+case in `tests/pty_rbirds.rs` verifies silence, single-step, restoration and
+bounded idle wakeups with both normal and unlocked pacing. Allocation checks
+include pause and resume.

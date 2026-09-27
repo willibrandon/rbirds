@@ -110,8 +110,17 @@ pub fn write_snapshot(
 pub enum Frame {
     /// Queued in the output buffer, to be flushed.
     Drawn,
+    /// The paused scene is already on screen; no output was queued.
+    Idle,
     /// The flight out is over: leave the loop without drawing.
     Over,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PausedFrame {
+    input_revision: u64,
+    window: WinSize,
+    drift_at: f64,
 }
 
 /// The loop's own state (`live_birds`, `leaving`, the clocks, the parser).
@@ -123,6 +132,10 @@ pub struct LiveLoop {
     pub live_birds: i32,
     /// Seconds left of the flight out.
     pub leaving: f64,
+    /// Live playback may keep an unchanged paused image on screen. The
+    /// reference construction path retains its per-tick output by default.
+    pub reuse_paused_frame: bool,
+    paused_frame: Option<PausedFrame>,
 }
 
 impl LiveLoop {
@@ -133,6 +146,8 @@ impl LiveLoop {
             previous_frame: started,
             live_birds,
             leaving: 0.0,
+            reuse_paused_frame: false,
+            paused_frame: None,
         }
     }
 
@@ -173,6 +188,33 @@ impl LiveLoop {
         sim.release_the_formation_if_due();
         sim.maybe_drift();
         terminal::apply_window_size(sim, window);
+        let stationary = self.reuse_paused_frame && sim.paused && self.leaving <= 0.0;
+        let paused_frame = stationary.then_some(PausedFrame {
+            input_revision: self.parser.revision,
+            window,
+            // Autopilot still changes sliders while paused. Only a visible
+            // panel needs to be repainted for those changes.
+            drift_at: if sim.screen.legend_width > 0 { sim.last_drift_at } else { 0.0 },
+        });
+        if stationary
+            && !sim.step_once
+            && !sim.population_changed
+            && self.paused_frame == paused_frame
+        {
+            if let Some(profile) = &mut renderer.profile {
+                profile.updated();
+                profile.rendered();
+            }
+            return Ok(Frame::Idle);
+        }
+        if stationary != self.paused_frame.is_some() {
+            // A paused image has no ongoing frame cost or frame rate. Start
+            // a fresh statistics window on both pause and resume.
+            renderer.stats = crate::render::Stats {
+                window_started: sim.clock.seconds,
+                ..crate::render::Stats::default()
+            };
+        }
         if let Err(error) = grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds) {
             return Err(grid_failure("Cannot resize spatial grid", error));
         }
@@ -210,6 +252,7 @@ impl LiveLoop {
                 format!("Cannot render {renderer} graphics: {}\n", kitty_status(error)).as_bytes(),
             ));
         }
+        self.paused_frame = paused_frame;
         Ok(Frame::Drawn)
     }
 }
@@ -389,6 +432,7 @@ fn run_live(
     }
 
     let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
+    live.reuse_paused_frame = true;
     if let Some(trace) = &mut trace {
         trace
             .begin(
@@ -441,14 +485,18 @@ fn run_live(
         let flushed = Instant::now();
         let last = settings.frame_limit > 0 && sim.clock.frame >= i64::from(settings.frame_limit);
         let frame_end = platform::monotonic_now();
-        account_frame(
-            renderer,
-            sim.clock.seconds,
-            elapsed_microseconds(&frame_start, &frame_end),
-            frame_bytes,
-        );
-        let delay =
-            if settings.unlock_fps || last { Duration::ZERO } else { pacer.delay_after(flushed) };
+        if drawn == Frame::Drawn && (!sim.paused || live.leaving > 0.0) {
+            account_frame(
+                renderer,
+                sim.clock.seconds,
+                elapsed_microseconds(&frame_start, &frame_end),
+                frame_bytes,
+            );
+        }
+        // Unlocked animation must not turn an unchanged paused scene into a
+        // busy loop. Keep the same input/resize polling cadence while idle.
+        let unlimited = settings.unlock_fps && (!sim.paused || live.leaving > 0.0);
+        let delay = if unlimited || last { Duration::ZERO } else { pacer.delay_after(flushed) };
         if let Some(trace) = &mut trace {
             trace.record(
                 renderer.profile.unwrap(),

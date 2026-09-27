@@ -308,6 +308,56 @@ The [heading and panel archive](live-panels-2026-09-26-macos-arm64.tar.gz) retai
 these samples, the prototype results, corrected event scripts, screenshots of
 the dedicated test windows, source changes and executable hashes.
 
+## Paused playback
+
+Previously, pause stopped flight but continued rebuilding the spatial grid and
+rendering the same scene at 60 Hz. Kitty placements and full Sixel images were
+still submitted. Live playback now retains an unchanged paused frame while
+continuing to process controls, resize, single-step, autopilot and quit. Pointer
+reports alone do not repaint the held image. Unlocked playback also waits while
+paused. The panel shows zero ongoing frame cost and rate until playback resumes.
+
+Final-build foreground before/after pairs measured a ten-second interval
+after seven seconds of warm-up. A space was sent at about four seconds after
+window launch; the trace records idle ticks and no submitted frames throughout
+each candidate measurement period. No builds, tests, profiler or capture ran during the
+CPU samples. Default text and Kitty used dedicated Kitty 0.44.0 processes;
+Sixel used iTerm 3.6.6 and its selected image-decoder helper.
+
+| Paused renderer | Application CPU ms/s, before → after | Terminal CPU ms/s | Helper CPU ms/s | Combined CPU ms/s |
+| --- | ---: | ---: | ---: | ---: |
+| default text in Kitty | 204.43 → 1.95 | 93.83 → 0.14 | — | 298.26 → 2.09 |
+| Kitty graphics | 50.06 → 2.22 | 296.17 → 0.10 | — | 346.23 → 2.33 |
+| Sixel in iTerm | 296.71 → 2.08 | 1176.34 → 32.82 | 211.10 → 0.00 | 1684.16 → 34.89 |
+
+These are paused-state observations, not improvements to moving animation.
+The iTerm process was already running, so its main-process count can include
+other sessions. Compositor and GPU work remain outside the counters. The
+application still polls input and window size at 60 Hz; it does not busy-wait.
+
+Deterministic tests compare simulation state, canvas pixels and each submitted
+frame with full rendering in all five modes. They cover controls, split mouse
+reports, stepping, resizing, autopilot, input handled during a blocked flush,
+resume and the outro. A PTY test checks no output while idle, exactly one frame
+for a step, normal restoration and bounded idle ticks even with unlocked FPS.
+The C-oracle path and steady-state allocation checks pass.
+
+A separate iTerm capture covered pause, single-step, panel removal, resize from
+100×32 to 120×36, panel restoration and resume with trails, depth, four hawks
+and three flocks. All 1,407 sampled frames retained a dark dominant background;
+none showed the yellow placeholder. Screenshots show zero ongoing panel
+statistics while paused and restored statistics after resuming. This event run
+is not used as steady-state cadence or CPU evidence.
+
+The trace and PTY reports now distinguish loop ticks from submitted frames.
+The PTY harness verifies submitted counts against the trace and separately
+checks the final restoration marker. Timing distributions exclude intervals
+crossing intentional idle ticks. Legacy traces, idle-only traces and a
+pause/resume trace were checked explicitly.
+
+The [paused-playback archive](live-paused-2026-09-26-macos-arm64.tar.gz) retains
+measurements, traces, validation logs, drivers and source changes.
+
 ## Wider atlas experiment
 
 A follow-up prototype packed sprites into two-dimensional pages, keeping the

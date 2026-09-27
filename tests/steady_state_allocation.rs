@@ -106,6 +106,7 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     sim.initialize_birds(&mut birds);
     sim.place_hawks();
     let mut live = LiveLoop::new(Timespec { tv_sec: 10, tv_nsec: 0 }, 300);
+    live.reuse_paused_frame = true;
     let mut total = 0;
     for frame in 1..=150 {
         let at = Timespec { tv_sec: 10, tv_nsec: frame * 16_666_667 };
@@ -118,12 +119,12 @@ fn steady_state_allocations(render: RenderMode) -> usize {
                 &mut birds,
                 &mut snapshot,
                 &mut grid,
-                None,
+                if frame == 60 || frame == 120 { Some(b" ") } else { None },
                 at,
                 window,
             )
         });
-        assert_eq!(drawn, Ok(Frame::Drawn));
+        assert_eq!(drawn, Ok(if (61..120).contains(&frame) { Frame::Idle } else { Frame::Drawn }));
         if frame > 30 {
             total += allocations;
         }

@@ -25,7 +25,7 @@ def percentile(values, fraction):
 def longest_gap_run(intervals, threshold=25):
     longest = current = 0
     for interval in intervals:
-        current = current + 1 if interval > threshold else 0
+        current = current + 1 if interval is not None and interval > threshold else 0
         longest = max(longest, current)
     return longest
 
@@ -43,6 +43,7 @@ def run(args):
     environment = {**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"}
     if args.trace:
         args.trace.parent.mkdir(parents=True, exist_ok=True)
+        args.trace.unlink(missing_ok=True)
         environment["RBIRDS_TRACE"] = str(args.trace.resolve())
     process = subprocess.Popen(command, stdin=slave, stdout=slave, stderr=subprocess.PIPE,
                                env=environment,
@@ -140,10 +141,29 @@ def run(args):
         os.close(master)
         process.stderr.close()
     elapsed = time.monotonic() - started
-    # Terminal restoration also ends synchronized updates; only the requested
-    # number of frames belongs to the simulation.
-    frames = frames[:args.frames]
-    intervals = [(b - a) * 1000 for a, b in zip(frames, frames[1:]) if a >= args.warmup]
+    expected = args.frames
+    drawn_ticks = None
+    idle_ticks = 0
+    if args.trace and args.trace.exists():
+        with args.trace.open() as source:
+            summary = json.loads(next(source))
+            samples = [json.loads(line) for line in source]
+        if (summary.get("kind") != "summary" or summary.get("version") != 1
+                or len(samples) != summary["samples"]
+                or summary["samples"] + summary["omitted"] != args.frames):
+            raise RuntimeError("Trace does not cover the requested loop ticks")
+        expected = summary.get("drawn_frames", args.frames)
+        idle_ticks = args.frames - expected
+        drawn_ticks = [i for i, sample in enumerate(samples) if sample.get("drawn", True)]
+    # Restoration emits one final synchronized-update terminator. Check it
+    # separately so skipped paused ticks cannot look like lost frames.
+    if len(frames) != expected + 1:
+        raise RuntimeError(f"Received {len(frames)} terminators; expected {expected} frames plus restoration. Use --trace for paused playback.")
+    frames = frames[:expected]
+    gaps = [(b - a) * 1000 if drawn_ticks is None or (
+                i + 1 < len(drawn_ticks) and drawn_ticks[i + 1] == drawn_ticks[i] + 1) else None
+            for i, (a, b) in enumerate(zip(frames, frames[1:])) if a >= args.warmup]
+    intervals = [gap for gap in gaps if gap is not None]
     cpu_seconds = usage.ru_utime + usage.ru_stime
     report = {
         "scope": "PTY transport, not terminal painting",
@@ -155,6 +175,8 @@ def run(args):
         "cpu_ms_per_second_including_startup": cpu_seconds * 1000 / elapsed,
         "cpu_ms_per_frame_including_startup": cpu_seconds * 1000 / len(frames) if frames else None,
         "received_frames": len(frames), "received_bytes": total_bytes,
+        "loop_ticks": args.frames, "idle_ticks": idle_ticks,
+        "interval_scope": "contiguous drawn ticks covered by trace" if drawn_ticks is not None else "all received frames",
         "warmup_seconds": args.warmup,
         "interval_ms": {"p50": percentile(intervals, .5), "p95": percentile(intervals, .95),
                         "p99": percentile(intervals, .99), "p999": percentile(intervals, .999),
@@ -162,11 +184,9 @@ def run(args):
         "gaps_over_25ms": sum(value > 25 for value in intervals),
         "gaps_over_50ms": sum(value > 50 for value in intervals),
         "gaps_over_100ms": sum(value > 100 for value in intervals),
-        "longest_run_of_gaps_over_25ms": longest_gap_run(intervals),
+        "longest_run_of_gaps_over_25ms": longest_gap_run(gaps),
         "frame_received_seconds": frames,
     }
-    if len(frames) != args.frames:
-        raise RuntimeError(f"Received {len(frames)} of {args.frames} frames")
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     print(json.dumps({key: value for key, value in report.items() if key != "frame_received_seconds"}))

@@ -3,7 +3,8 @@
 The objective is low total CPU cost at a steady 60 frames per second, with
 responsive controls and unchanged pictures. Measure the application and the
 terminal separately. Moving work into the emulator does not make it free.
-`--unlock-fps` explicitly removes pacing and is a throughput diagnostic.
+`--unlock-fps` removes pacing during animation and is a throughput diagnostic.
+Paused playback continues to wait between input checks.
 
 `--bench` remains a deterministic construction benchmark and C comparison.
 It does not write frames, sleep between them, handle live input or measure a
@@ -40,7 +41,13 @@ that budget is a comparison target rather than the active pacing setting.
 `input_bytes` counts reads at the start of frames; input serviced during a
 blocked flush is not included, so it is not a complete input-latency measure.
 
-Tracing is optional. It reserves space for 65,536 frames, performs no log writes
+Samples with `drawn: false` are unchanged paused ticks. The report excludes
+those ticks and intervals crossing them from animation timing, and uses the
+summary's `drawn_frames` for CPU per submitted frame. Older traces without these
+fields remain readable. `--frames` still counts loop ticks, including paused
+ones, so a finite paused run still terminates.
+
+Tracing is optional. It reserves space for 65,536 ticks, performs no log writes
 during playback, and writes JSON lines after a clean exit with `q` or `--frames`.
 It reports omitted samples when that bound is reached. An interrupted or failed
 run can leave an empty trace; the report reader rejects it. Compare traced and
@@ -65,7 +72,11 @@ includes the binary hash, command, geometry, scripted events and raw frame
 timestamps. Its child CPU counter includes startup, unlike the live trace.
 The default injected input is `h`, the live panel toggle. Use `--panel` to start
 with the panel visible, and measure that case separately from the default
-command, which starts with it hidden.
+command, which starts with it hidden. To pause the simulation, use
+`--input-at 3 --input ' ' --trace target/paused.jsonl`. The harness checks the
+trace's submitted-frame count and excludes intentional idle periods from
+receive-interval distributions. `--pause-at` pauses the PTY reader instead;
+it exercises output backpressure.
 Receive timestamps can be grouped or delayed by the harness's own scheduling;
 correlate them with the application trace. Intentional reader pauses are recorded
 as events and must not be mistaken for spontaneous application stalls.
@@ -156,3 +167,10 @@ fraction of content pixels. Inspect these alongside timing: a full-window
 placeholder or blank flash is a rendering failure even if frames arrive on time.
 The iTerm Sixel investigation in the [Mac evidence](evidence/live-2026-09-26-macos-arm64.md)
 is one example that transport measurements alone missed.
+
+While paused, live playback keeps the last image until a key changes the scene,
+a single step is requested, the window is resized or a visible autopilot slider
+changes. Pointer reports alone do not repaint a paused image. Input and window
+size are still checked at 60 Hz, including with `--unlock-fps`. The panel shows
+zero ongoing frame cost and rate while paused, then starts fresh statistics
+when playback resumes. No frame quality or simulation detail is reduced.

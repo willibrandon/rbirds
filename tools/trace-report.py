@@ -18,21 +18,27 @@ def distribution(values):
 def summarize(path, warmup):
     with path.open() as source:
         summary = json.loads(next(source))
-        frames = [json.loads(line) for line in source]
+        samples = [json.loads(line) for line in source]
     if summary.get("kind") != "summary" or summary.get("version") != 1:
         raise ValueError(f"{path}: unsupported or incomplete trace")
-    if len(frames) != summary["samples"] or not frames:
+    if len(samples) != summary["samples"] or not samples:
         raise ValueError(f"{path}: missing frame samples")
-    intervals = [(b["start_us"] - a["start_us"]) / 1000
-                 for a, b in zip(frames, frames[1:]) if a["start_us"] >= warmup * 1e6]
+    frames = [sample for sample in samples if sample.get("drawn", True)]
+    total_drawn = summary.get("drawn_frames", len(samples) + summary["omitted"])
+    # An intentional pause is not a missed animation deadline. Keep the idle
+    # samples so frame intervals cannot bridge that pause.
+    gaps = [(b["start_us"] - a["start_us"]) / 1000
+            if a.get("drawn", True) and b.get("drawn", True) else None
+            for a, b in zip(samples, samples[1:]) if a["start_us"] >= warmup * 1e6]
+    intervals = [gap for gap in gaps if gap is not None]
     steady = [frame for frame in frames if frame["start_us"] >= warmup * 1e6]
     longest = current = 0
-    for interval in intervals:
-        current = current + 1 if interval > 25 else 0
+    for interval in gaps:
+        current = current + 1 if interval is not None and interval > 25 else 0
         longest = max(longest, current)
-    over_budget = [sum(frame[key] for key in
+    over_budget = [frame.get("drawn", True) and sum(frame[key] for key in
                        ("wake_late_us", "update_us", "compose_us", "encode_us", "flush_us"))
-                   > 1e6 / 60 for frame in steady]
+                   > 1e6 / 60 for frame in samples if frame["start_us"] >= warmup * 1e6]
     budget_run = longest_budget_run = 0
     for late in over_budget:
         budget_run = budget_run + 1 if late else 0
@@ -42,13 +48,14 @@ def summarize(path, warmup):
         "renderer": summary["renderer"], "viewport": summary["viewport"],
         "live_cpu_ms_per_second": summary["cpu_us"] / summary["wall_us"] * 1000,
         "live_wall_seconds": summary["wall_us"] / 1e6,
-        "live_cpu_ms_per_frame": summary["cpu_us"] / 1000 / (len(frames) + summary["omitted"]),
-        "sampled_frames": len(frames), "omitted_frames": summary["omitted"],
+        "live_cpu_ms_per_frame": summary["cpu_us"] / 1000 / total_drawn if total_drawn else None,
+        "sampled_frames": len(frames), "sampled_idle_ticks": len(samples) - len(frames),
+        "omitted_ticks": summary["omitted"],
         "interval_ms_after_warmup": distribution(intervals),
         "stage_ms_after_warmup": {
             stage.removesuffix("_us"): distribution([frame[stage] / 1000 for frame in steady])
             for stage in ("update_us", "compose_us", "encode_us", "flush_us", "wake_late_us")
-            if stage in frames[0]
+            if stage in samples[0]
         },
         "gaps_over_25ms": sum(value > 25 for value in intervals),
         "gaps_over_50ms": sum(value > 50 for value in intervals),

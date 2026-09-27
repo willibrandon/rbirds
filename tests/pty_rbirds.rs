@@ -13,6 +13,7 @@
 mod support;
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use rbirds::platform;
 use support::oracle;
@@ -50,6 +51,61 @@ fn live_trace_covers_every_flushed_frame_and_reports_cpu_time() {
         assert!(line.contains("\"wake_late_us\":"));
         assert!(line.contains("\"flush_us\":"));
     }
+}
+
+#[test]
+fn paused_playback_sends_nothing_steps_once_and_sleeps_even_when_unlocked() {
+    use support::pty::{Action, Spec, Step};
+    let _serial = serial();
+    let path =
+        std::env::temp_dir().join(format!("rbirds-paused-trace-{}.jsonl", std::process::id()));
+    for unlocked in [false, true] {
+        let mut args = vec!["--color", "ember", "--birds", "100"];
+        if unlocked {
+            args.push("--unlock-fps");
+        }
+        let frame_end = b"\x1b[?2026l";
+        let outcome = pty::run(
+            &Spec::new(&rbirds(), &args)
+                .env("RBIRDS_TRACE", &path)
+                .step(Step::after_output(frame_end, Action::Input(b" ".to_vec())))
+                .step(Step::after(Duration::from_millis(200), Action::Mark("idle begin")))
+                .step(Step::after(Duration::from_millis(200), Action::Mark("idle end")))
+                .step(Step::after(Duration::ZERO, Action::Input(b".".to_vec())))
+                .step(Step::after_output(frame_end, Action::Mark("stepped")))
+                .step(Step::after(Duration::from_millis(200), Action::Mark("still")))
+                .step(Step::after(Duration::ZERO, Action::Input(b"q".to_vec()))),
+        );
+        assert_eq!(outcome.exit, Some(pty::Exit::Code(0)), "{}", outcome.describe());
+        outcome.assert_attributes_restored();
+        let offset = |name: &str| outcome.events.iter().find(|e| e.what == name).unwrap().offset;
+        assert_eq!(offset("mark idle begin"), offset("mark idle end"));
+        let stepped = &outcome.transcript[offset("mark idle end")..offset("mark stepped")];
+        assert_eq!(stepped.windows(frame_end.len()).filter(|bytes| *bytes == frame_end).count(), 1);
+        assert_eq!(offset("mark stepped"), offset("mark still"));
+        let report = std::fs::read_to_string(&path).unwrap();
+        let idle_starts: Vec<u64> = report
+            .lines()
+            .filter(|line| line.contains("\"drawn\":false"))
+            .map(|line| {
+                line.split("\"start_us\":")
+                    .nth(1)
+                    .unwrap()
+                    .split(',')
+                    .next()
+                    .unwrap()
+                    .parse()
+                    .unwrap()
+            })
+            .collect();
+        assert!(idle_starts.len() >= 5, "no paused ticks: {report}");
+        let span = idle_starts.last().unwrap() - idle_starts.first().unwrap();
+        assert!(
+            idle_starts.len() as u64 <= span / 10_000 + 5,
+            "paused loop spun while unlocked={unlocked}"
+        );
+    }
+    std::fs::remove_file(path).unwrap();
 }
 
 macro_rules! rust_case {

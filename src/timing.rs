@@ -71,6 +71,7 @@ impl Default for FrameProfile {
 }
 
 struct Sample {
+    drawn: bool,
     start_us: u64,
     wake_late_us: u64,
     update_us: u64,
@@ -88,6 +89,7 @@ pub struct Trace {
     cpu_started: Duration,
     samples: Vec<Sample>,
     omitted: u64,
+    drawn_frames: u64,
     renderer: &'static str,
     viewport: [i32; 4],
 }
@@ -107,6 +109,7 @@ impl Trace {
             cpu_started: platform::process_cpu_time()?,
             samples,
             omitted: 0,
+            drawn_frames: 0,
             renderer: "unset",
             viewport: [0; 4],
         }))
@@ -129,11 +132,16 @@ impl Trace {
         bytes: usize,
         input_bytes: usize,
     ) {
+        // Every renderer brackets a submitted frame with synchronized-update
+        // markers. Only an unchanged paused tick has no queued bytes.
+        let drawn = bytes != 0;
+        self.drawn_frames += u64::from(drawn);
         if self.samples.len() == MAX_SAMPLES {
             self.omitted += 1;
             return;
         }
         self.samples.push(Sample {
+            drawn,
             start_us: micros(profile.started.duration_since(self.started)),
             wake_late_us: micros(profile.started.saturating_duration_since(profile.target)),
             update_us: micros(profile.updated.duration_since(profile.started)),
@@ -152,18 +160,20 @@ impl Trace {
         let mut out = BufWriter::new(self.file);
         writeln!(
             out,
-            "{{\"kind\":\"summary\",\"version\":1,\"renderer\":\"{}\",\"viewport\":{:?},\"wall_us\":{},\"cpu_us\":{},\"samples\":{},\"omitted\":{}}}",
+            "{{\"kind\":\"summary\",\"version\":1,\"renderer\":\"{}\",\"viewport\":{:?},\"wall_us\":{},\"cpu_us\":{},\"samples\":{},\"omitted\":{},\"drawn_frames\":{}}}",
             self.renderer,
             self.viewport,
             micros(elapsed),
             micros(cpu),
             self.samples.len(),
-            self.omitted
+            self.omitted,
+            self.drawn_frames
         )?;
         for sample in self.samples {
             writeln!(
                 out,
-                "{{\"kind\":\"frame\",\"start_us\":{},\"wake_late_us\":{},\"update_us\":{},\"compose_us\":{},\"encode_us\":{},\"flush_us\":{},\"sleep_us\":{},\"bytes\":{},\"input_bytes\":{}}}",
+                "{{\"kind\":\"frame\",\"drawn\":{},\"start_us\":{},\"wake_late_us\":{},\"update_us\":{},\"compose_us\":{},\"encode_us\":{},\"flush_us\":{},\"sleep_us\":{},\"bytes\":{},\"input_bytes\":{}}}",
+                sample.drawn,
                 sample.start_us,
                 sample.wake_late_us,
                 sample.update_us,
