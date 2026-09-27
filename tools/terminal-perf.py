@@ -5,10 +5,12 @@ import argparse
 import ctypes
 import hashlib
 import json
+import math
 import os
 import platform
 import shutil
 import subprocess
+import threading
 import time
 from pathlib import Path
 
@@ -32,12 +34,21 @@ def main():
                         help="defaults to parent; launch this as the terminal's direct child")
     parser.add_argument("--note", default="",
                         help="terminal/version, visibility, power mode, other activity")
+    parser.add_argument("--sample-seconds", type=float,
+                        help="also measure both processes over an equal elapsed-time interval")
+    parser.add_argument("--warmup-seconds", type=float, default=3,
+                        help="delay before the optional interval sample (default: 3)")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     if args.command[:1] == ["--"]:
         args.command.pop(0)
     if platform.system() != "Darwin" or not args.command:
         parser.error("requires macOS and a command after --")
+    if not math.isfinite(args.warmup_seconds) or args.warmup_seconds < 0:
+        parser.error("warmup seconds must be finite and nonnegative")
+    if args.sample_seconds is not None and (
+            not math.isfinite(args.sample_seconds) or args.sample_seconds <= 0):
+        parser.error("sample seconds must be finite and positive")
     binary = shutil.which(args.command[0])
     if not binary:
         parser.error(f"cannot find executable: {args.command[0]}")
@@ -71,6 +82,38 @@ def main():
     before = usage(args.terminal_pid)
     started = time.monotonic()
     process = subprocess.Popen(args.command)
+    stopped = threading.Event()
+    interval = {}
+
+    def sample_interval():
+        try:
+            if stopped.wait(args.warmup_seconds):
+                raise RuntimeError("child exited during warmup")
+            app_before = usage(process.pid)
+            term_before = usage(args.terminal_pid)
+            sample_start = time.monotonic()
+            if stopped.wait(args.sample_seconds):
+                raise RuntimeError("child exited before the interval sample finished")
+            app_after = usage(process.pid)
+            term_after = usage(args.terminal_pid)
+            sample_wall = time.monotonic() - sample_start
+            interval.update({
+                "start_seconds_after_launch": sample_start - started,
+                "wall_seconds": sample_wall,
+                "application_cpu_ms_per_second":
+                    (app_after.user + app_after.system - app_before.user - app_before.system)
+                    * tick_seconds / sample_wall * 1000,
+                "terminal_cpu_ms_per_second":
+                    (term_after.user + term_after.system - term_before.user - term_before.system)
+                    * tick_seconds / sample_wall * 1000,
+            })
+        except (OSError, RuntimeError) as error:
+            interval["error"] = str(error)
+
+    sampler = None
+    if args.sample_seconds is not None:
+        sampler = threading.Thread(target=sample_interval, daemon=True)
+        sampler.start()
     try:
         _, status, child = os.wait4(process.pid, 0)
         process.returncode = os.waitstatus_to_exitcode(status)
@@ -78,6 +121,9 @@ def main():
         if process.returncode is None:
             process.kill()
             process.wait()
+        stopped.set()
+        if sampler:
+            sampler.join()
     wall = time.monotonic() - started
     after = usage(args.terminal_pid)
     terminal_cpu = (after.user + after.system - before.user - before.system) * tick_seconds
@@ -95,6 +141,8 @@ def main():
         "terminal_cpu_ms_per_second": terminal_cpu / wall * 1000,
         "terminal_idle_wakeups": after.idle_wakes - before.idle_wakes,
     }
+    if args.sample_seconds is not None:
+        report["interval_sample"] = interval
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2) + "\n")
     raise SystemExit(process.returncode)

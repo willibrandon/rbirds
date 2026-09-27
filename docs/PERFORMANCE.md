@@ -108,6 +108,11 @@ Use a dedicated terminal process: other tabs and windows in that process count
 toward its CPU total. This measurement includes startup, excludes the compositor
 and GPU, and does not establish whether the window was visible. Its macOS CPU
 counters are converted from Mach ticks with the host's actual timebase.
+Add `--warmup-seconds 3 --sample-seconds 30` to also sample both processes over
+the same elapsed-time interval. Keep the child running longer than that window;
+an early exit records a sample error. Fixed frame counts alone compare different
+elapsed durations when pacing changes, which can also change the average
+simulation workload. Retain lifetime and equal-time samples separately.
 
 For a separate macOS presentation sample, give a visible test window a title
 starting with `rbirds-perf-`, then run:
@@ -132,3 +137,9 @@ completion and cancellation events, and reuses its bounded transfer buffer.
 Live Kitty groups rotations into cropped texture placements, preserving source
 pixels and stacking order while reducing terminal image lookups. Rendering
 optimizations retain the same pixels, cell output and simulation arithmetic. Bird count, resolution and quality are never reduced automatically.
+
+The presentation capture also records the dominant sampled RGB color and its
+fraction of content pixels. Inspect these alongside timing: a full-window
+placeholder or blank flash is a rendering failure even if frames arrive on time.
+The iTerm Sixel investigation in the [Mac evidence](evidence/live-2026-09-26-macos-arm64.md)
+is one example that transport measurements alone missed.

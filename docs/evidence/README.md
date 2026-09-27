@@ -1,5 +1,9 @@
 # Evidence
 
+[Live CPU and presentation measurements on macOS](live-2026-09-26-macos-arm64.md)
+cover the live-efficiency branch, including the iTerm Sixel flash, its workaround,
+and the limits exposed by visible-window measurements.
+
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.
 

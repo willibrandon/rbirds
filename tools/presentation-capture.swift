@@ -22,31 +22,62 @@ final class Recorder: NSObject, SCStreamOutput {
         let width = CVPixelBufferGetWidth(pixels), height = CVPixelBufferGetHeight(pixels)
         let stride = CVPixelBufferGetBytesPerRow(pixels)
         var hash: UInt64 = 1469598103934665603
+        var colours: [UInt32: Int] = [:]
+        var sampled = 0
         // Sample only the content area; title-bar changes do not count as animation.
         for y in Swift.stride(from: 40, to: height - 4, by: 8) {
             let row = address.advanced(by: y * stride).assumingMemoryBound(to: UInt32.self)
             for x in Swift.stride(from: 4, to: width - 4, by: 8) {
-                hash = (hash ^ UInt64(row[x])) &* 1099511628211
+                let pixel = row[x]
+                hash = (hash ^ UInt64(pixel)) &* 1099511628211
+                colours[pixel & 0x00ff_ffff, default: 0] += 1
+                sampled += 1
             }
         }
-        frames.append(["pts": CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)), "changed": lastHash != hash, "hash": String(hash)])
+        var frame: [String: Any] = ["pts": CMTimeGetSeconds(CMSampleBufferGetPresentationTimeStamp(sample)), "changed": lastHash != hash, "hash": String(hash)]
+        if let dominant = colours.max(by: { a, b in
+            a.value == b.value ? a.key < b.key : a.value < b.value
+        }) {
+            frame["dominant_rgb"] = [(dominant.key >> 16) & 255, (dominant.key >> 8) & 255, dominant.key & 255]
+            frame["dominant_fraction"] = Double(dominant.value) / Double(sampled)
+        }
+        frames.append(frame)
         lastHash = hash
     }
 }
+enum CaptureError: Error {
+    case invalidArguments(String)
+    case windowNotFound(String)
+}
+
 @main struct Capture {
-    static func main() async throws {
+    static func main() async {
+        do {
+            try await capture()
+        } catch {
+            FileHandle.standardError.write(Data("presentation-capture: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+
+    @MainActor static func capture() async throws {
         NSApplication.shared.setActivationPolicy(.prohibited)
         guard (3...4).contains(CommandLine.arguments.count) else {
-            fatalError("Usage: presentation-capture rbirds-perf-TITLE output.json [seconds]")
+            throw CaptureError.invalidArguments("Usage: presentation-capture rbirds-perf-TITLE output.json [seconds]")
         }
         let seconds = CommandLine.arguments.count == 4 ? Double(CommandLine.arguments[3]) ?? 0 : 12
         guard seconds.isFinite, seconds >= 1, seconds <= 60 else {
-            fatalError("Duration must be between 1 and 60 seconds")
+            throw CaptureError.invalidArguments("Duration must be between 1 and 60 seconds")
         }
         let title = CommandLine.arguments[1], output = CommandLine.arguments[2]
-        guard title.hasPrefix("rbirds-perf-") else { fatalError("Only test windows") }
+        guard title.hasPrefix("rbirds-perf-") else {
+            throw CaptureError.invalidArguments("Only titles starting with rbirds-perf- are accepted")
+        }
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        guard let window = content.windows.first(where: { $0.title == title }) else { fatalError("No matching test window") }
+        let matches = content.windows.filter { $0.title == title }
+        guard matches.count == 1, let window = matches.first else {
+            throw CaptureError.windowNotFound("Expected one visible window titled \(title), found \(matches.count)")
+        }
         let filter = SCContentFilter(desktopIndependentWindow: window)
         let configuration = SCStreamConfiguration()
         configuration.width = Int(window.frame.width)
