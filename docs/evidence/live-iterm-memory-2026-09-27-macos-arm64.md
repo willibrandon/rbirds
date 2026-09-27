@@ -18,9 +18,11 @@ protocol IDs does not bound this separate cache. The 3.6.11 source retains the
 same behavior; that version was inspected, not run here.
 
 An [upstream change committed September 18](https://github.com/gnachman/iTerm2/commit/50363ae0b2e243c76e4e614b26cf091a03be414d)
-prunes textures whose images are absent from the current frame. A build containing
-that change has not yet been qualified here. No installed terminal was upgraded
-or modified. The PR remains a draft pending a working, bounded-memory path.
+prunes textures whose images are absent from the current frame. A subsequent
+[isolated nightly qualification](live-iterm-fixed-build-2026-09-27-macos-arm64.md)
+did not reproduce the rapid growth across approximately three minutes each at
+default and dense settings. No installed terminal was upgraded or modified.
+The PR remains a draft pending a working path for affected older versions.
 The Sixel yellow-placeholder fix addresses a different image-lifetime failure.
 
 The investigation began with a ten-second intrusive sample of a one-bird Kitty

@@ -249,9 +249,15 @@ eight-pixel sampling grid for comparison. Repeated images do not count as
 animation. The capture uses the window's logical dimensions and records its own
 CPU cost. Compile with optimization and run this separately from CPU comparisons.
 The compositor also does work for capture; timestamps can be delayed or
-coalesced. These samples are evidence about visible-window delivery, not physical
-display scanout. `target/presentation-capture --self-test` checks pixel comparison
-without screen-recording access; both macOS CI jobs run it.
+coalesced. A desktop-independent capture can also receive an unfocused or
+covered window. The report separately samples application activity and the
+foremost normal window overlapping the captured content at approximately 10 Hz.
+Inspect `focus_observations` before treating a run as foreground evidence.
+Detached title-bar buttons are excluded by testing content overlap. These
+observations do not establish continuous visibility, account for every overlay,
+or measure physical display scanout. `target/presentation-capture --self-test`
+checks pixel and content-window comparisons without screen-recording access;
+both macOS CI jobs run it.
 
 Qualify image correctness before comparing CPU or cadence. Static probes must
 use the application's terminal negotiation, and protocol decoders must model
@@ -294,7 +300,10 @@ include combined CPU, dense playback, pixel integrity and cleanup checks.
 Later [memory measurements](evidence/live-iterm-memory-2026-09-27-macos-arm64.md)
 found rapid texture-cache growth in iTerm 3.6.6. Those short-run improvements do
 not qualify composed Kitty playback for sustained use in affected versions.
-The upstream cache fix still needs runtime qualification here.
+An [isolated nightly qualification](evidence/live-iterm-fixed-build-2026-09-27-macos-arm64.md)
+did not reproduce that rapid growth in approximately three-minute default and
+dense runs, with separate captures near 60 changes/s. A working path for affected
+older versions remains unresolved.
 Local alpha composition can differ slightly
 from the terminal blending separate textures, as recorded in the
 [Mac evidence](evidence/live-2026-09-26-macos-arm64.md).

@@ -7,6 +7,39 @@ import CoreMedia
 import AppKit
 import Darwin
 
+func frontContentWindow(_ windows: [[String: Any]], content: CGRect) -> [String: Any]? {
+    windows.first {
+        guard ($0[kCGWindowLayer as String] as? Int) == 0,
+              ($0[kCGWindowAlpha as String] as? Double ?? 0) > 0,
+              let bounds = $0[kCGWindowBounds as String] as? [String: Any],
+              let frame = CGRect(dictionaryRepresentation: bounds as CFDictionary) else { return false }
+        return frame.intersects(content)
+    }
+}
+
+func checkFocusWindows() throws {
+    let content = CGRect(x: 64, y: 100, width: 702, height: 537)
+    func window(_ id: UInt32, _ frame: CGRect, layer: Int = 0, alpha: Double = 1) -> [String: Any] {
+        [kCGWindowNumber as String: id, kCGWindowBounds as String: frame.dictionaryRepresentation,
+         kCGWindowLayer as String: layer, kCGWindowAlpha as String: alpha]
+    }
+    let buttons = window(1, CGRect(x: 66, y: 66, width: 66, height: 20))
+    let overlay = window(2, content, layer: 8)
+    let target = window(3, CGRect(x: 60, y: 60, width: 710, height: 581))
+    let covered = window(4, CGRect(x: 80, y: 120, width: 50, height: 50))
+    let invisible = window(5, content, alpha: 0)
+    let cases: [([[String: Any]], UInt32?)] = [
+        ([buttons, overlay, invisible, target], 3),
+        ([buttons, covered, target], 4),
+        ([buttons, invisible], nil)
+    ]
+    for (windows, expected) in cases {
+        guard frontContentWindow(windows, content: content)?[kCGWindowNumber as String] as? UInt32 == expected else {
+            throw CaptureError.invalidArguments("Content-window focus comparison failed")
+        }
+    }
+}
+
 // Retain the content pixels, not the capture surface, which belongs to the
 // stream's buffer pool. Row comparisons ignore title bars, borders and padding.
 struct ContentChanges {
@@ -127,6 +160,8 @@ enum CaptureError: Error {
         do {
             if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--self-test" {
                 try checkContentChanges()
+                try checkFocusWindows()
+                print("Content-window focus comparisons passed")
                 return
             }
             try await capture()
@@ -177,12 +212,39 @@ enum CaptureError: Error {
         try stream.addStreamOutput(recorder, type: .screen, sampleHandlerQueue: queue)
         var started = timespec(); clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &started)
         try await stream.startCapture()
-        try await Task.sleep(nanoseconds: UInt64(seconds * 1e9))
+        let focusStart = DispatchTime.now().uptimeNanoseconds
+        let focusEnd = focusStart + UInt64(seconds * 1e9)
+        let contentFrame = CGRect(x: window.frame.minX + 4, y: window.frame.minY + 40,
+                                  width: max(0, window.frame.width - 8), height: max(0, window.frame.height - 44))
+        var focus: [[String: Any]] = []
+        // A desktop-independent capture can keep receiving an occluded or
+        // unfocused window. Record focus separately rather than treating
+        // onScreenWindowsOnly as proof that the test window was in front.
+        while true {
+            let now = DispatchTime.now().uptimeNanoseconds
+            let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+            // macOS can give a window's title-bar buttons their own normal
+            // window above it. Only windows overlapping captured content count.
+            let top = frontContentWindow(windows, content: contentFrame)
+            var observation: [String: Any] = [
+                "elapsed_seconds": Double(now - focusStart) / 1e9,
+                "owner_active": window.owningApplication.map { $0.processID == NSWorkspace.shared.frontmostApplication?.processIdentifier } ?? false,
+                "top_normal_window": (top?[kCGWindowNumber as String] as? UInt32) == window.windowID
+            ]
+            if let top {
+                observation["top_window_id"] = top[kCGWindowNumber as String]
+                observation["top_window_owner_pid"] = top[kCGWindowOwnerPID as String]
+                observation["top_window_bounds"] = top[kCGWindowBounds as String]
+            }
+            focus.append(observation)
+            if now >= focusEnd { break }
+            try await Task.sleep(nanoseconds: min(100_000_000, focusEnd - now))
+        }
         try? await stream.stopCapture()
         queue.sync {}
         var finished = timespec(); clock_gettime(CLOCK_PROCESS_CPUTIME_ID, &finished)
         let cpu = Double(finished.tv_sec - started.tv_sec) + Double(finished.tv_nsec - started.tv_nsec) / 1e9
-        let report: [String: Any] = ["scope": "ScreenCaptureKit samples of visible test window, not physical scanout", "change_detection": "all content pixels", "hash_scope": "one pixel per 8 by 8 content block", "window": title, "capture_cpu_seconds": cpu, "requested_seconds": seconds, "size": [configuration.width, configuration.height], "requested_capture_hz": 120, "frames": recorder.frames]
+        let report: [String: Any] = ["scope": "ScreenCaptureKit samples of a test window, not physical scanout", "change_detection": "all content pixels", "hash_scope": "one pixel per 8 by 8 content block", "window": title, "window_id": window.windowID, "capture_cpu_seconds": cpu, "requested_seconds": seconds, "size": [configuration.width, configuration.height], "requested_capture_hz": 120, "frames": recorder.frames, "focus_scope": "approximately 10 Hz owner activity and foremost normal window overlapping content; not continuous visibility or scanout", "focus_observations": focus]
         let data = try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
         try data.write(to: URL(fileURLWithPath: output))
         print(title, recorder.frames.count, "capture CPU seconds", cpu)
