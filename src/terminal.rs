@@ -151,12 +151,16 @@ pub fn prepare_sixel() -> io::Result<SixelTerminal> {
     })?;
     // Ask the terminal itself, including through SSH, rather than relying on
     // TERM_PROGRAM from the local shell. Unimplemented XTVERSION is harmless.
-    let version = query_until(b"\x1b[>q", 128, 100, Some(b'\\'));
+    let erase_before_frame = query_is_iterm2();
     let mode = query_until(b"\x1b[?80$p", 128, 100, Some(b'y'));
     let was_enabled = mode.windows(9).any(|s| s == b"\x1b[?80;1$y")
         || mode.windows(9).any(|s| s == b"\x1b[?80;3$y");
     platform::enable_sixel_mode(was_enabled);
-    Ok(SixelTerminal { cell_size: cell, erase_before_frame: is_iterm2(&version) })
+    Ok(SixelTerminal { cell_size: cell, erase_before_frame })
+}
+
+pub fn query_is_iterm2() -> bool {
+    is_iterm2(&query_until(b"\x1b[>q", 128, 100, Some(b'\\')))
 }
 
 /// XTVERSION: DCS >| terminal-name version ST.

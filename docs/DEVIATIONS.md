@@ -1,8 +1,9 @@
 # Deviations
 
 D-001 through D-003 are proposed changes. D-004 and D-005 describe the accepted
-Sixel and Windows additions. D-006 and D-007 describe live pacing and Kitty
-sprite grouping. Test results are in [the evidence index](evidence/README.md).
+Sixel and Windows additions. D-006 through D-009 describe live pacing, Kitty
+sprite grouping, paused frames and iTerm composition. Test results are in
+[the evidence index](evidence/README.md).
 
 The first three entries cover C behavior that is undefined, and so can't be reproduced
 without reproducing memory corruption or an implementation-defined accident.
@@ -149,3 +150,23 @@ all five renderers through controls, resize, autopilot and the outro. The PTY
 case in `tests/pty_rbirds.rs` verifies silence, single-step, restoration and
 bounded idle wakeups with both normal and unlocked pacing. Allocation checks
 include pause and resume.
+
+## D-009: composed Kitty frames in iTerm
+
+An iTerm XTVERSION reply selects local composition for live Kitty graphics.
+iTerm 3.6.6 accepts the capability query but fails image-number placements;
+using explicit image IDs alone still incurs a display-list rebuild for every
+sprite. The renderer instead sends one cropped transparent surface, or two
+when a visible panel separates the far and near layers. Source pixels retain
+their native resolution, clipping and image-ID stacking order. A lossless
+zlib stream carries RGBA pixels through the Kitty protocol using explicit IDs.
+Uploads alternate between two image-ID sets before a synchronized placement
+swap, avoiding invalidation of the image still being displayed.
+
+This changes live Kitty transport under C12/C15 for iTerm. Composing in local
+8-bit RGBA can produce small overlap-color differences from iTerm blending
+individual textures after color conversion. It does not alter the simulation,
+recordings, C construction comparisons or other terminals' atlas path.
+The codec, composition, PTY negotiation, paused-frame and allocation tests cover
+the path; foreground observations and their limits are recorded in the
+[Mac evidence](evidence/live-2026-09-26-macos-arm64.md).

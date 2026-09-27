@@ -266,20 +266,46 @@ impl KittyGraphics {
             return Err(KittyError::Argument);
         }
 
+        let mut prefix = Line::new();
+        prefix.text(b"\x1b_Ga=t,q=2,f=").int(PNG_FORMAT).text(b",I=").uint(image_id);
+        self.upload_payload(prefix.as_bytes(), png)
+    }
+
+    pub(crate) fn upload_compressed_rgba(
+        &mut self,
+        image_id: u32,
+        width: i32,
+        height: i32,
+        bytes: &[u8],
+    ) -> Result<(), KittyError> {
+        if self.unusable() || image_id == 0 || width <= 0 || height <= 0 || bytes.is_empty() {
+            return Err(KittyError::Argument);
+        }
+        let mut prefix = Line::new();
+        prefix
+            .text(b"\x1b_Ga=t,q=2,f=32,o=z,i=")
+            .uint(image_id)
+            .text(b",s=")
+            .int(width)
+            .text(b",v=")
+            .int(height);
+        self.upload_payload(prefix.as_bytes(), bytes)
+    }
+
+    fn upload_payload(&mut self, prefix: &[u8], bytes: &[u8]) -> Result<(), KittyError> {
         let original_length = self.buffer.len();
         let mut offset = 0;
         let mut first = true;
-        while offset < png.len() {
-            let raw_length = (png.len() - offset).min(RAW_CHUNK_MAX);
-            let more = i32::from(offset + raw_length < png.len());
+        while offset < bytes.len() {
+            let raw_length = (bytes.len() - offset).min(RAW_CHUNK_MAX);
+            let more = i32::from(offset + raw_length < bytes.len());
 
             let mut payload = [0u8; PAYLOAD_MAX];
             let payload_length =
-                base64_encode_chunk(&png[offset..offset + raw_length], &mut payload);
+                base64_encode_chunk(&bytes[offset..offset + raw_length], &mut payload);
             let mut line = Line::new();
             if first {
-                line.text(b"\x1b_Ga=t,q=2,f=").int(PNG_FORMAT).text(b",I=").uint(image_id);
-                line.text(b",m=").int(more).text(b";");
+                line.text(prefix).text(b",m=").int(more).text(b";");
                 first = false;
             } else {
                 line.text(b"\x1b_Gm=").int(more).text(b",q=2;");
@@ -354,6 +380,27 @@ impl KittyGraphics {
             return Err(error);
         }
         Ok(())
+    }
+
+    /// Place a composed surface at its transmitted pixel size using an explicit ID.
+    pub(crate) fn place_raster(
+        &mut self,
+        image: u32,
+        x: i32,
+        y: i32,
+        z: i32,
+    ) -> Result<(), KittyError> {
+        let mut line = Line::new();
+        line.text(b"\x1b[")
+            .int(y + 1)
+            .text(b";")
+            .int(x + 1)
+            .text(b"H\x1b_Ga=p,i=")
+            .uint(image)
+            .text(b",z=")
+            .int(z)
+            .text(b",C=1,q=2\x1b\\");
+        self.append_line(&line)
     }
 
     /// `kitty_graphics_delete_placement`.

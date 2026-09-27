@@ -348,6 +348,9 @@ fn run_live(
     if sim.palette_follows_the_theme() && !terminal::learn_the_theme(&mut sim.theme) {
         sim.config.palette = crate::palette::fallback_palette();
     }
+    if sim.render_mode == RenderMode::Kitty && terminal::query_is_iterm2() {
+        renderer.kitty_raster = Some(crate::render::compose::KittyRaster::default());
+    }
     let sixel_cell = if sim.render_mode == RenderMode::Sixel {
         let options = terminal::prepare_sixel()
             .map_err(|error| fail(format!("Cannot enable Sixel: {error}\n").as_bytes()))?;
@@ -377,7 +380,10 @@ fn run_live(
     grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds)
         .map_err(|error| grid_failure("Cannot prepare spatial grid", error))?;
     // The sprites, once, as pixels.
-    let built = if sim.drawing_with_text() || sim.render_mode == RenderMode::Sixel {
+    let built = if sim.drawing_with_text()
+        || sim.render_mode == RenderMode::Sixel
+        || renderer.kitty_raster.is_some()
+    {
         renderer.prepare_text_renderer(sim, sprite_path, &name)
     } else {
         sim.rasterise_sprites(&mut renderer.sprites, sprite_path, &name)
@@ -421,16 +427,18 @@ fn run_live(
     sim.begin_the_intro();
     if sim.render_mode == RenderMode::Kitty {
         terminal.mark_sprites_uploaded();
-        let uploaded = crate::render::atlas::Atlas::upload(
-            &mut graphics,
-            &renderer.sprites[..(sim.sprite_set_count() * ROTATION_FRAMES) as usize],
-        )
-        .map(|atlas| renderer.atlas = Some(atlas));
-        free_sprites(&mut renderer.sprites);
-        if let Err(error) = uploaded {
-            return Err(fail(
-                format!("Cannot upload Kitty graphics: {}\n", kitty_status(error)).as_bytes(),
-            ));
+        if renderer.kitty_raster.is_none() {
+            let uploaded = crate::render::atlas::Atlas::upload(
+                &mut graphics,
+                &renderer.sprites[..(sim.sprite_set_count() * ROTATION_FRAMES) as usize],
+            )
+            .map(|atlas| renderer.atlas = Some(atlas));
+            free_sprites(&mut renderer.sprites);
+            if let Err(error) = uploaded {
+                return Err(fail(
+                    format!("Cannot upload Kitty graphics: {}\n", kitty_status(error)).as_bytes(),
+                ));
+            }
         }
     }
 

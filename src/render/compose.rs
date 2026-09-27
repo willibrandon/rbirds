@@ -23,6 +23,127 @@ enum Coverage<'a> {
     Bounds(&'a mut (i32, i32, i32, i32)),
 }
 
+/// iTerm can rebuild its entire display list after every placement. Composing
+/// the scene first bounds the number of terminal placements to two.
+#[derive(Debug)]
+pub struct KittyRaster {
+    placements: Vec<(Placement, usize)>,
+    canvases: [Image; 2],
+    encoder: super::pixel_runs::PixelRuns,
+    next_bank: u32,
+}
+
+impl Default for KittyRaster {
+    fn default() -> Self {
+        Self {
+            placements: Vec::new(),
+            canvases: [Image::empty(), Image::empty()],
+            encoder: super::pixel_runs::PixelRuns::default(),
+            next_bank: 0,
+        }
+    }
+}
+
+impl KittyRaster {
+    fn queue(
+        &mut self,
+        graphics: &mut KittyGraphics,
+        sim: &Sim,
+        birds: &[Bird],
+        sprites: &[Image],
+        sprite_rows: &[SpriteRows],
+        profile: Option<&mut crate::timing::FrameProfile>,
+    ) -> Result<(), KittyError> {
+        self.placements.clear();
+        let count = birds.len()
+            + sim.config.hawks as usize
+            + if sim.config.trails {
+                birds.len().div_ceil(TRAIL_EVERY as usize) * TRAIL_LENGTH as usize
+            } else {
+                0
+            };
+        self.placements.try_reserve(count).map_err(|_| KittyError::Memory)?;
+        for_each_placement(sim, birds, |placement| {
+            self.placements.push((placement, self.placements.len()));
+            Ok(())
+        })?;
+        // Kitty orders equal-z images by image ID, then placement order. Keep
+        // the same ordering when rotations share a texture in the atlas path.
+        self.placements.sort_unstable_by_key(|(p, order)| (p.z_index, p.image_id, *order));
+        // Separate surfaces retain far birds below text and near birds above
+        // it. With no panel there is no text to cross, so one surface suffices.
+        let split = sim.screen.legend_width > 0;
+        let planes = if split { 2 } else { 1 };
+        let mut bounds = [(sim.screen.width, sim.screen.height, 0, 0); 2];
+        for canvas in &mut self.canvases[..planes] {
+            if canvas.width != sim.screen.width || canvas.height != sim.screen.height {
+                *canvas = Image::alloc(sim.screen.width, sim.screen.height)
+                    .map_err(|_| KittyError::Memory)?;
+                self.encoder.reserve(canvas.pixels.len())?;
+            }
+            canvas.pixels.fill(0);
+        }
+        let (cw, ch) = (sim.screen.cell_width, sim.screen.cell_height);
+        for (placement, _) in &self.placements {
+            let index = placement.image_id as usize - 1;
+            let sprite = &sprites[index];
+            let plane = usize::from(split && placement.z_index >= 0);
+            let canvas = &mut self.canvases[plane];
+            let (x, y) = (
+                placement.column * cw + placement.x_offset,
+                placement.row * ch + placement.y_offset,
+            );
+            let rows = sprite_rows.get(index);
+            let rect = rows.map_or((0, 0, sprite.width, sprite.height), |r| r.bounds);
+            let left = (x + rect.0).max(0);
+            let top = (y + rect.1).max(0);
+            let right = (x + rect.2).min(canvas.width);
+            let bottom = (y + rect.3).min(canvas.height);
+            if left < right && top < bottom {
+                let b = &mut bounds[plane];
+                b.0 = b.0.min(left);
+                b.1 = b.1.min(top);
+                b.2 = b.2.max(right);
+                b.3 = b.3.max(bottom);
+                blend_rows::<true, false>(canvas, sprite, x, y, rows.map(|r| r.rows.as_slice()));
+            }
+        }
+        if let Some(profile) = profile {
+            profile.composed();
+        }
+        // Stage the next textures while the current placements remain visible.
+        // Reusing a displayed image ID makes iTerm invalidate its old image
+        // reference before the replacement reaches the display.
+        let mut next = [None; 2];
+        for (plane, &(left, top, right, bottom)) in bounds[..planes].iter().enumerate() {
+            if left >= right || top >= bottom {
+                continue;
+            }
+            let (x, y) = (left / cw, top / ch);
+            let (cols, rows) = ((right - 1) / cw + 1 - x, (bottom - 1) / ch + 1 - y);
+            let width = (cols * cw).min(sim.screen.width - x * cw);
+            let height = (rows * ch).min(sim.screen.height - y * ch);
+            let compressed = self.encoder.encode_region(
+                &self.canvases[plane],
+                (x * cw) as usize,
+                (y * ch) as usize,
+                width as usize,
+                height as usize,
+            )?;
+            let id = self.next_bank * 2 + plane as u32 + 1;
+            graphics.upload_compressed_rgba(id, width, height, compressed)?;
+            next[plane] = Some((id, x, y, if split && plane == 0 { -1 } else { 1 }));
+        }
+        graphics.begin_synchronized_update()?;
+        graphics.delete_all_placements()?;
+        for (id, x, y, z) in next.into_iter().flatten() {
+            graphics.place_raster(id, x, y, z)?;
+        }
+        self.next_bank ^= 1;
+        Ok(())
+    }
+}
+
 impl SpriteRows {
     fn new(sprite: &Image) -> Result<Self, KittyError> {
         let mut rows = Vec::new();
@@ -312,6 +433,54 @@ pub fn upload_sprite_sets(
     graphics.flush()
 }
 
+fn for_each_placement(
+    sim: &Sim,
+    birds: &[Bird],
+    mut place: impl FnMut(Placement) -> Result<(), KittyError>,
+) -> Result<(), KittyError> {
+    let birds = drawn(sim, birds);
+    // Far birds first and underneath, then the tails, the near birds,
+    // the hawks.
+    for layer in (0..LAYERS).rev() {
+        if layer == 0 && sim.config.trails {
+            for bird in birds.iter().step_by(TRAIL_EVERY as usize) {
+                if bird.layer != 0 {
+                    continue;
+                }
+                for step in 0..bird.trail_held {
+                    // The newest ghost is the strongest.
+                    let age = ((bird.trail_at - 1 - step + TRAIL_LENGTH) % TRAIL_LENGTH) as usize;
+                    let mut ghost = *bird;
+                    ghost.x = bird.trail_x[age];
+                    ghost.y = bird.trail_y[age];
+                    if let Some(mut placement) = bird_placement(sim, &ghost) {
+                        placement.image_id = set_image_id(sim.trail_set(step), ghost.frame);
+                        place(placement)?;
+                    }
+                }
+            }
+        }
+        for bird in birds {
+            if bird.layer != layer {
+                continue;
+            }
+            if let Some(placement) = bird_placement(sim, bird) {
+                place(placement)?;
+            }
+        }
+    }
+    let offset = f64::from(sim.hawk_draw_offset());
+    for hawk in &sim.hawks[..sim.config.hawks as usize] {
+        let as_bird =
+            Bird { x: hawk.x - offset, y: hawk.y - offset, frame: hawk.frame, ..Bird::default() };
+        if let Some(mut placement) = bird_placement(sim, &as_bird) {
+            placement.image_id = sim.hawk_image_id(hawk);
+            place(placement)?;
+        }
+    }
+    Ok(())
+}
+
 impl Renderer {
     /// `prepare_text_renderer`: the sprites as pixels and a fresh grid.
     pub fn prepare_text_renderer(
@@ -370,65 +539,27 @@ impl Renderer {
         if sim.drawing_with_text() {
             return self.queue_text_frame(graphics, sim, birds);
         }
+        if let Some(raster) = &mut self.kitty_raster {
+            raster.queue(
+                graphics,
+                sim,
+                birds,
+                &self.sprites,
+                &self.sprite_rows,
+                self.profile.as_mut(),
+            )?;
+            self.queue_legend(graphics, sim)?;
+            return graphics.end_synchronized_update();
+        }
         graphics.begin_synchronized_update()?;
         graphics.delete_all_placements()?;
-        let birds = drawn(sim, birds);
-        // Far birds first and underneath, then the tails, the near birds,
-        // the hawks.
-        for layer in (0..LAYERS).rev() {
-            if layer == 0 && sim.config.trails {
-                for bird in birds.iter().step_by(TRAIL_EVERY as usize) {
-                    if bird.layer != 0 {
-                        continue;
-                    }
-                    for step in 0..bird.trail_held {
-                        // The newest ghost is the strongest.
-                        let age =
-                            ((bird.trail_at - 1 - step + TRAIL_LENGTH) % TRAIL_LENGTH) as usize;
-                        let mut ghost = *bird;
-                        ghost.x = bird.trail_x[age];
-                        ghost.y = bird.trail_y[age];
-                        if let Some(mut placement) = bird_placement(sim, &ghost) {
-                            placement.image_id = set_image_id(sim.trail_set(step), ghost.frame);
-                            if let Some(atlas) = &self.atlas {
-                                atlas.place(graphics, &placement)?;
-                            } else {
-                                graphics.place(&placement)?;
-                            }
-                        }
-                    }
-                }
+        for_each_placement(sim, birds, |placement| {
+            if let Some(atlas) = &self.atlas {
+                atlas.place(graphics, &placement)
+            } else {
+                graphics.place(&placement)
             }
-            for bird in birds {
-                if bird.layer != layer {
-                    continue;
-                }
-                if let Some(placement) = bird_placement(sim, bird) {
-                    if let Some(atlas) = &self.atlas {
-                        atlas.place(graphics, &placement)?;
-                    } else {
-                        graphics.place(&placement)?;
-                    }
-                }
-            }
-        }
-        let offset = f64::from(sim.hawk_draw_offset());
-        for hawk in &sim.hawks[..sim.config.hawks as usize] {
-            let as_bird = Bird {
-                x: hawk.x - offset,
-                y: hawk.y - offset,
-                frame: hawk.frame,
-                ..Bird::default()
-            };
-            if let Some(mut placement) = bird_placement(sim, &as_bird) {
-                placement.image_id = sim.hawk_image_id(hawk);
-                if let Some(atlas) = &self.atlas {
-                    atlas.place(graphics, &placement)?;
-                } else {
-                    graphics.place(&placement)?;
-                }
-            }
-        }
+        })?;
         self.queue_legend(graphics, sim)?;
         graphics.end_synchronized_update()
     }
@@ -571,6 +702,88 @@ impl Renderer {
 #[cfg(test)]
 mod row_tests {
     use super::*;
+
+    #[test]
+    fn kitty_surfaces_preserve_stacking_text_layers_clipping_and_empty_frames() {
+        let mut sim = Sim::new();
+        sim.render_mode = RenderMode::Kitty;
+        sim.config.palette = 1;
+        sim.config.birds = 5;
+        sim.config.hawks = 0;
+        sim.apply_screen_size(4, 4, 40, 40);
+        sim.screen.legend_width = 1;
+        let mut birds = [
+            Bird { x: 8.0, y: 9.0, frame: 1, ..Bird::default() },
+            Bird { x: 9.0, y: 10.0, ..Bird::default() },
+            Bird { x: 8.0, y: 9.0, layer: 1, ..Bird::default() },
+            Bird { x: 39.0, y: 39.0, ..Bird::default() },
+            Bird { x: -1.0, y: 1.0, ..Bird::default() },
+        ];
+        let far_id = sim.sprite_image_id(&birds[2]);
+        let mut sprites = vec![Image::empty(); far_id as usize];
+        for (id, rgba) in [(1, [0, 0, 255, 128]), (2, [255, 0, 0, 255]), (far_id, [0, 255, 0, 255])]
+        {
+            let mut sprite = Image::alloc(3, 3).unwrap();
+            for p in sprite.pixels.chunks_exact_mut(4) {
+                p.copy_from_slice(&rgba);
+            }
+            sprites[id as usize - 1] = sprite;
+        }
+        let rows: Vec<_> = sprites.iter().map(|s| SpriteRows::new(s).unwrap()).collect();
+        let mut raster = KittyRaster::default();
+        let mut graphics = KittyGraphics::new(1).unwrap();
+        raster.queue(&mut graphics, &sim, &birds, &sprites, &rows, None).unwrap();
+        let pixel = |image: &Image, x, y| -> [u8; 4] {
+            image.pixels[image.offset(x, y)..image.offset(x, y) + 4].try_into().unwrap()
+        };
+        assert_eq!(pixel(&raster.canvases[0], 9, 10), [0, 255, 0, 255]);
+        // ID 2 covers ID 1 despite arriving first in the flock array.
+        assert_eq!(pixel(&raster.canvases[1], 9, 10), [255, 0, 0, 255]);
+        assert_eq!(pixel(&raster.canvases[1], 11, 12), [0, 0, 255, 128]);
+        assert_eq!(pixel(&raster.canvases[1], 39, 39), [0, 0, 255, 128]);
+        assert_eq!(pixel(&raster.canvases[1], 0, 1), [0; 4]);
+        let protocol = String::from_utf8_lossy(graphics.buffer());
+        assert!(protocol.contains("a=p,i=1,z=-1,C=1,q=2"));
+        assert!(protocol.contains("a=p,i=2,z=1,C=1,q=2"));
+        let swap = protocol.find("\x1b[?2026h").unwrap();
+        assert!(protocol.rfind("a=t,").unwrap() < swap, "finish uploads before the swap");
+        assert!(protocol.find("a=p,").unwrap() > swap);
+
+        // Hiding the panel merges the layers and replaces the old placements.
+        graphics.clear();
+        sim.screen.legend_width = 0;
+        raster.queue(&mut graphics, &sim, &birds, &sprites, &rows, None).unwrap();
+        assert_eq!(pixel(&raster.canvases[0], 9, 10), [255, 0, 0, 255]);
+        let protocol = String::from_utf8_lossy(graphics.buffer());
+        assert_eq!(protocol.matches("a=p,").count(), 1);
+        assert!(protocol.contains("a=p,i=3,z=1,"), "preserve the previous frame's images");
+
+        // A resized viewport need not be an exact multiple of its cell size.
+        graphics.clear();
+        sim.screen.width = 25;
+        sim.screen.height = 25;
+        sim.screen.cell_width = 12;
+        sim.screen.cell_height = 12;
+        sim.screen.cols = 2;
+        sim.screen.rows = 2;
+        sim.config.birds = 1;
+        birds[0].x = 23.0;
+        birds[0].y = 23.0;
+        raster.queue(&mut graphics, &sim, &birds, &sprites, &rows, None).unwrap();
+        assert_eq!(pixel(&raster.canvases[0], 24, 24), [255, 0, 0, 255]);
+        let protocol = String::from_utf8_lossy(graphics.buffer());
+        assert!(protocol.contains("f=32,o=z,i=1,s=13,v=13,"));
+        assert!(protocol.contains("\x1b[2;2H\x1b_Ga=p,i=1,z=1,C=1,q=2"));
+
+        graphics.clear();
+        sim.config.birds = 0;
+        raster.queue(&mut graphics, &sim, &birds, &sprites, &rows, None).unwrap();
+        assert!(raster.canvases[0].pixels.iter().all(|&b| b == 0));
+        let mut deletion = KittyGraphics::new(1).unwrap();
+        deletion.begin_synchronized_update().unwrap();
+        deletion.delete_all_placements().unwrap();
+        assert_eq!(graphics.buffer(), deletion.buffer());
+    }
 
     #[test]
     fn opaque_rows_match_general_blending_for_every_alpha_and_overlapping_edges() {

@@ -1546,6 +1546,11 @@ pub fn encode(image: &Image) -> Result<Vec<u8>, PngError> {
 }
 
 #[cfg(test)]
+pub(crate) fn inflate_for_test(data: &[u8], limit: usize) -> Result<Vec<u8>, PngError> {
+    inflate_zlib(data, limit)
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

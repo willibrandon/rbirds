@@ -16,7 +16,7 @@ struct Playback {
 }
 
 impl Playback {
-    fn new(mode: RenderMode, reuse: bool) -> Self {
+    fn new(mode: RenderMode, reuse: bool, raster: bool) -> Self {
         let mut sim = Sim::new();
         sim.render_mode = mode;
         sim.config.birds = 24;
@@ -33,7 +33,8 @@ impl Playback {
         sim.rng.seed(42);
         let mut renderer = Renderer::default();
         renderer.incremental_legend = true;
-        if mode == RenderMode::Kitty {
+        renderer.kitty_raster = raster.then(rbirds::render::compose::KittyRaster::default);
+        if mode == RenderMode::Kitty && !raster {
             sim.rasterise_sprites(&mut renderer.sprites, None, b"rbirds").unwrap();
         } else {
             renderer.prepare_text_renderer(&mut sim, None, b"rbirds").unwrap();
@@ -75,15 +76,16 @@ impl Playback {
 
 #[test]
 fn paused_reuse_preserves_controls_pixels_simulation_and_outro_in_every_renderer() {
-    for mode in [
-        RenderMode::Braille,
-        RenderMode::Blocks,
-        RenderMode::Sextants,
-        RenderMode::Kitty,
-        RenderMode::Sixel,
+    for (mode, raster) in [
+        (RenderMode::Braille, false),
+        (RenderMode::Blocks, false),
+        (RenderMode::Sextants, false),
+        (RenderMode::Kitty, false),
+        (RenderMode::Kitty, true),
+        (RenderMode::Sixel, false),
     ] {
-        let mut full = Playback::new(mode, false);
-        let mut reuse = Playback::new(mode, true);
+        let mut full = Playback::new(mode, false, raster);
+        let mut reuse = Playback::new(mode, true, raster);
         let mut window = WinSize { col: 100, row: 30, xpixel: 800, ypixel: 480 };
         let steps: &[(i64, Option<&[u8]>, Frame)] = &[
             (16, None, Frame::Drawn),
@@ -144,9 +146,21 @@ fn paused_reuse_preserves_controls_pixels_simulation_and_outro_in_every_renderer
             if expected == Frame::Idle {
                 assert!(reuse.graphics.is_empty(), "{mode:?} step {index}");
             } else {
+                // Repainting unchanged frames advances the raster's image-ID
+                // bank; skipping them does not. Compare equivalent plane IDs.
+                let normalize = |bytes: &[u8]| {
+                    if raster {
+                        String::from_utf8_lossy(bytes)
+                            .replace(",i=3,", ",i=1,")
+                            .replace(",i=4,", ",i=2,")
+                            .into_bytes()
+                    } else {
+                        bytes.to_vec()
+                    }
+                };
                 assert_eq!(
-                    reuse.graphics.buffer(),
-                    full.graphics.buffer(),
+                    normalize(reuse.graphics.buffer()),
+                    normalize(full.graphics.buffer()),
                     "{mode:?} step {index}"
                 );
             }

@@ -596,6 +596,102 @@ The [Sixel crop archive](live-sixel-crop-2026-09-26-macos-arm64.tar.gz) retains
 all variants, CPU intervals, traces, captures, validation logs and source
 patches, with executable hashes and an independently checked manifest.
 
+## Composed Kitty frames in iTerm
+
+The image-number failure and per-placement display-list rebuild described above
+made iTerm 3.6.6 unsuitable for the normal live Kitty atlas path. The iTerm path
+now composes the native sprites locally and uploads at most two transparent
+surfaces. A visible panel keeps far birds below text and near birds above it;
+without the panel one surface suffices. Crops retain native pixel dimensions.
+Explicit image IDs avoid the addressing failure, and local image-ID ordering
+avoids depending on iTerm's equal-z sorting. Other terminals keep the atlas.
+
+A first version reused its image IDs inside a synchronized update. Its default
+capture appeared close to 60 changed samples/s, but ten of 947 samples were
+nearly blank. The demanding scene exposed the failure clearly: 677 of 816
+samples were nearly blank. Alternation between blank and valid images inflated
+the reported change rate to 22.45/s. A screenshot taken immediately afterward
+was empty. This version was rejected, including its apparently favorable
+cadence numbers. The dense driver also exceeded its 95-second wait; sending
+`q` ended the run cleanly after 1,469 ticks, with the timeout and trace retained.
+
+iTerm invalidates the old image's reference when inserting a replacement under
+the same ID. Uploads now alternate between two sets of IDs, retaining the
+current placements while staging the next images. Only the final placement
+swap and panel update are synchronized. Repeat default and demanding captures
+contained zero nearly blank or bright-background samples (913 and 746 samples).
+Their rates were 59.70 and 11.43 changed samples/s; the demanding case remained
+limited by large image transfers.
+
+The encoder uses fixed DEFLATE codes, RGBA runs and one hash lookup for repeated
+sprite spans. It avoids the general PNG encoder's chain search, does not filter
+or quantize colors, and reuses its storage. Tests decode the bytes with the
+independent general PNG inflater, including crops, noncontiguous row strides,
+checksums, distance-code boundaries and the 32 KiB window limit. A separate
+Python zlib/Pillow decoder reconstructed the 102 placements of a static scene
+from individually uploaded sprites. Both transmitted surfaces matched the
+expected local RGBA composition exactly, including transparent margins.
+
+A final default capture measured 59.82 changed samples/s, with a 27.14 ms p99
+interval and 34.87 ms maximum. The demanding case (4,096 birds, speed 12, four
+hawks, three flocks, depth and trails) measured 14.40/s, with an 80.62 ms p99 and
+84.08 ms maximum. Neither capture contained a nearly blank or bright-background
+sample among 958 and 732 samples respectively. This fixes visibility at the
+defaults, but does not qualify the demanding case for smooth 60 Hz playback.
+These are ScreenCaptureKit observations, not physical scanout measurements.
+
+A separate twenty-second control capture exercised pause, single-step, panel
+hide/show, resize from 100×32 to 120×36 and resume with trails, depth, four hawks
+and three flocks. All 1,424 samples retained the scene without a nearly blank or
+bright-background frame. Intentional paused intervals are not cadence evidence.
+The screenshots show zero ongoing panel statistics while paused and restored
+statistics after resuming.
+
+Two foreground CPU pairs in forward/reverse order compared the working
+alternating-image renderer with pixel runs alone against the final repeated-span
+encoder. Both used seed 42, 100×32 cells / 1400×1088 pixels, a three-second warm-up
+and a twenty-second interval. No capture, profiler, build or test ran during
+the intervals. Median CPU rates were:
+
+| Process | Pixel runs, CPU ms/s | Runs plus repeated spans, CPU ms/s |
+| --- | ---: | ---: |
+| rbirds | 354.15 | 401.14 |
+| iTerm main process | 1105.62 | 889.44 |
+| Selected image decoder helper | 0.00 | 0.00 |
+| Combined | 1459.77 | 1290.57 |
+
+Combined CPU fell about 12%, with both pairs improving. This compares two working
+composed-image candidates; it is not a saving over the original blank atlas
+path. An earlier explicit-ID sprite diagnostic used about 1092 CPU ms/s but
+had previously measured only 2.53 visible changes/s. Its lower CPU is not an
+acceptable playback result. iTerm was shared with existing sessions; compositor
+and GPU work remain outside these counters.
+
+Static screenshots covered overlapping birds, trails, hawks, far/near layers,
+the panel and window transparency. Individual full-image sprites with explicit
+z ordering were the display reference: iTerm's cropped-atlas path selected
+incorrect rotations in this probe. Local composition is not pixel-identical to
+iTerm blending separate textures. Most differing channels changed by one or
+two levels; the opaque comparison's maximum channel difference was 11, while
+the transparent comparison reached 62 around text/overlap edges. Color conversion,
+blending and capture contributions have not been isolated. The lossless transport
+check does not claim equality with iTerm's GPU compositing.
+
+Debug and release test coverage passed after updating the shared Kitty startup
+assertion to require rbirds' new XTVERSION query while retaining the C prefix.
+The initial verification log retains that assertion failure. Resumed runs cover
+the affected PTY suites and every subsequent suite in both profiles; preceding
+suites had passed without a production-code change. Formatting, lint, build,
+C mappings, dependency, linkage and temporary install/uninstall gates passed.
+The new tests include cancellation during a blocked composed-image upload and
+zero allocations after warm-up. The measured executable's hash matches the
+final release build.
+
+The [Kitty frame archive](live-iterm-kitty-frame-2026-09-26-macos-arm64.tar.gz)
+retains the failed and corrected captures, CPU intervals, traces, static scene
+streams, comparison scripts, source changes, executable hashes and validation
+logs. No installed executable or terminal preference was replaced.
+
 ## Wider atlas experiment
 
 A follow-up prototype packed sprites into two-dimensional pages, keeping the

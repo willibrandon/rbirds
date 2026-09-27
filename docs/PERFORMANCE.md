@@ -159,12 +159,24 @@ without catch-up bursts or busy waiting. macOS uses a one-shot kernel timer with
 minimal coalescing for frame deadlines. Windows waits on console input, output
 completion and cancellation events, and reuses its bounded transfer buffer.
 Live Kitty groups rotations into cropped texture placements, preserving source
-pixels and stacking order while reducing terminal image lookups. Rendering
-optimizations retain the same pixels, cell output and simulation arithmetic. Bird count, resolution and quality are never reduced automatically.
+pixels and stacking order while reducing terminal image lookups. In iTerm,
+the live Kitty path instead composes sprites into at most two transparent
+surfaces, keeping far birds below the text and near birds above it. Explicit
+image IDs avoid iTerm's image-number addressing failure; the bounded placement
+count avoids its repeated display-list rebuilds. Native pixels are transported
+with lossless RGBA compression. Two sets of image IDs keep the displayed frame
+alive while its replacement uploads; only the placement swap is synchronized.
+Local alpha composition can differ slightly
+from the terminal blending separate textures, as recorded in the
+[Mac evidence](evidence/live-2026-09-26-macos-arm64.md).
+Simulation arithmetic, bird count and resolution are unchanged.
 
 The presentation capture also records the dominant sampled RGB color and its
 fraction of content pixels. Inspect these alongside timing: a full-window
 placeholder or blank flash is a rendering failure even if frames arrive on time.
+A renderer alternating between blank and valid images can even report twice
+its useful update rate. Inspect image content before interpreting changed hashes
+as delivered simulation frames.
 Optional hexadecimal colors after the duration record exact sample counts,
 including colors that occupy too little of the window to be dominant. Each
 frame also records its translucent sample count. For example, append
