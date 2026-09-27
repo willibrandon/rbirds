@@ -814,8 +814,15 @@ pub fn restore_terminal() {
         return;
     }
     let drained = active_writer().is_none_or(Writer::stop);
-    if SIXEL_MODE.swap(0, Ordering::AcqRel) == 2 && drained {
-        write_all_quietly(1, b"\x1b[?80l");
+    let sixel_mode = SIXEL_MODE.swap(0, Ordering::AcqRel);
+    if drained {
+        // Cancel a partial sequence before restoring DECSDM, including a
+        // cursor-positioned crop interrupted while the mode was reset.
+        match sixel_mode {
+            1 => write_all_quietly(1, b"\x18\x1b\x18\x1b[?80h"),
+            2 => write_all_quietly(1, b"\x18\x1b\x18\x1b[?80l"),
+            _ => {}
+        }
     }
     if ALT.load(Ordering::Acquire) && drained {
         if SPRITES.load(Ordering::Acquire) {

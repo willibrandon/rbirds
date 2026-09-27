@@ -3,6 +3,8 @@
 [Live CPU and presentation measurements on macOS](live-2026-09-26-macos-arm64.md)
 cover the live-efficiency branch, including the iTerm Sixel flash, its workaround,
 and the limits exposed by visible-window measurements.
+The [Sixel placement correction](live-sixel-position-2026-09-27-macos-arm64.md)
+supersedes the early crop qualification and records checks through real startup.
 
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.

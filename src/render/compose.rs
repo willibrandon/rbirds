@@ -653,6 +653,10 @@ impl Renderer {
             )?;
             graphics.write_raw(b"\x1b[0m")?;
             if crop.2 > crop.0 && crop.3 > crop.1 {
+                // DECSDM anchors iTerm images at the screen origin. Reset it
+                // for this cell-aligned crop, which fits inside the viewport
+                // without scrolling, then restore it before the next frame.
+                graphics.write_raw(b"\x1b[?80l")?;
                 graphics.write_text(crop.1, crop.0, b"")?;
                 graphics.write_raw(self.sixel.encode_region(
                     &self.canvas,
@@ -661,6 +665,7 @@ impl Renderer {
                     ((crop.2 - crop.0) * cw) as usize,
                     ((crop.3 - crop.1) * ch) as usize,
                 )?)?;
+                graphics.write_raw(b"\x1b[?80h")?;
             }
         } else {
             self.sixel.queue(graphics, &self.canvas)?;

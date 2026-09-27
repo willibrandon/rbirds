@@ -202,6 +202,14 @@ coalesced. These samples are evidence about visible-window delivery, not physica
 display scanout. `target/presentation-capture --self-test` checks pixel comparison
 without screen-recording access; both macOS CI jobs run it.
 
+Qualify image correctness before comparing CPU or cadence. Static probes must
+use the application's terminal negotiation, and protocol decoders must model
+the modes that startup establishes. Compare complete viewport pixels, including
+nonzero image positions, clipping, empty scenes, panels and resize. Background
+color counters can miss misplaced or missing birds, as the
+[iTerm Sixel placement investigation](evidence/live-sixel-position-2026-09-27-macos-arm64.md)
+demonstrates. Retain failed qualifications and exclude their performance claims.
+
 The live scheduler follows monotonic deadlines and rebases after an overrun,
 without catch-up bursts or busy waiting. macOS uses a one-shot kernel timer with
 minimal coalescing for frame deadlines. Windows waits on console input, output

@@ -146,6 +146,7 @@ fn query_until(
 pub struct SixelTerminal {
     pub cell_size: (u16, u16),
     pub erase_before_frame: bool,
+    pub can_position_images: bool,
 }
 
 /// Only probe when Sixel is explicitly requested. The ordinary renderer's
@@ -178,8 +179,11 @@ pub fn prepare_sixel() -> io::Result<SixelTerminal> {
     let mode = query_until(b"\x1b[?80$p", 128, 100, |reply| reply.contains(&b'y'));
     let was_enabled = mode.windows(9).any(|s| s == b"\x1b[?80;1$y")
         || mode.windows(9).any(|s| s == b"\x1b[?80;3$y");
+    // A crop needs cursor-relative placement. Only changeable DECSDM states
+    // confirm that resetting the mode can move an image away from the origin.
+    let can_position_images = mode.windows(9).any(|s| s == b"\x1b[?80;1$y" || s == b"\x1b[?80;2$y");
     platform::enable_sixel_mode(was_enabled);
-    Ok(SixelTerminal { cell_size: cell, erase_before_frame })
+    Ok(SixelTerminal { cell_size: cell, erase_before_frame, can_position_images })
 }
 
 pub fn query_is_iterm2() -> bool {

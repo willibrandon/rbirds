@@ -45,6 +45,11 @@ scene; these lifetime values are separate from the equal-interval CPU rates.
 
 ## Visible observations
 
+The Sixel row below predates the
+[DECSDM placement correction](live-sixel-position-2026-09-27-macos-arm64.md).
+It records timing and background colors with misplaced cropped images, so it
+does not qualify correct Sixel playback. The Kitty CPU comparison is unaffected.
+
 Separate ten-second captures used the candidate executable and the preceding
 sampled-hash capture tool. All four screenshots were inspected. No capture
 contained a nearly blank or bright-background sample by the retained analyzer's

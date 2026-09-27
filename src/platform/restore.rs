@@ -235,8 +235,13 @@ pub fn restore_terminal() {
         return;
     }
     TERMINAL_RESTORED.store(true, Ordering::SeqCst);
-    if SIXEL_MODE.swap(0, Ordering::SeqCst) == 2 {
-        write_all_quietly(STDOUT_FILENO, b"\x1b[?80l");
+    match SIXEL_MODE.swap(0, Ordering::SeqCst) {
+        // Cancel a partially written control sequence first. CAN aborts
+        // standard parsers; ESC CAN also unhooks iTerm's Sixel parser, which
+        // accumulates a lone CAN. A crop may have temporarily reset DECSDM.
+        1 => write_all_quietly(STDOUT_FILENO, b"\x18\x1b\x18\x1b[?80h"),
+        2 => write_all_quietly(STDOUT_FILENO, b"\x18\x1b\x18\x1b[?80l"),
+        _ => {}
     }
     if TERMINAL_IS_RAW.load(Ordering::Acquire) {
         let saved = SAVED_TERMIOS.load();

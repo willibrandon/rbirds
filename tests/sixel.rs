@@ -86,6 +86,9 @@ fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize)
     let (mut at, mut row, mut col) = (0, 0, 0);
     let mut foreground = None;
     let mut opaque_backdrop = false;
+    // prepare_sixel enables DECSDM. iTerm then anchors images at the screen
+    // origin, ignoring CUP until the renderer resets that mode for a crop.
+    let mut display_mode = true;
     while at < bytes.len() {
         if bytes[at..].starts_with(b"\x1bP") {
             if opaque_backdrop {
@@ -96,9 +99,11 @@ fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize)
             }
             let end = at + bytes[at..].windows(2).position(|s| s == b"\x1b\\").unwrap() + 2;
             let (w, h, raster) = decode(&bytes[at..end]);
+            let (image_row, image_col) = if display_mode { (0, 0) } else { (row, col) };
             for y in 0..h {
                 for x in 0..w {
-                    pixels[(row * ch + y) * width + col * cw + x] = Some(raster[y * w + x]);
+                    pixels[(image_row * ch + y) * width + image_col * cw + x] =
+                        Some(raster[y * w + x]);
                 }
             }
             at = end;
@@ -114,6 +119,10 @@ fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize)
             let parameters = &bytes[start..end];
             at = end + 1;
             if parameters.starts_with(b"?") {
+                if parameters == b"?80" {
+                    assert!(matches!(bytes[end], b'h' | b'l'));
+                    display_mode = bytes[end] == b'h';
+                }
                 continue;
             }
             let values: Vec<usize> = if parameters.is_empty() {
@@ -156,6 +165,7 @@ fn decode_frame(bytes: &[u8], width: usize, height: usize, cw: usize, ch: usize)
             col += 1;
         }
     }
+    assert!(display_mode, "restore DECSDM after cursor-positioned images");
     pixels.into_iter().map(|p| p.expect("every pixel must remain opaque")).collect()
 }
 
@@ -207,7 +217,16 @@ fn cropped_frames_match_full_rasters_through_clipping_trails_hawks_and_resize() 
                 sim.screen.cell_width as usize,
                 sim.screen.cell_height as usize,
             );
-            assert_eq!(actual, expected, "{cols}x{rows}, {width}x{height}, {x},{y}");
+            assert_eq!(actual.len(), expected.len());
+            if let Some(at) = actual.iter().zip(&expected).position(|(a, e)| a != e) {
+                panic!(
+                    "{cols}x{rows}, {width}x{height}, bird {x},{y}: pixel {},{}: {:?} != {:?}",
+                    at % width as usize,
+                    at / width as usize,
+                    actual[at],
+                    expected[at]
+                );
+            }
         }
     }
 }

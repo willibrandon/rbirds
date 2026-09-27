@@ -482,6 +482,17 @@ the accepted source or the current release executable.
 
 ## Cropped Sixel frames in iTerm
 
+Correction, September 27: the crop-placement qualification and performance
+claims in this section are superseded by the
+[DECSDM investigation](live-sixel-position-2026-09-27-macos-arm64.md).
+Production startup enabled Sixel display mode, making iTerm anchor crops at
+the screen origin. The static launcher disabled that mode and the independent
+decoder ignored it, so neither caught the misplaced birds. The retained CPU
+and timing observations describe that incorrect placement and cannot qualify
+the final crop path. Background-color checks alone also missed the defect.
+The earlier full-raster yellow-placeholder reproduction and synchronized-erase
+fix remain separate, valid observations.
+
 The full-window Sixel raster made iTerm decode, convert and upload empty sky
 along with the birds. The renderer now tracks the conservative bounds of all
 visible sprites, including trails and hawks, and encodes that rectangle
