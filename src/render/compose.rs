@@ -86,15 +86,18 @@ pub fn bird_placement(sim: &Sim, bird: &Bird) -> Option<Placement> {
 /// `blend_sprite`: `mix` blends edges, which a picture wants; without it the
 /// more opaque pixel takes the place, which a text terminal wants.
 pub fn blend_sprite(canvas: &mut Image, sprite: &Image, at_x: i32, at_y: i32, mix: bool) {
-    blend_rows(canvas, sprite, at_x, at_y, mix, None);
+    if mix {
+        blend_rows::<true, false>(canvas, sprite, at_x, at_y, None);
+    } else {
+        blend_rows::<false, false>(canvas, sprite, at_x, at_y, None);
+    }
 }
 
-fn blend_rows(
+fn blend_rows<const MIX: bool, const OPAQUE: bool>(
     canvas: &mut Image,
     sprite: &Image,
     at_x: i32,
     at_y: i32,
-    mix: bool,
     rows: Option<&[(i32, i32)]>,
 ) {
     // Clip once, then walk contiguous rows. Most sprites have transparent
@@ -120,14 +123,17 @@ fn blend_rows(
         let source = sprite.pixels[from..from + length].chunks_exact(4);
         let destination = canvas.pixels[to..to + length].chunks_exact_mut(4);
         for (src, dst) in source.zip(destination) {
-            let alpha = u32::from(src[3]);
-            if alpha == 0 {
+            if !MIX {
+                // Select the complete pixel so the compiler can vectorize the
+                // maximum-alpha operation without conditional byte stores.
+                let src = u32::from_le_bytes(src.try_into().unwrap());
+                let old = u32::from_le_bytes(dst[..].try_into().unwrap());
+                let pixel = if src >> 24 > old >> 24 { src } else { old };
+                dst.copy_from_slice(&pixel.to_le_bytes());
                 continue;
             }
-            if !mix {
-                if alpha > u32::from(dst[3]) {
-                    dst.copy_from_slice(src);
-                }
+            let alpha = u32::from(src[3]);
+            if alpha == 0 {
                 continue;
             }
             if alpha == 255 {
@@ -136,8 +142,10 @@ fn blend_rows(
             }
             // Straight alpha over: the colour underneath counts only for as
             // much of it as is there.
-            let under = u32::from(dst[3]) * (255 - alpha) / 255;
-            let out_alpha = alpha + under;
+            // A filled background stays opaque after every blend. The general
+            // formula then has a constant divisor, with the same truncation.
+            let under = if OPAQUE { 255 - alpha } else { u32::from(dst[3]) * (255 - alpha) / 255 };
+            let out_alpha = if OPAQUE { 255 } else { alpha + under };
             for c in 0..3 {
                 dst[c] =
                     ((u32::from(src[c]) * alpha + u32::from(dst[c]) * under) / out_alpha) as u8;
@@ -184,7 +192,7 @@ fn compose_with_coverage(
     mut occupied: Option<&mut [bool]>,
     sprite_rows: &[SpriteRows],
 ) {
-    let mut blend = |canvas: &mut Image, index: usize, x: i32, y: i32, mix: bool| {
+    let mut blend = |canvas: &mut Image, index: usize, x: i32, y: i32| {
         let sprite = &frames[index];
         if let Some(cells) = &mut occupied {
             let bounds = sprite_rows
@@ -210,14 +218,12 @@ fn compose_with_coverage(
                 }
             }
         }
-        blend_rows(
-            canvas,
-            sprite,
-            x,
-            y,
-            mix,
-            sprite_rows.get(index).map(|rows| rows.rows.as_slice()),
-        );
+        let rows = sprite_rows.get(index).map(|rows| rows.rows.as_slice());
+        if with_ground {
+            blend_rows::<true, true>(canvas, sprite, x, y, rows);
+        } else {
+            blend_rows::<false, false>(canvas, sprite, x, y, rows);
+        }
     };
     let shades = sim.palette_shades();
     if with_ground {
@@ -238,13 +244,7 @@ fn compose_with_coverage(
                         + bird.frame % ROTATION_FRAMES) as usize;
                     let sprite = &frames[index];
                     if !sprite.is_empty() {
-                        blend(
-                            canvas,
-                            index,
-                            bird.trail_x[age] as i32,
-                            bird.trail_y[age] as i32,
-                            with_ground,
-                        );
+                        blend(canvas, index, bird.trail_x[age] as i32, bird.trail_y[age] as i32);
                     }
                 }
             }
@@ -263,7 +263,7 @@ fn compose_with_coverage(
             if sprite.is_empty() {
                 continue;
             }
-            blend(canvas, index, bird.x as i32, bird.y as i32, with_ground);
+            blend(canvas, index, bird.x as i32, bird.y as i32);
         }
     }
     let offset = sim.hawk_draw_offset();
@@ -274,7 +274,7 @@ fn compose_with_coverage(
         if sprite.is_empty() {
             continue;
         }
-        blend(canvas, index, hawk.x as i32 - offset, hawk.y as i32 - offset, with_ground);
+        blend(canvas, index, hawk.x as i32 - offset, hawk.y as i32 - offset);
     }
 }
 
@@ -521,6 +521,25 @@ mod row_tests {
     use super::*;
 
     #[test]
+    fn opaque_rows_match_general_blending_for_every_alpha_and_overlapping_edges() {
+        let mut sprite = Image::alloc(256, 3).unwrap();
+        for (i, pixel) in sprite.pixels.chunks_exact_mut(4).enumerate() {
+            pixel.copy_from_slice(&[(i * 17) as u8, (i * 31) as u8, (i * 43) as u8, i as u8]);
+        }
+        let rows = SpriteRows::new(&sprite).unwrap();
+        let mut reference = Image::alloc(260, 5).unwrap();
+        for (i, pixel) in reference.pixels.chunks_exact_mut(4).enumerate() {
+            pixel.copy_from_slice(&[i as u8, (i * 7) as u8, (i * 11) as u8, 255]);
+        }
+        let mut opaque = reference.clone();
+        for (x, y) in [(-257, -1), (-128, 0), (-1, 1), (0, 0), (1, 2), (128, 3), (255, 4)] {
+            blend_sprite(&mut reference, &sprite, x, y, true);
+            blend_rows::<true, true>(&mut opaque, &sprite, x, y, Some(&rows.rows));
+            assert_eq!(opaque.pixels, reference.pixels, "{x}, {y}");
+        }
+    }
+
+    #[test]
     fn cached_rows_preserve_blending_and_clipping_including_transparent_rgb() {
         let mut sprite = Image::alloc(23, 19).unwrap();
         for (i, pixel) in sprite.pixels.chunks_exact_mut(4).enumerate() {
@@ -544,7 +563,11 @@ mod row_tests {
                     }
                     let mut cached = reference.clone();
                     blend_sprite(&mut reference, &sprite, x, y, mix);
-                    blend_rows(&mut cached, &sprite, x, y, mix, Some(&rows.rows));
+                    if mix {
+                        blend_rows::<true, false>(&mut cached, &sprite, x, y, Some(&rows.rows));
+                    } else {
+                        blend_rows::<false, false>(&mut cached, &sprite, x, y, Some(&rows.rows));
+                    }
                     assert_eq!(cached.pixels, reference.pixels, "{x}, {y}, mix={mix}");
                 }
             }

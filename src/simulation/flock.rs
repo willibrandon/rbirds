@@ -280,8 +280,9 @@ impl Sim {
                 if distance < 1e-9 {
                     // Exactly on top of one another: one direction per flock.
                     let angle = 2.0 * PI * f as f64 / f64::from(self.config.flocks);
-                    dx = fp::cos(angle);
-                    dy = fp::sin(angle);
+                    let (sine, cosine) = fp::sin_cos(angle);
+                    dx = cosine;
+                    dy = sine;
                     distance = 1.0;
                 }
                 shove_x += (room - distance) * dx / distance;
@@ -514,8 +515,9 @@ impl Sim {
         // fma: boids.c:2129:39
         by = mul_add(wind.y, WIND_WEIGHT, by);
         if bx != 0.0 || by != 0.0 {
-            let x = fp::cos(target.direction) + bx;
-            let y = fp::sin(target.direction) + by;
+            let (sine, cosine) = fp::sin_cos(target.direction);
+            let x = cosine + bx;
+            let y = sine + by;
             if x != 0.0 || y != 0.0 {
                 return normalized_angle(y, x);
             }
@@ -526,6 +528,10 @@ impl Sim {
     /// `shade_for`: one flock by heading, folded at the half turn; more than
     /// one by flock.
     pub fn shade_for(&self, bird: &Bird) -> i32 {
+        self.shade_with_heading(bird, None)
+    }
+
+    fn shade_with_heading(&self, bird: &Bird, heading: Option<(f64, f64)>) -> i32 {
         let shades = self.palette_shades();
         if shades <= 1 {
             return 0;
@@ -533,7 +539,8 @@ impl Sim {
         if self.config.flocks > 1 {
             return self.shade_for_flock(bird.flock);
         }
-        let turns = normalized_angle(fp::sin(bird.direction), fp::cos(bird.direction)) / (2.0 * PI);
+        let (sine, cosine) = heading.unwrap_or_else(|| fp::sin_cos(bird.direction));
+        let turns = normalized_angle(sine, cosine) / (2.0 * PI);
         let folded = if turns < 0.5 { turns * 2.0 } else { (1.0 - turns) * 2.0 };
         let shade = (folded * f64::from(shades)) as i32;
         if shade >= shades { shades - 1 } else { shade }
@@ -614,14 +621,17 @@ impl Sim {
                     step = remaining;
                 }
             }
+            // The platform routine returns both values. Reuse that exact pair
+            // for movement and shade instead of calculating it four times.
+            let (sine, cosine) = fp::sin_cos(direction);
             // fma: boids.c:2223:20
-            bird.x = mul_add(step, fp::cos(direction), bird.x);
+            bird.x = mul_add(step, cosine, bird.x);
             // fma: boids.c:2224:20
-            bird.y = mul_add(step, fp::sin(direction), bird.y);
+            bird.y = mul_add(step, sine, bird.y);
             if self.rain {
                 self.wrap_position(bird);
             }
-            bird.shade = self.shade_for(bird);
+            bird.shade = self.shade_with_heading(bird, Some((sine, cosine)));
             self.beat_wings(bird);
             if self.config.trails && i as i32 % TRAIL_EVERY == 0 {
                 // Where it was, not where it is: a tail behind, never under.

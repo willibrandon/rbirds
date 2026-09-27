@@ -152,6 +152,55 @@ A further eighteen-second capture exercised panel toggles, a resize from
 samples had the yellow placeholder as the dominant color. Resize-transition
 samples are retained and are not counted as steady-state timing evidence.
 
+## Incremental construction improvements
+
+A follow-up specializes the sprite blend loops and reuses paired sine/cosine
+results. Text composition selects whole pixels by alpha; picture composition
+uses the fact that a filled background remains opaque. The simulation reuses
+the platform's existing paired result without approximating angles or changing
+arithmetic order. C-oracle, raster and allocation checks cover these paths.
+
+The deterministic construction comparison used seed 42, two warmups and four
+alternating samples per executable. The blend comparison used 300 frames per
+sample; the trigonometry comparison used 1500. Every before/after pair had the
+same reported output bytes per frame.
+
+| Change | Renderer | Median construction ms/frame, before → after |
+| --- | --- | ---: |
+| Blend loops | Braille | 1.396 → 1.179 |
+| Blend loops | Sextants | 1.398 → 1.172 |
+| Blend loops | Blocks | 1.343 → 1.113 |
+| Blend loops | Sixel | 1.904 → 1.881 |
+| Paired trigonometry, after blend changes | Kitty | 0.336 → 0.328 |
+| Paired trigonometry, after blend changes | Kitty with trails, depth, four hawks, three flocks and speed 12 | 1.078 → 1.041 |
+
+The text construction improvement is about 16–17%. Paired trigonometry saves
+about 2.5–3.4% in the Kitty construction samples; its Braille and Sixel differences
+are too small to establish a saving. These are headless measurements, not total
+CPU rates for visible sessions.
+
+A separate foreground comparison measured the blend changes with the same
+Kitty geometry and thirty-second CPU intervals described above. It ran original,
+pre-blend and post-blend builds, then reversed the order, without screen capture
+or concurrent builds/tests. Default application CPU fell from 233.9 to 222.7
+ms/s; terminal CPU rose from 95.3 to 120.3, taking combined CPU from 329.2 to
+343.0 ms/s. Original-build combined CPU was 307.7 ms/s in this series. In-memory
+stage traces show mean composition time falling from about 1.42 to 1.02 ms,
+while other stages and terminal CPU varied. Two runs per build do not establish
+why the terminal total increased. A shared seed does not make live frame states
+identical: simulation steps follow elapsed time. The total-CPU objective remains
+unmet, despite the narrower construction and application savings.
+
+Separate presentation captures of the final follow-up build measured 59.90
+changed samples/s for default text and 58.92 for Kitty graphics over twelve
+seconds. Their p99 intervals were 27.28 and 28.73 ms, and maximum intervals were
+38.69 and 35.60 ms. No interval exceeded 50 ms. Capture CPU was 0.73 and 0.77
+seconds and is excluded from CPU comparisons. A further eighteen-second iTerm
+Sixel capture had no mostly-yellow samples among 1,637 samples; presentation
+averaged 47.76 changed samples/s, with p99 34.97 ms and maximum 45.00 ms.
+The [follow-up archive](live-kernels-2026-09-26-macos-arm64.tar.gz) contains the
+raw observations, launch scripts, source diff and executable hashes.
+
 ## Quality and demanding settings
 
 Kitty's own decoder compared original uploads with packed textures at sprite

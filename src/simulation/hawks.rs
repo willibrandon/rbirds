@@ -92,8 +92,9 @@ impl Sim {
         let target = &birds[bird as usize];
         let mut dx = target.x - hawk.x;
         let mut dy = target.y - hawk.y;
+        let (sine, cosine) = fp::sin_cos(hawk.direction);
         // fma: boids.c:1441:46
-        let mut along = mul_add(dx, fp::cos(hawk.direction), dy * fp::sin(hawk.direction));
+        let mut along = mul_add(dx, cosine, dy * sine);
         if along < 0.0 {
             along = 0.0;
         }
@@ -101,9 +102,9 @@ impl Sim {
             along = step;
         }
         // fma: boids.c:1444:29
-        let near_x = mul_add(along, fp::cos(hawk.direction), hawk.x);
+        let near_x = mul_add(along, cosine, hawk.x);
         // fma: boids.c:1445:29
-        let near_y = mul_add(along, fp::sin(hawk.direction), hawk.y);
+        let near_y = mul_add(along, sine, hawk.y);
         dx = target.x - near_x;
         dy = target.y - near_y;
         // fma: boids.c:1448:25
@@ -310,10 +311,11 @@ impl Sim {
                 if lead > HAWK_LEAD_DISTANCE {
                     lead = HAWK_LEAD_DISTANCE;
                 }
+                let (sine, cosine) = fp::sin_cos(prey.direction);
                 // fma: boids.c:1647:35
-                let to_x = mul_add(fp::cos(prey.direction), lead, prey.x) - hawk.x;
+                let to_x = mul_add(cosine, lead, prey.x) - hawk.x;
                 // fma: boids.c:1648:35
-                let to_y = mul_add(fp::sin(prey.direction), lead, prey.y) - hawk.y;
+                let to_y = mul_add(sine, lead, prey.y) - hawk.y;
                 // fma: boids.c:1649:45
                 let reach = mul_add(to_x, to_x, to_y * to_y).sqrt();
                 if reach > 1e-9 {
@@ -334,10 +336,11 @@ impl Sim {
             let width = self.screen.width;
             let height = self.screen.height;
             let hawk = &mut self.hawks[i];
+            let (sine, cosine) = fp::sin_cos(hawk.direction);
             // fma: boids.c:1659:17
-            hawk.x = mul_add(speed * pace, fp::cos(hawk.direction), hawk.x);
+            hawk.x = mul_add(speed * pace, cosine, hawk.x);
             // fma: boids.c:1660:17
-            hawk.y = mul_add(speed * pace, fp::sin(hawk.direction), hawk.y);
+            hawk.y = mul_add(speed * pace, sine, hawk.y);
 
             // Turned back at the walls, half its silhouette in.
             let mut last_x = f64::from(width - 1) - margin;
@@ -350,16 +353,16 @@ impl Sim {
             }
             if hawk.x < margin || hawk.x > last_x {
                 hawk.x = if hawk.x < margin { margin } else { last_x };
-                hawk.direction =
-                    normalized_angle(fp::sin(hawk.direction), -fp::cos(hawk.direction));
+                let (sine, cosine) = fp::sin_cos(hawk.direction);
+                hawk.direction = normalized_angle(sine, -cosine);
                 hawk.prey = -1;
                 hawk.commitment = 0.0;
                 hawk.passing = 0.0;
             }
             if hawk.y < margin || hawk.y > last_y {
                 hawk.y = if hawk.y < margin { margin } else { last_y };
-                hawk.direction =
-                    normalized_angle(-fp::sin(hawk.direction), fp::cos(hawk.direction));
+                let (sine, cosine) = fp::sin_cos(hawk.direction);
+                hawk.direction = normalized_angle(-sine, cosine);
                 hawk.prey = -1;
                 hawk.commitment = 0.0;
                 hawk.passing = 0.0;
@@ -402,8 +405,9 @@ impl Sim {
             let away_y = dy / distance;
             let mut side_x = -away_y;
             let mut side_y = away_x;
+            let (sine, cosine) = fp::sin_cos(bird.direction);
             // fma: boids.c:1718:43
-            if mul_add(fp::cos(bird.direction), side_x, fp::sin(bird.direction) * side_y) < 0.0 {
+            if mul_add(cosine, side_x, sine * side_y) < 0.0 {
                 side_x = -side_x;
                 side_y = -side_y;
             }
