@@ -107,6 +107,8 @@ Keep the default live renderer braille regardless of terminal name. Kitty sprite
 
 Use `--render sixel` for Sixel on any supported OS. Startup checks terminal support
 and asks for the graphics cell size. Windows Terminal needs version 1.22 or newer.
+On Unix, exact native pixel dimensions provide a fallback when that query is
+unimplemented, as in iTerm2. Explicit cell-size replies remain preferred.
 Each frame repaints its background using a 256-color palette. Snapshots and GIFs
 keep full color; casts use braille. See [WINDOWS.md](WINDOWS.md#sixel-output).
 

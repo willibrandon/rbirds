@@ -306,10 +306,10 @@ fn run_live(
         sim.config.palette = crate::palette::fallback_palette();
     }
     let sixel_cell = if sim.render_mode == RenderMode::Sixel {
-        Some(
-            terminal::prepare_sixel()
-                .map_err(|error| fail(format!("Cannot enable Sixel: {error}\n").as_bytes()))?,
-        )
+        let options = terminal::prepare_sixel()
+            .map_err(|error| fail(format!("Cannot enable Sixel: {error}\n").as_bytes()))?;
+        renderer.erase_sixel_before_frame = options.erase_before_frame;
+        Some(options.cell_size)
     } else {
         None
     };

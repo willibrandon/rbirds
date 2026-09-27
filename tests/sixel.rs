@@ -3,7 +3,9 @@
 use rbirds::image::Image;
 use rbirds::render::kitty::{KittyError, KittyGraphics};
 use rbirds::render::sixel::Sixel;
-use rbirds::terminal::{graphics_window, has_sixel, parse_cell_size};
+use rbirds::terminal::{
+    cell_size_from_window, graphics_window, has_sixel, is_iterm2, parse_cell_size,
+};
 
 fn number(bytes: &[u8], at: &mut usize) -> usize {
     let start = *at;
@@ -127,42 +129,50 @@ fn malformed_images_are_rejected_without_queuing_a_partial_frame() {
 fn frame_queue_composes_birds_repaints_after_panel_removal_and_resizes() {
     use rbirds::render::Renderer;
     use rbirds::simulation::{Bird, RenderMode, Sim};
-    let mut sim = Sim::new();
-    sim.render_mode = RenderMode::Sixel;
-    sim.config.birds = 1;
-    sim.config.palette = 1;
-    sim.legend_enabled = true;
-    sim.settle_the_bird_size();
-    sim.apply_screen_size(80, 24, 800, 480);
-    let mut renderer = Renderer::default();
-    // A one-pixel red sprite makes the composition's expected raster exact,
-    // independent of orientation/wing catalogue indexing and rasterization.
-    for sprite in &mut renderer.sprites {
-        *sprite = Image { width: 1, height: 1, pixels: vec![255, 0, 0, 255] };
-    }
-    let mut bird = Bird { x: 700.0, y: 460.0, ..Bird::default() };
-    let mut output = KittyGraphics::new(1).unwrap();
-    for step in 0..3 {
-        if step == 1 {
-            sim.legend_enabled = false;
-            sim.apply_screen_size(80, 24, 800, 480);
-            bird.x = 3.0;
-            bird.y = 4.0;
-        } else if step == 2 {
-            sim.apply_screen_size(40, 14, 400, 280);
+    for erase in [false, true] {
+        let mut sim = Sim::new();
+        sim.render_mode = RenderMode::Sixel;
+        sim.config.birds = 1;
+        sim.config.palette = 1;
+        sim.legend_enabled = true;
+        sim.settle_the_bird_size();
+        sim.apply_screen_size(80, 24, 800, 480);
+        let mut renderer = Renderer::default();
+        renderer.erase_sixel_before_frame = erase;
+        // A one-pixel red sprite makes the composition's expected raster exact,
+        // independent of orientation/wing catalogue indexing and rasterization.
+        for sprite in &mut renderer.sprites {
+            *sprite = Image { width: 1, height: 1, pixels: vec![255, 0, 0, 255] };
         }
-        output.clear();
-        renderer.queue_render_frame(&mut output, &sim, &[bird]).unwrap();
-        let bytes = output.buffer();
-        assert!(bytes.starts_with(b"\x1b[?2026h\x1b[2J\x1b[H"));
-        assert!(bytes.ends_with(b"\x1b[?2026l"));
-        let start = bytes.windows(2).position(|s| s == b"\x1bP").unwrap();
-        let end = start + bytes[start..].windows(2).position(|s| s == b"\x1b\\").unwrap() + 2;
-        let (width, height) = (sim.screen.width as usize, sim.screen.height as usize);
-        let mut expected = vec![[18, 18, 23]; width * height];
-        expected[bird.y as usize * width + bird.x as usize] = [255, 0, 0];
-        assert_eq!(decode(&bytes[start..end]), (width, height, expected));
-        assert_eq!(renderer.legend_drawn, step == 0);
+        let mut bird = Bird { x: 700.0, y: 460.0, ..Bird::default() };
+        let mut output = KittyGraphics::new(1).unwrap();
+        for step in 0..4 {
+            if step == 2 {
+                sim.legend_enabled = false;
+                sim.apply_screen_size(80, 24, 800, 480);
+                bird.x = 3.0;
+                bird.y = 4.0;
+            } else if step == 3 {
+                sim.apply_screen_size(40, 14, 400, 280);
+            }
+            output.clear();
+            renderer.queue_render_frame(&mut output, &sim, &[bird]).unwrap();
+            let bytes = output.buffer();
+            let prefix = if erase || step != 1 {
+                &b"\x1b[?2026h\x1b[2J\x1b[H"[..]
+            } else {
+                &b"\x1b[?2026h\x1b[H"[..]
+            };
+            assert!(bytes.starts_with(prefix));
+            assert!(bytes.ends_with(b"\x1b[?2026l"));
+            let start = bytes.windows(2).position(|s| s == b"\x1bP").unwrap();
+            let end = start + bytes[start..].windows(2).position(|s| s == b"\x1b\\").unwrap() + 2;
+            let (width, height) = (sim.screen.width as usize, sim.screen.height as usize);
+            let mut expected = vec![[18, 18, 23]; width * height];
+            expected[bird.y as usize * width + bird.x as usize] = [255, 0, 0];
+            assert_eq!(decode(&bytes[start..end]), (width, height, expected));
+            assert_eq!(renderer.legend_drawn, step < 2);
+        }
     }
 }
 
@@ -187,6 +197,19 @@ fn terminal_capabilities_and_virtual_cell_sizes_are_parsed_precisely() {
     assert_eq!(graphics_window(size, None), size);
     let virtual_size = graphics_window(size, Some((10, 20)));
     assert_eq!((virtual_size.xpixel, virtual_size.ypixel), (800, 480));
+    assert_eq!(cell_size_from_window(size), None);
+    let exact = rbirds::platform::WinSize { row: 32, col: 100, xpixel: 1400, ypixel: 1088 };
+    assert_eq!(cell_size_from_window(exact), Some((14, 34)));
+    for invalid in [
+        rbirds::platform::WinSize { col: 0, ..exact },
+        rbirds::platform::WinSize { row: 0, ..exact },
+        rbirds::platform::WinSize { xpixel: 0, ..exact },
+        rbirds::platform::WinSize { ypixel: 0, ..exact },
+        rbirds::platform::WinSize { xpixel: 1401, ..exact },
+        rbirds::platform::WinSize { ypixel: 1087, ..exact },
+    ] {
+        assert_eq!(cell_size_from_window(invalid), None);
+    }
 }
 
 #[test]
@@ -198,4 +221,18 @@ fn sixel_is_an_explicit_renderer_and_the_default_stays_braille() {
     assert_eq!(rbirds::app::read_options(&mut program, &argv, &mut stdout), Ok(()));
     assert_eq!(program.sim.render_mode, RenderMode::Sixel);
     assert_eq!(Sim::new().live_render_mode(), RenderMode::Braille);
+}
+
+#[test]
+fn iterm_workaround_requires_its_terminal_version_response() {
+    assert!(is_iterm2(b"\x1bP>|iTerm2 3.6.6\x1b\\"));
+    for reply in [
+        &b""[..],
+        b"\x1bP>|WezTerm 20240203\x1b\\",
+        b"\x1bP>|iTerm2-other 3.6.6\x1b\\",
+        b"\x1bP>|iTerm2 3.6.6",
+        b"iTerm2 3.6.6",
+    ] {
+        assert!(!is_iterm2(reply), "{reply:?}");
+    }
 }

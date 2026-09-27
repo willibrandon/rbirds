@@ -47,6 +47,7 @@ fn unsupported_or_sizeless_sixel_fails_cleanly() {
     ] {
         let outcome = pty::run(
             &spec()
+                .size(rbirds::platform::WinSize { row: 24, col: 80, xpixel: 0, ypixel: 0 })
                 .reply(Reply::whole(b"\x1b[c", capabilities))
                 .reply(Reply::whole(b"\x1b[16t", size_reply)),
         );
@@ -56,4 +57,38 @@ fn unsupported_or_sizeless_sixel_fails_cleanly() {
         assert!(!outcome.contains(b"\x1bP"));
         assert!(!outcome.contains(rbirds::platform::ALT_SCREEN_ON));
     }
+}
+
+#[test]
+fn native_pixel_dimensions_work_when_the_cell_query_is_unimplemented() {
+    let outcome = pty::run(
+        &spec()
+            .reply(Reply::whole(b"\x1b[c", b"\x1b[?64;4c"))
+            .reply(Reply::whole(b"\x1b[?80$p", b"\x1b[?80;2$y")),
+    );
+    assert_eq!(outcome.exit, Some(Exit::Code(0)), "{}", outcome.describe());
+    outcome.assert_attributes_restored();
+    assert!(outcome.contains(b"\"1;1;640;384"));
+    assert!(outcome.transcript.ends_with(rbirds::platform::ALT_SCREEN_OFF));
+}
+
+#[test]
+fn iterm_frames_retire_the_previous_image_inside_each_synchronized_update() {
+    // No environment hint or CSI 16 t response: this also covers a remote shell.
+    let outcome = pty::run(
+        &spec()
+            .reply(Reply::whole(b"\x1b[c", b"\x1b[?64;4c"))
+            .reply(Reply {
+                query: b"\x1b[>q".to_vec(),
+                fragments: vec![b"\x1bP>|iTerm2 ".to_vec(), b"3.6.6\x1b\\".to_vec()],
+                gap: std::time::Duration::from_millis(10),
+            })
+            .reply(Reply::whole(b"\x1b[?80$p", b"\x1b[?80;2$y")),
+    );
+    assert_eq!(outcome.exit, Some(Exit::Code(0)), "{}", outcome.describe());
+    outcome.assert_attributes_restored();
+    let prefix = b"\x1b[?2026h\x1b[2J\x1b[H\x1bP0;1q";
+    assert_eq!(outcome.transcript.windows(prefix.len()).filter(|s| *s == prefix).count(), 2);
+    assert!(outcome.contains(b"\x1b[?80l"));
+    assert!(outcome.transcript.ends_with(rbirds::platform::ALT_SCREEN_OFF));
 }

@@ -432,7 +432,13 @@ impl Renderer {
                 .map_err(|_| KittyError::Memory)?;
         }
         graphics.begin_synchronized_update()?;
-        if resized || self.legend_drawn && sim.screen.legend_width == 0 {
+        // iTerm2 can release an overwritten image while its display still
+        // references it, producing a full-screen brown placeholder. Retire it
+        // explicitly within this synchronized update, before the replacement.
+        if self.erase_sixel_before_frame
+            || resized
+            || self.legend_drawn && sim.screen.legend_width == 0
+        {
             graphics.write_raw(b"\x1b[2J")?;
             self.legend_drawn = false;
         }

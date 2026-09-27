@@ -118,9 +118,16 @@ fn query_until(
     reply
 }
 
+/// Geometry and presentation requirements negotiated with a Sixel terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SixelTerminal {
+    pub cell_size: (u16, u16),
+    pub erase_before_frame: bool,
+}
+
 /// Only probe when Sixel is explicitly requested. The ordinary renderer's
 /// startup traffic remains identical to the reference.
-pub fn prepare_sixel() -> io::Result<(u16, u16)> {
+pub fn prepare_sixel() -> io::Result<SixelTerminal> {
     let capabilities = query_until(b"\x1b[c", 256, 250, Some(b'c'));
     if !has_sixel(&capabilities) {
         return Err(io::Error::new(
@@ -129,17 +136,36 @@ pub fn prepare_sixel() -> io::Result<(u16, u16)> {
         ));
     }
     let reply = query_until(b"\x1b[16t", 128, 250, Some(b't'));
-    let cell = parse_cell_size(&reply).ok_or_else(|| {
+    let cell = parse_cell_size(&reply);
+    // Some Unix terminals (including iTerm2) advertise Sixel and provide
+    // exact pixel dimensions through TIOCGWINSZ, but do not implement CSI 16 t.
+    // Prefer the explicit reply: Windows Terminal can use virtual pixels that
+    // differ from the console font metrics. Never guess from those metrics.
+    #[cfg(unix)]
+    let cell = cell.or_else(|| cell_size_from_window(platform::window_size_or_zero(STDOUT_FILENO)));
+    let cell = cell.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Unsupported,
             "terminal did not report its graphics cell size (CSI 16 t)",
         )
     })?;
+    // Ask the terminal itself, including through SSH, rather than relying on
+    // TERM_PROGRAM from the local shell. Unimplemented XTVERSION is harmless.
+    let version = query_until(b"\x1b[>q", 128, 100, Some(b'\\'));
     let mode = query_until(b"\x1b[?80$p", 128, 100, Some(b'y'));
     let was_enabled = mode.windows(9).any(|s| s == b"\x1b[?80;1$y")
         || mode.windows(9).any(|s| s == b"\x1b[?80;3$y");
     platform::enable_sixel_mode(was_enabled);
-    Ok(cell)
+    Ok(SixelTerminal { cell_size: cell, erase_before_frame: is_iterm2(&version) })
+}
+
+/// XTVERSION: DCS >| terminal-name version ST.
+pub fn is_iterm2(reply: &[u8]) -> bool {
+    const PREFIX: &[u8] = b"\x1bP>|iTerm2 ";
+    reply
+        .windows(PREFIX.len())
+        .position(|s| s == PREFIX)
+        .is_some_and(|start| reply[start + PREFIX.len()..].windows(2).any(|s| s == b"\x1b\\"))
 }
 
 pub fn has_sixel(reply: &[u8]) -> bool {
@@ -164,6 +190,19 @@ pub fn parse_cell_size(reply: &[u8]) -> Option<(u16, u16)> {
     let (height, width) = text.split_once(';')?;
     let (width, height) = (width.parse::<u16>().ok()?, height.parse::<u16>().ok()?);
     (width > 0 && height > 0).then_some((width, height))
+}
+
+/// Accept native pixel dimensions only when they describe whole, nonzero cells.
+pub fn cell_size_from_window(size: platform::WinSize) -> Option<(u16, u16)> {
+    if size.col == 0
+        || size.row == 0
+        || !size.xpixel.is_multiple_of(size.col)
+        || !size.ypixel.is_multiple_of(size.row)
+    {
+        return None;
+    }
+    let cell = (size.xpixel / size.col, size.ypixel / size.row);
+    (cell.0 > 0 && cell.1 > 0).then_some(cell)
 }
 
 pub fn graphics_window(mut size: platform::WinSize, cell: Option<(u16, u16)>) -> platform::WinSize {

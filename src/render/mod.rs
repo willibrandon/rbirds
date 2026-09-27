@@ -34,6 +34,8 @@ pub struct Renderer {
     /// The panel's rows, rebuilt in place each frame.
     pub legend: LegendBuffers,
     pub sixel: sixel::Sixel,
+    /// iTerm2 needs explicit image retirement before replacing a Sixel frame.
+    pub erase_sixel_before_frame: bool,
     pub profile: Option<crate::timing::FrameProfile>,
     /// Text cells touched by this frame's sprite rectangles, including trails.
     pub occupied: Vec<bool>,
@@ -52,6 +54,7 @@ impl Default for Renderer {
             stats: Stats::default(),
             legend: LegendBuffers::default(),
             sixel: sixel::Sixel::default(),
+            erase_sixel_before_frame: false,
             profile: None,
             occupied: Vec::new(),
             atlas: None,

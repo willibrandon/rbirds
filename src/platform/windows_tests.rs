@@ -181,6 +181,7 @@ fn hidden_console_child() {
                         if supported { &b"\x1b[?64;4;22c"[..] } else { &b"\x1b[?64;22c"[..] },
                     ),
                     (&b"\x1b[16t"[..], &b"\x1b[6;20;10t"[..]),
+                    (&b"\x1b[>q"[..], &b"\x1bP>|Windows Terminal\x1b\\"[..]),
                     (&b"\x1b[?80$p"[..], &b"\x1b[?80;2$y"[..]),
                     (&b"\x1b[?80h"[..], &b""[..]),
                 ] {
@@ -203,8 +204,14 @@ fn hidden_console_child() {
             });
             let result = crate::terminal::prepare_sixel();
             if supported {
-                assert_eq!(result.unwrap(), (10, 20));
-                assert_eq!(emulator.join().unwrap(), b"\x1b[c\x1b[16t\x1b[?80$p\x1b[?80h");
+                assert_eq!(
+                    result.unwrap(),
+                    crate::terminal::SixelTerminal {
+                        cell_size: (10, 20),
+                        erase_before_frame: false,
+                    }
+                );
+                assert_eq!(emulator.join().unwrap(), b"\x1b[c\x1b[16t\x1b[>q\x1b[?80$p\x1b[?80h");
             } else {
                 assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
                 assert_eq!(emulator.join().unwrap(), b"\x1b[c");

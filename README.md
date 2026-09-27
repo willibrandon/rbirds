@@ -21,7 +21,7 @@ cargo build --release
 ./target/release/rbirds
 ./target/release/rbirds --hawks 2 --panel
 ./target/release/rbirds --render kitty    # needs Kitty or Ghostty
-./target/release/rbirds --render sixel    # needs Sixel and a cell-size query reply
+./target/release/rbirds --render sixel    # needs a Sixel-capable terminal
 ./target/release/rbirds --record flock.gif --seed 42
 ./target/release/rbirds --help
 ```
