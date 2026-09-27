@@ -401,6 +401,9 @@ at the bottom-right cell. Other unqualified terminal versions keep the complete
 raster. The [WezTerm comparison](evidence/live-wezterm-placement-2026-09-27-macos-arm64.md)
 records lower CPU work per frame and higher visible throughput, alongside a
 small increase in total CPU per second. Playback there still falls short of 60 Hz.
+The subsequent [pacing investigation](evidence/live-wezterm-pacing-2026-09-27-macos-arm64.md)
+found repeated image hashing in the terminal. Frame acknowledgements did not
+provide a consistent CPU and presentation improvement and were not adopted.
 
 Each Sixel band paints a solid background run before its foreground colors.
 This avoids encoding cutouts around birds while preserving the final pixels.
