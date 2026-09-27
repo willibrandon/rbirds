@@ -83,6 +83,7 @@ fn iterm_frames_retire_the_previous_image_inside_each_synchronized_update() {
                 fragments: vec![b"\x1bP>|iTerm2 ".to_vec(), b"3.6.6\x1b\\".to_vec()],
                 gap: std::time::Duration::from_millis(10),
             })
+            .reply(Reply::whole(b"\x1b[6n", b"\x1b[1;2R"))
             .reply(Reply::whole(b"\x1b[?80$p", b"\x1b[?80;2$y")),
     );
     assert_eq!(outcome.exit, Some(Exit::Code(0)), "{}", outcome.describe());
@@ -92,4 +93,23 @@ fn iterm_frames_retire_the_previous_image_inside_each_synchronized_update() {
     assert!(outcome.contains("█".as_bytes()), "paint opaque sky outside the cropped raster");
     assert!(outcome.contains(b"\x1b[?80l"));
     assert!(outcome.transcript.ends_with(rbirds::platform::ALT_SCREEN_OFF));
+}
+
+#[test]
+fn iterm_keeps_full_rasters_for_wide_or_unconfirmed_backdrop_characters() {
+    for reply in [b"".as_slice(), b"\x1b[1;3R", b"\x1b[1;1R", b"invalidR"] {
+        let outcome = pty::run(
+            &spec()
+                .reply(Reply::whole(b"\x1b[c", b"\x1b[?64;4c"))
+                .reply(Reply::whole(b"\x1b[16t", b"\x1b[6;20;10t"))
+                .reply(Reply::whole(b"\x1b[>q", b"\x1bP>|iTerm2 3.6.6\x1b\\"))
+                .reply(Reply::whole(b"\x1b[6n", reply))
+                .reply(Reply::whole(b"\x1b[?80$p", b"\x1b[?80;2$y")),
+        );
+        assert_eq!(outcome.exit, Some(Exit::Code(0)), "{}", outcome.describe());
+        outcome.assert_attributes_restored();
+        let prefix = b"\x1b[?2026h\x1b[2J\x1b[H\x1bP0;1q\"1;1;800;480";
+        assert_eq!(outcome.transcript.windows(prefix.len()).filter(|s| *s == prefix).count(), 2);
+        assert!(outcome.transcript.ends_with(rbirds::platform::ALT_SCREEN_OFF));
+    }
 }

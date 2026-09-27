@@ -488,7 +488,9 @@ visible sprites, including trails and hawks, and encodes that rectangle
 directly from the canvas rows. The crop starts and ends on terminal-cell
 boundaries. An opaque full-block backdrop covers the entire viewport before
 the image is placed, inside the same synchronized update and explicit erase.
-Non-integral cell geometry retains the full raster. Other terminals retain
+Non-integral cell geometry retains the full raster. A startup cursor query
+also requires the block character to occupy exactly one cell; a wide character
+or missing response retains the full raster. Other terminals retain
 their existing path; sprite resolution and simulation arithmetic are unchanged.
 
 Three simpler backdrops failed qualification. Ordinary text background colors
@@ -571,6 +573,24 @@ captures (800 and 924 samples); the profile and its own windows were removed.
 An exploratory native-inline-image backdrop was not qualified: iTerm requested
 permission to display the image. The prompt was declined and the probe stopped.
 No inline-image backdrop or profile-setting changes are part of the renderer.
+
+A double-width-character profile then exposed a separate defect: the block
+backdrop left stripes, with the default-background color covering up to 21.72%
+of sampled pixels. The final build probes the block character's width once in
+the empty alternate screen, with the probe hidden and erased within a
+synchronized update. Only a one-cell cursor advance enables cropping; missing,
+malformed or wide replies retain the full raster and the original flicker fix.
+A normal-profile capture and a wide-profile capture then contained zero sampled
+pixels of that unwanted background color (1,093 and 1,185 samples). They measured
+56.04 and 24.69 changed samples/s respectively, with maximum gaps of 43.68 and
+61.73 ms. The full-raster fallback preserves the image, but carries no claim of
+60 Hz playback. Temporary profiles and test windows were removed.
+
+The [width-check archive](live-sixel-width-2026-09-26-macos-arm64.tar.gz) retains
+the striped failure, corrected captures, profile settings, source patch,
+executable hashes and passing rendering, PTY, allocation and lint checks. The
+CPU pairs above predate this startup guard; no steady-frame work changed for
+the ordinary one-cell profile.
 
 The [Sixel crop archive](live-sixel-crop-2026-09-26-macos-arm64.tar.gz) retains
 all variants, CPU intervals, traces, captures, validation logs and source

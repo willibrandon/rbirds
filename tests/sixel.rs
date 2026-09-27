@@ -174,6 +174,7 @@ fn cropped_frames_match_full_rasters_through_clipping_trails_hawks_and_resize() 
     sim.settle_the_bird_size();
     let mut renderer = Renderer::default();
     renderer.erase_sixel_before_frame = true;
+    renderer.crop_sixel_frames = true;
     renderer.prepare_text_renderer(&mut sim, None, b"rbirds").unwrap();
     let mut output = KittyGraphics::new(1).unwrap();
     let mut reference = Sixel::default();
@@ -272,6 +273,7 @@ fn frame_queue_composes_birds_repaints_after_panel_removal_and_resizes() {
         sim.apply_screen_size(80, 24, 800, 480);
         let mut renderer = Renderer::default();
         renderer.erase_sixel_before_frame = erase;
+        renderer.crop_sixel_frames = erase;
         // A one-pixel red sprite makes the composition's expected raster exact,
         // independent of orientation/wing catalogue indexing and rasterization.
         for sprite in &mut renderer.sprites {

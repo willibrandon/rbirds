@@ -450,6 +450,7 @@ impl Renderer {
         // cells with its default background. Keep the full raster when the
         // supplied pixel geometry cannot be represented by whole cells.
         let cropped = self.erase_sixel_before_frame
+            && self.crop_sixel_frames
             && sim.screen.cols > 0
             && sim.screen.rows > 0
             && sim.screen.cell_width > 0

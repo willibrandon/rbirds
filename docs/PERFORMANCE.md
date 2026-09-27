@@ -176,8 +176,10 @@ is one example that transport measurements alone missed.
 For iTerm, Sixel frames retire the previous image inside the synchronized
 update and send a cell-aligned raster around the visible sprites. Opaque
 full-block glyphs paint the empty sky behind that rectangle, preserving the
-background even with window transparency enabled. Geometry that cannot be
-represented by whole cells retains the complete raster. Other terminals keep
+background even with window transparency enabled. A hidden startup cursor
+probe verifies that the block character occupies one cell. Wide or unconfirmed
+characters, and geometry that cannot be represented by whole cells, retain the
+complete raster. Other terminals keep
 the complete-raster path.
 
 While paused, live playback keeps the last image until a key changes the scene,

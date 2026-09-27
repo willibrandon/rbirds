@@ -168,6 +168,16 @@ pub fn is_iterm2(reply: &[u8]) -> bool {
         .is_some_and(|start| reply[start + PREFIX.len()..].windows(2).any(|s| s == b"\x1b\\"))
 }
 
+/// Call only in the empty alternate screen. Some iTerm profiles make block
+/// characters double-width, leaving gaps in the backdrop. A missing or
+/// unexpected cursor report keeps the full-raster path. Hide and erase the
+/// probe inside a synchronized update so it cannot flash before the intro.
+pub fn sixel_backdrop_is_single_width() -> bool {
+    let reply = query_until("\x1b[?2026h\x1b[H\x1b[8m█\x1b[6n".as_bytes(), 128, 100, Some(b'R'));
+    write_all(b"\x1b[0m\x1b[2J\x1b[H\x1b[?2026l");
+    reply == b"\x1b[1;2R"
+}
+
 pub fn has_sixel(reply: &[u8]) -> bool {
     reply
         .windows(3)

@@ -406,6 +406,9 @@ fn run_live(
 
     terminal.enter_alt_screen();
     terminal::write_all(b"\x1b[J");
+    if renderer.erase_sixel_before_frame {
+        renderer.crop_sixel_frames = terminal::sixel_backdrop_is_single_width();
+    }
     terminal::apply_window_size(
         sim,
         terminal::graphics_window(

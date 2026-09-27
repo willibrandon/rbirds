@@ -85,6 +85,7 @@ fn steady_state_allocations(render: RenderMode, erase_sixel: bool) -> usize {
     sim.apply_screen_size(100, 30, 800, 480);
     let mut renderer = Renderer::default();
     renderer.erase_sixel_before_frame = erase_sixel;
+    renderer.crop_sixel_frames = erase_sixel;
     renderer.incremental_legend = true;
     let mut graphics = KittyGraphics::new(1).expect("graphics");
     if sim.drawing_with_text() || render == RenderMode::Sixel {
