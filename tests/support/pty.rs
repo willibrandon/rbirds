@@ -1130,7 +1130,15 @@ pub mod cases {
             &["--render", "kitty", "--frames", "10", "--seed", "1", "--color", "ember"],
         ));
         assert_clean_exit(&outcome, true);
-        assert!(outcome.transcript.starts_with(&screen_taken()), "{}", outcome.describe());
+        // D-009 adds a terminal-version query before rbirds chooses its live
+        // Kitty path. The C reference retains its original startup bytes.
+        let mut prefix = Vec::new();
+        if subject.name == "rbirds" {
+            prefix.extend_from_slice(b"\x1b[>q");
+            assert_eq!(outcome.count(b"\x1b[>q"), 1);
+        }
+        prefix.extend_from_slice(&screen_taken());
+        assert!(outcome.transcript.starts_with(&prefix), "{}", outcome.describe());
         assert!(outcome.contains(b"\x1b_Ga=t,q=2,f=100,I="), "uploads\n{}", outcome.describe());
         assert!(outcome.contains(b"\x1b_Ga=p,I="), "placements\n{}", outcome.describe());
         assert_eq!(outcome.count(KITTY_FREE_IMAGES), 1, "{}", outcome.describe());

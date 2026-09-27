@@ -1,5 +1,47 @@
 # Evidence
 
+[Live CPU and presentation measurements on macOS](live-2026-09-26-macos-arm64.md)
+cover the live-efficiency branch, including the iTerm Sixel flash, its workaround,
+and the limits exposed by visible-window measurements.
+The [Sixel placement correction](live-sixel-position-2026-09-27-macos-arm64.md)
+supersedes the early crop qualification and records checks through real startup.
+The [neighbor row comparison](live-neighbor-rows-2026-09-27-macos-arm64.md)
+records lower simulation cost and the measured CPU/presentation tradeoffs.
+The [clock alignment checks](live-clock-alignment-2026-09-27-macos-arm64.md)
+join CPU intervals to submitted frames and retain the remaining measurement limits.
+The [Kitty canvas clear comparison](live-kitty-clear-2026-09-27-macos-arm64.md)
+records reduced application CPU in a sparse scene, without an established total saving.
+The [iTerm memory investigation](live-iterm-memory-2026-09-27-macos-arm64.md)
+found unbounded texture retention in iTerm 3.6.6's Kitty renderer. The
+[stable-release qualification](live-iterm-stable-2026-09-27-macos-arm64.md)
+checks iTerm 3.7.3 and the startup guard for affected versions, following the
+[isolated nightly checks](live-iterm-fixed-build-2026-09-27-macos-arm64.md).
+The [Sixel background plane comparison](live-sixel-ground-2026-09-27-macos-arm64.md)
+checks smaller output with identical pixels and lower decoder cost; dense
+playback still falls short of 60 visible changes/s.
+The [neighbor cache comparison](live-sorted-neighbors-2026-09-27-macos-arm64.md)
+checks exact simulation results with compact data in grid traversal order.
+Dense Kitty uses less CPU; dense Sixel gains throughput while total CPU rises
+slightly and presentation remains below 60 changes/s.
+The [rejected Sixel plane reservation experiment](live-sixel-reservation-2026-09-27-macos-arm64.md)
+records faster isolated encoding without consistent total CPU savings or
+improved presentation. Its failure-recovery test is retained.
+The [fixed-scene harness checks](live-fixed-scene-2026-09-27-macos-arm64.md)
+measure identical simulation steps and exact submission ranges through a real
+terminal. Ordinary playback and display captures remain separate requirements.
+The [current Kitty checks](live-kitty-current-2026-09-27-macos-arm64.md)
+cover four rendering paths at two viewport sizes, with separate CPU and
+visible-playback runs and a retained invalid attempt.
+The [Sixel color checks](live-sixel-colours-2026-09-27-macos-arm64.md)
+fix explicit palette selection in WezTerm and reconfirm the iTerm background
+flash fix in two foreground captures.
+The [WezTerm placement checks](live-wezterm-placement-2026-09-27-macos-arm64.md)
+cover cropped Sixel output, terminal background and wrapping behavior, matched
+CPU comparisons and separate foreground playback checks.
+The [WezTerm pacing investigation](live-wezterm-pacing-2026-09-27-macos-arm64.md)
+profiles decoded-image hashing and rejects frame acknowledgements that fail
+to improve both CPU usage and visible playback.
+
 The runs below were made before Windows and Sixel support was added.
 [Windows and Sixel results](windows-sixel.md) cover the current branch.
 

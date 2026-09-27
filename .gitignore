@@ -1,5 +1,6 @@
 # Build output
 /target/
+/tools/__pycache__/
 
 # The pinned C reference is cloned here by tools/reference.sh; never commit it.
 /.reference/

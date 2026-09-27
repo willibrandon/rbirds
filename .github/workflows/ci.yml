@@ -33,9 +33,18 @@ jobs:
           rustc -vV
           cargo --version
           $PSVersionTable
+      - name: Cross-process clock check
+        shell: pwsh
+        run: |
+          cargo build --release --locked --offline --example measurement-clock
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tools/check-measurement-clock.py target/release/examples/measurement-clock.exe
       - name: Native Windows gates
         shell: pwsh
         run: ./tools/verify.ps1
+      - name: Process CPU and memory measurement checks
+        shell: pwsh
+        run: python tools/test_terminal_perf.py
 
   verify:
     timeout-minutes: 45
@@ -56,6 +65,18 @@ jobs:
           cargo --version
       - name: Pinned C reference
         run: tools/reference.sh
+      - name: Process CPU and memory measurement checks
+        run: python3 tools/test_terminal_perf.py
+      - name: Cross-process clock check
+        run: |
+          cargo build --release --locked --offline --example measurement-clock
+          python3 tools/check-measurement-clock.py target/release/examples/measurement-clock
+      - name: Presentation pixel comparison checks
+        if: startsWith(matrix.os, 'macos-')
+        run: |
+          mkdir -p target
+          swiftc -O -parse-as-library tools/presentation-capture.swift -o target/presentation-capture
+          target/presentation-capture --self-test
       - name: All local gates
         run: tools/verify.sh
 

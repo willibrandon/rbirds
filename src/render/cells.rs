@@ -174,8 +174,7 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
     let mut colour = [[0u8; 3]; PATCH_COLOURS];
     let mut weight = [0.0f64; PATCH_COLOURS];
     let mut colours = 0usize;
-    let (mut alpha_sum, mut red, mut green, mut blue) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    let mut counted: i64 = 0;
+    let mut alpha_sum = 0.0f64;
     // The C walks the whole rectangle and skips what lies off the canvas; only
     // the pixels on it do anything, so the walk starts and stops at the canvas
     // edges, in the same order.
@@ -183,12 +182,61 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
     let y_end = (i64::from(y0) + i64::from(height)).min(i64::from(canvas.height)) as i32;
     let x_start = x0.max(0);
     let x_end = (i64::from(x0) + i64::from(width)).min(i64::from(canvas.width)) as i32;
+    if x_end <= x_start || y_end <= y_start {
+        return patch;
+    }
+    let row_bytes = (x_end - x_start) as usize * 4;
+    let counted = i64::from(x_end - x_start) * i64::from(y_end - y_start);
     for y in y_start..y_end {
-        for x in x_start..x_end {
-            let at = canvas.offset(x, y);
-            let px = &canvas.pixels[at..at + 4];
+        let start = canvas.offset(x_start, y);
+        // Check the row once, retaining the reference's pixel order.
+        for px in canvas.pixels[start..start + row_bytes].chunks_exact(4) {
             let a = f64::from(px[3]);
-            counted += 1;
+            alpha_sum += a;
+            if a == 0.0 {
+                continue;
+            }
+            let rgb = [px[0], px[1], px[2]];
+            let mut slot = 0;
+            while slot < colours && colour[slot] != rgb {
+                slot += 1;
+            }
+            if slot == colours {
+                // A full table selects the mean, even with exactly eight
+                // colours. Stop looking up colours as soon as that is known.
+                if colours + 1 == PATCH_COLOURS {
+                    return read_mean_patch(canvas, x_start, y_start, x_end, y_end);
+                }
+                colour[colours] = rgb;
+                colours += 1;
+            }
+            weight[slot] += a;
+        }
+    }
+    if alpha_sum == 0.0 {
+        return patch;
+    }
+    patch.coverage = alpha_sum / counted as f64;
+    let mut best = 0;
+    for slot in 1..colours {
+        if weight[slot] > weight[best] {
+            best = slot;
+        }
+    }
+    patch.rgb = colour[best];
+    patch
+}
+
+/// Shaded sprites can fill the colour table. Only then compute the mean,
+/// restarting the sums in the reference's pixel order to preserve rounding.
+fn read_mean_patch(canvas: &Image, x0: i32, y0: i32, x1: i32, y1: i32) -> Patch {
+    let (mut alpha_sum, mut red, mut green, mut blue) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let row_bytes = (x1 - x0) as usize * 4;
+    let counted = i64::from(x1 - x0) * i64::from(y1 - y0);
+    for y in y0..y1 {
+        let start = canvas.offset(x0, y);
+        for px in canvas.pixels[start..start + row_bytes].chunks_exact(4) {
+            let a = f64::from(px[3]);
             alpha_sum += a;
             if a == 0.0 {
                 continue;
@@ -199,45 +247,41 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
             green = mul_add(f64::from(px[1]), a, green);
             // fma: cells.c:132:18
             blue = mul_add(f64::from(px[2]), a, blue);
-            let rgb = [px[0], px[1], px[2]];
-            let mut slot = 0;
-            while slot < colours && colour[slot] != rgb {
-                slot += 1;
-            }
-            if slot == colours && colours < PATCH_COLOURS {
-                colour[colours] = rgb;
-                colours += 1;
-            }
-            if slot < colours {
-                weight[slot] += a;
-            }
         }
     }
-    if counted == 0 || alpha_sum == 0.0 {
-        return patch;
+    Patch {
+        coverage: alpha_sum / counted as f64,
+        rgb: [
+            (red / alpha_sum + 0.5) as u8,
+            (green / alpha_sum + 0.5) as u8,
+            (blue / alpha_sum + 0.5) as u8,
+        ],
     }
-    patch.coverage = alpha_sum / counted as f64;
-    let mut best: Option<usize> = None;
-    for slot in 0..colours {
-        if best.is_none_or(|best| weight[slot] > weight[best]) {
-            best = Some(slot);
-        }
-    }
-    match best {
-        Some(best) if colours < PATCH_COLOURS => patch.rgb = colour[best],
-        _ => {
-            // More colours than the table holds: a sprite of somebody's own,
-            // with shading of its own. The mean is the honest answer for that.
-            patch.rgb[0] = (red / alpha_sum + 0.5) as u8;
-            patch.rgb[1] = (green / alpha_sum + 0.5) as u8;
-            patch.rgb[2] = (blue / alpha_sum + 0.5) as u8;
-        }
-    }
-    patch
 }
 
 fn inked(patch: &Patch) -> bool {
     patch.coverage >= f64::from(INK_THRESHOLD)
+}
+
+/// Dots need only coverage. Computing a colour histogram for each dot would
+/// repeat the whole cell's colour work up to eight times. Alpha sums are
+/// integers, so comparing before division also preserves the exact threshold.
+fn patch_inked(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> bool {
+    let y_start = y0.max(0);
+    let y_end = (i64::from(y0) + i64::from(height)).min(i64::from(canvas.height)) as i32;
+    let x_start = x0.max(0);
+    let x_end = (i64::from(x0) + i64::from(width)).min(i64::from(canvas.width)) as i32;
+    if x_end <= x_start || y_end <= y_start {
+        return false;
+    }
+    let pixels = (x_end - x_start) as u64 * (y_end - y_start) as u64;
+    let mut alpha = 0_u64;
+    for y in y_start..y_end {
+        let start = canvas.offset(x_start, y);
+        let end = start + (x_end - x_start) as usize * 4;
+        alpha += canvas.pixels[start..end].chunks_exact(4).map(|p| u64::from(p[3])).sum::<u64>();
+    }
+    alpha >= INK_THRESHOLD as u64 * pixels
 }
 
 fn read_braille_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_height: i32) -> Cell {
@@ -256,8 +300,7 @@ fn read_braille_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_hei
             if dy1 <= dy0 {
                 dy1 = dy0 + 1;
             }
-            let dot = read_patch(canvas, dx0, dy0, dx1 - dx0, dy1 - dy0);
-            if inked(&dot) {
+            if patch_inked(canvas, dx0, dy0, dx1 - dx0, dy1 - dy0) {
                 dots |= 1u32 << (column + row * 2);
             }
         }
@@ -288,8 +331,7 @@ fn read_sextant_cell(canvas: &Image, x0: i32, y0: i32, cell_width: i32, cell_hei
             if by1 <= by0 {
                 by1 = by0 + 1;
             }
-            let block = read_patch(canvas, bx0, by0, bx1 - bx0, by1 - by0);
-            if inked(&block) {
+            if patch_inked(canvas, bx0, by0, bx1 - bx0, by1 - by0) {
                 blocks |= 1u32 << (column + row * 2);
             }
         }
@@ -519,6 +561,33 @@ impl Cells {
     /// marking ink: transparent is sky. Pixels off the canvas are not counted.
     /// An empty canvas or an unsized grid reads nothing.
     pub fn read(&mut self, style: CellsStyle, canvas: &Image, cell_width: i32, cell_height: i32) {
+        self.read_inner(style, canvas, cell_width, cell_height, None);
+    }
+
+    /// As `read`, with conservative sprite coverage supplied by composition.
+    pub fn read_occupied(
+        &mut self,
+        style: CellsStyle,
+        canvas: &Image,
+        cell_width: i32,
+        cell_height: i32,
+        occupied: &[bool],
+    ) {
+        // Tiny cells sample beyond their nominal bounds when a dot rounds to
+        // zero pixels. Keep the general reader for those unusual dimensions.
+        let occupied = (cell_width >= 2 && cell_height >= 4 && occupied.len() == self.now.len())
+            .then_some(occupied);
+        self.read_inner(style, canvas, cell_width, cell_height, occupied);
+    }
+
+    fn read_inner(
+        &mut self,
+        style: CellsStyle,
+        canvas: &Image,
+        cell_width: i32,
+        cell_height: i32,
+        occupied: Option<&[bool]>,
+    ) {
         if canvas.is_empty() || self.now.is_empty() {
             return;
         }
@@ -527,7 +596,9 @@ impl Cells {
         for row in 0..self.rows {
             for col in 0..self.cols {
                 let at = row as usize * self.cols as usize + col as usize;
-                if col < self.keep_cols && row < self.keep_rows {
+                if col < self.keep_cols && row < self.keep_rows
+                    || occupied.is_some_and(|mask| !mask[at])
+                {
                     self.now[at] = Cell::default();
                     continue;
                 }

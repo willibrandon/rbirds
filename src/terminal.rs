@@ -63,14 +63,48 @@ pub fn write_all(bytes: &[u8]) {
 /// terminator, a full buffer or the deadline. `reply_size` is the C buffer's
 /// size, NUL included.
 pub fn terminal_query(request: &[u8], reply_size: usize, milliseconds: i64) -> Vec<u8> {
-    query_until(request, reply_size, milliseconds, None)
+    query_until(request, reply_size, milliseconds, |reply| {
+        let as_c_string = match reply.iter().position(|&b| b == 0) {
+            Some(end) => &reply[..end],
+            None => reply,
+        };
+        reply.contains(&0x07)
+            || as_c_string.windows(2).any(|w| w == b"\x1b\\")
+            || reply.contains(&b'c')
+    })
+}
+
+/// A successful query must both decode our pixel and consume its local object.
+/// A remote terminal or a refused query retains the ordinary inline renderer.
+#[cfg(target_os = "macos")]
+pub(crate) fn shared_images(
+    parser: &mut crate::input::InputParser,
+) -> Option<[platform::SharedImage; 4]> {
+    use crate::render::kitty::KittyGraphics;
+    parser.ignore_kitty_replies(&[]);
+    let mut images = [
+        platform::SharedImage::new().ok()?,
+        platform::SharedImage::new().ok()?,
+        platform::SharedImage::new().ok()?,
+        platform::SharedImage::new().ok()?,
+    ];
+    if !images[0].stage(&[0; 4], 4, 0, 4, 1).ok()? {
+        return None;
+    }
+    let mut query = KittyGraphics::new(STDOUT_FILENO).ok()?;
+    query.shared_rgba(0x72626972, 1, 1, images[0].name(), true).ok()?;
+    let reply = query_until(query.buffer(), 128, 150, |reply| {
+        reply.windows(2).any(|bytes| bytes == b"\x1b\\")
+    });
+    parser.ignore_kitty_replies(&reply);
+    (reply == b"\x1b_Gi=1919052146;OK\x1b\\" && !images[0].pending().ok()?).then_some(images)
 }
 
 fn query_until(
     request: &[u8],
     reply_size: usize,
     milliseconds: i64,
-    terminator: Option<u8>,
+    finished: impl Fn(&[u8]) -> bool,
 ) -> Vec<u8> {
     let mut reply = Vec::new();
     if reply_size == 0 {
@@ -97,18 +131,7 @@ fn query_until(
             _ => break,
         };
         reply.extend_from_slice(&buffer[..got]);
-        // Every reply this program asks for ends one of these three ways,
-        // read as the C reads them: two by length, one as a C string.
-        let as_c_string = match reply.iter().position(|&b| b == 0) {
-            Some(end) => &reply[..end],
-            None => &reply[..],
-        };
-        if terminator.is_some_and(|end| reply.contains(&end))
-            || (terminator.is_none()
-                && (reply.contains(&0x07)
-                    || as_c_string.windows(2).any(|w| w == b"\x1b\\")
-                    || reply.contains(&b'c')))
-        {
+        if finished(&reply) {
             break;
         }
         if reply.len() + 1 >= reply_size {
@@ -118,28 +141,141 @@ fn query_until(
     reply
 }
 
+/// Geometry and presentation requirements negotiated with a Sixel terminal.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SixelTerminal {
+    pub cell_size: (u16, u16),
+    pub erase_before_frame: bool,
+    pub can_position_images: bool,
+    pub crop_background: Option<[u8; 3]>,
+}
+
 /// Only probe when Sixel is explicitly requested. The ordinary renderer's
 /// startup traffic remains identical to the reference.
-pub fn prepare_sixel() -> io::Result<(u16, u16)> {
-    let capabilities = query_until(b"\x1b[c", 256, 250, Some(b'c'));
+pub fn prepare_sixel() -> io::Result<SixelTerminal> {
+    let capabilities = query_until(b"\x1b[c", 256, 250, |reply| reply.contains(&b'c'));
     if !has_sixel(&capabilities) {
         return Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "terminal did not advertise Sixel; use Windows Terminal 1.22+ or --render braille",
         ));
     }
-    let reply = query_until(b"\x1b[16t", 128, 250, Some(b't'));
-    let cell = parse_cell_size(&reply).ok_or_else(|| {
+    let reply = query_until(b"\x1b[16t", 128, 250, |reply| reply.contains(&b't'));
+    let cell = parse_cell_size(&reply);
+    // Some Unix terminals (including iTerm2) advertise Sixel and provide
+    // exact pixel dimensions through TIOCGWINSZ, but do not implement CSI 16 t.
+    // Prefer the explicit reply: Windows Terminal can use virtual pixels that
+    // differ from the console font metrics. Never guess from those metrics.
+    #[cfg(unix)]
+    let cell = cell.or_else(|| cell_size_from_window(platform::window_size_or_zero(STDOUT_FILENO)));
+    let cell = cell.ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::Unsupported,
             "terminal did not report its graphics cell size (CSI 16 t)",
         )
     })?;
-    let mode = query_until(b"\x1b[?80$p", 128, 100, Some(b'y'));
+    // Ask the terminal itself, including through SSH, rather than relying on
+    // TERM_PROGRAM from the local shell. Unimplemented XTVERSION is harmless.
+    let version = query_version();
+    let erase_before_frame = is_iterm2(&version);
+    let crop_background = sixel_crop_background(&version);
+    let mode = query_until(b"\x1b[?80$p", 128, 100, |reply| reply.contains(&b'y'));
     let was_enabled = mode.windows(9).any(|s| s == b"\x1b[?80;1$y")
         || mode.windows(9).any(|s| s == b"\x1b[?80;3$y");
+    // A crop needs cursor-relative placement. Only changeable DECSDM states
+    // confirm that resetting the mode can move an image away from the origin.
+    let can_position_images = mode.windows(9).any(|s| s == b"\x1b[?80;1$y" || s == b"\x1b[?80;2$y");
     platform::enable_sixel_mode(was_enabled);
-    Ok(cell)
+    Ok(SixelTerminal { cell_size: cell, erase_before_frame, can_position_images, crop_background })
+}
+
+pub fn query_is_iterm2() -> bool {
+    is_iterm2(&query_version())
+}
+
+fn query_version() -> Vec<u8> {
+    query_until(b"\x1b[>q", 128, 100, |reply| reply.windows(2).any(|s| s == b"\x1b\\"))
+}
+
+/// Older iTerm releases retain every uploaded frame's Metal texture, even
+/// after its protocol image is deleted. Refuse that path before uploading.
+/// Other terminals retain the ordinary sprite-atlas renderer.
+pub fn prepare_kitty() -> io::Result<bool> {
+    let reply = query_version();
+    let Some(version) = iterm_version(&reply) else { return Ok(false) };
+    if !iterm_kitty_cache_fixed(version) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Kitty animation needs iTerm2 3.7.3 or newer to avoid an image memory leak; use --render sixel or --render braille with this version",
+        ));
+    }
+    Ok(true)
+}
+
+/// XTVERSION: DCS >| terminal-name version ST.
+pub fn is_iterm2(reply: &[u8]) -> bool {
+    iterm_version(reply).is_some()
+}
+
+/// Only use an opaque glyph backdrop for terminal implementations whose
+/// placement and RGB conversion have been checked against the full raster.
+pub fn sixel_crop_background(reply: &[u8]) -> Option<[u8; 3]> {
+    if is_iterm2(reply) {
+        return Some(crate::render::sixel::background_colour(true));
+    }
+    const WEZTERM: &[u8] = b"\x1bP>|WezTerm 20240203-110809-5046fc22\x1b\\";
+    reply
+        .windows(WEZTERM.len())
+        .any(|s| s == WEZTERM)
+        .then(|| crate::render::sixel::background_colour(false))
+}
+
+fn iterm_version(reply: &[u8]) -> Option<&[u8]> {
+    const PREFIX: &[u8] = b"\x1bP>|iTerm2 ";
+    let start = reply.windows(PREFIX.len()).position(|s| s == PREFIX)? + PREFIX.len();
+    let version = &reply[start..];
+    let end = version.windows(2).position(|s| s == b"\x1b\\")?;
+    Some(&version[..end])
+}
+
+fn iterm_kitty_cache_fixed(version: &[u8]) -> bool {
+    let Ok(version) = std::str::from_utf8(version) else { return false };
+    let nightly = version.ends_with("-nightly");
+    let mut components = version.strip_suffix("-nightly").unwrap_or(version).split('.');
+    let mut numbers = [0_u32; 3];
+    for number in &mut numbers {
+        let Some(component) = components.next() else { return false };
+        if component.is_empty() || !component.bytes().all(|byte| byte.is_ascii_digit()) {
+            return false;
+        }
+        let Ok(value) = component.parse() else { return false };
+        *number = value;
+    }
+    if components.next().is_some() {
+        return false;
+    }
+    let [major, minor, patch] = numbers;
+    // The fix landed September 18, then shipped in the next nightly and 3.7.3.
+    // A dated nightly's large patch number must not admit pre-fix nightlies.
+    if nightly || patch >= 20_000_000 {
+        (major, minor) >= (3, 7) && patch >= 20260919
+    } else {
+        (major, minor, patch) >= (3, 7, 3)
+    }
+}
+
+/// Call only in the empty alternate screen. Some iTerm profiles make block
+/// characters double-width, leaving gaps in the backdrop. A missing or
+/// unexpected cursor report keeps the full-raster path. Hide and erase the
+/// probe and end the synchronized update before asking for its position:
+/// WezTerm defers cursor reports until that update ends.
+pub fn sixel_backdrop_is_single_width() -> bool {
+    let reply =
+        query_until("\x1b[?2026h\x1b[H\x1b[8m█\x1b[?2026l\x1b[6n".as_bytes(), 128, 100, |reply| {
+            reply.contains(&b'R')
+        });
+    write_all(b"\x1b[?2026h\x1b[0m\x1b[2J\x1b[H\x1b[?2026l");
+    reply == b"\x1b[1;2R"
 }
 
 pub fn has_sixel(reply: &[u8]) -> bool {
@@ -164,6 +300,19 @@ pub fn parse_cell_size(reply: &[u8]) -> Option<(u16, u16)> {
     let (height, width) = text.split_once(';')?;
     let (width, height) = (width.parse::<u16>().ok()?, height.parse::<u16>().ok()?);
     (width > 0 && height > 0).then_some((width, height))
+}
+
+/// Accept native pixel dimensions only when they describe whole, nonzero cells.
+pub fn cell_size_from_window(size: platform::WinSize) -> Option<(u16, u16)> {
+    if size.col == 0
+        || size.row == 0
+        || !size.xpixel.is_multiple_of(size.col)
+        || !size.ypixel.is_multiple_of(size.row)
+    {
+        return None;
+    }
+    let cell = (size.xpixel / size.col, size.ypixel / size.row);
+    (cell.0 > 0 && cell.1 > 0).then_some(cell)
 }
 
 pub fn graphics_window(mut size: platform::WinSize, cell: Option<(u16, u16)>) -> platform::WinSize {
@@ -222,5 +371,46 @@ pub fn wait_for_terminal_io() -> io::Result<()> {
             Err(error) => return Err(error),
             Ok(_) => return Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kitty_animation_requires_the_iterm_texture_cache_fix() {
+        for version in [
+            "3.7.3",
+            "3.7.4",
+            "3.8.0",
+            "4.0.0",
+            "3.7.20260919-nightly",
+            "3.7.20260926-nightly",
+            "3.7.20260926",
+        ] {
+            assert!(iterm_kitty_cache_fixed(version.as_bytes()), "{version}");
+        }
+        for version in [
+            "3.6.6",
+            "3.6.11",
+            "3.7.0",
+            "3.7.2",
+            "3.7.20260918-nightly",
+            "3.7.20260918",
+            "3.6.20260926-nightly",
+            "3.7.3-nightly",
+            "3.7.3beta1",
+            "",
+            "3.7",
+            "3.7.3.1",
+            "3.7.+3",
+            "3..3",
+            "3.7.4294967296",
+            "unknown",
+        ] {
+            assert!(!iterm_kitty_cache_fixed(version.as_bytes()), "{version}");
+        }
+        assert!(!iterm_kitty_cache_fixed(&[0xff]));
     }
 }

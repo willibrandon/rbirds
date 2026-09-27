@@ -491,6 +491,7 @@ impl World {
                 match result {
                     Ok(Frame::Over) => self.out.push_str("live over\n"),
                     Ok(Frame::Drawn) => self.emit_buffer("live", 0),
+                    Ok(Frame::Idle) => self.out.push_str("live idle\n"),
                     Err(code) => {
                         let _ = writeln!(self.out, "live failed {code}");
                     }

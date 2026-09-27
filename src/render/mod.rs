@@ -5,10 +5,13 @@
 
 #![forbid(unsafe_code)]
 
+pub mod atlas;
 pub mod cells;
 pub mod compose;
+mod frame_codes;
 pub mod kitty;
 pub mod panel;
+mod pixel_runs;
 pub mod sixel;
 
 use crate::image::Image;
@@ -32,7 +35,23 @@ pub struct Renderer {
     pub stats: Stats,
     /// The panel's rows, rebuilt in place each frame.
     pub legend: LegendBuffers,
+    /// Live text and Kitty sessions only send panel rows that changed.
+    pub incremental_legend: bool,
+    pub(crate) legend_cache: panel::LegendCache,
     pub sixel: sixel::Sixel,
+    /// iTerm2 needs explicit image retirement before replacing a Sixel frame.
+    pub erase_sixel_before_frame: bool,
+    /// Crop only after the terminal confirms that the opaque backdrop glyph is one cell wide.
+    pub crop_sixel_frames: bool,
+    /// Match the terminal's conversion of Sixel RGB percentages to bytes.
+    pub sixel_background: [u8; 3],
+    /// iTerm needs explicit image IDs and a bounded number of placements per frame.
+    pub kitty_raster: Option<compose::KittyRaster>,
+    pub profile: Option<crate::timing::FrameProfile>,
+    /// Text cells touched by this frame's sprite rectangles, including trails.
+    pub occupied: Vec<bool>,
+    pub atlas: Option<atlas::Atlas>,
+    pub(crate) sprite_rows: Vec<compose::SpriteRows>,
 }
 
 impl Default for Renderer {
@@ -45,7 +64,17 @@ impl Default for Renderer {
             legend_drawn: false,
             stats: Stats::default(),
             legend: LegendBuffers::default(),
+            incremental_legend: false,
+            legend_cache: panel::LegendCache::default(),
             sixel: sixel::Sixel::default(),
+            erase_sixel_before_frame: false,
+            crop_sixel_frames: false,
+            sixel_background: sixel::background_colour(true),
+            kitty_raster: None,
+            profile: None,
+            occupied: Vec::new(),
+            atlas: None,
+            sprite_rows: Vec::new(),
         }
     }
 }

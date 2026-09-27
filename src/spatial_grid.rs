@@ -175,4 +175,21 @@ impl SpatialGrid {
     pub fn cell_items(&self, cell: usize) -> &[i32] {
         &self.indices[self.offsets[cell] as usize..self.offsets[cell + 1] as usize]
     }
+
+    /// Only the built items, excluding unused capacity after a smaller build.
+    pub(crate) fn items(&self) -> &[i32] {
+        &self.indices[..self.offsets.last().copied().unwrap_or(0) as usize]
+    }
+
+    /// Adjacent cells share one contiguous item range, retaining cell order
+    /// and the item order within each cell. The column bounds are inclusive.
+    #[inline]
+    pub(crate) fn row_range(&self, row: i32, left: i32, right: i32) -> std::ops::Range<usize> {
+        if left > right {
+            return 0..0;
+        }
+        let first = (row * self.columns + left) as usize;
+        let end = (row * self.columns + right + 1) as usize;
+        self.offsets[first] as usize..self.offsets[end] as usize
+    }
 }

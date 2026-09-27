@@ -47,8 +47,9 @@ pub static TRIG_LOOKUP_TABLE: LazyLock<[TrigEntry; TRIG_LOOKUP_SIZE as usize]> =
         let mut table = [TrigEntry::default(); TRIG_LOOKUP_SIZE as usize];
         for (i, entry) in table.iter_mut().enumerate() {
             let angle = i as f64 * 2.0 * PI / f64::from(TRIG_LOOKUP_SIZE);
-            entry.cosine = fp::cos(angle) as f32;
-            entry.sine = fp::sin(angle) as f32;
+            let (sine, cosine) = fp::sin_cos(angle);
+            entry.cosine = cosine as f32;
+            entry.sine = sine as f32;
         }
         table
     });
@@ -248,7 +249,8 @@ pub fn direction_frame(radians: f64) -> i32 {
 
 /// `turn_towards`: at most `most` radians from `from` toward `to`.
 pub fn turn_towards(from: f64, to: f64, most: f64) -> f64 {
-    let mut delta = fp::sin(to - from).atan2(fp::cos(to - from));
+    let (sine, cosine) = fp::sin_cos(to - from);
+    let mut delta = sine.atan2(cosine);
     if delta > most {
         delta = most;
     }

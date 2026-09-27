@@ -114,6 +114,31 @@ fn sixel_plane_allocation_failure_preserves_output_and_can_recover() {
     assert!(output.buffer().ends_with(b"\x1b\\"));
 }
 
+#[test]
+fn sixel_output_growth_failure_discards_partial_planes_before_retry() {
+    use rbirds::render::kitty::{KittyError, KittyGraphics};
+    use rbirds::render::sixel::Sixel;
+    let mut image = Image::alloc(4096, 6).unwrap();
+    let mut encoder = Sixel::default();
+    // Size the planes while the empty image needs very little output.
+    encoder.encode(&image).unwrap();
+    for (i, pixel) in image.pixels.chunks_exact_mut(4).enumerate() {
+        pixel.copy_from_slice(if i % 2 == 0 { &[255, 0, 0, 255] } else { &[0, 255, 0, 255] });
+    }
+    let mut output = KittyGraphics::new(1).unwrap();
+    output.write_raw(b"previous").unwrap();
+    let result = refusing(4096, || encoder.queue(&mut output, &image));
+    assert_eq!(result, Err(KittyError::Memory));
+    assert_eq!(output.buffer(), b"previous");
+    // Retry with different colors so any retained bits would become visible.
+    for pixel in image.pixels.chunks_exact_mut(4) {
+        pixel.copy_from_slice(&[0, 0, 255, 255]);
+    }
+    let expected = Sixel::default().encode(&image).unwrap().to_vec();
+    encoder.queue(&mut output, &image).unwrap();
+    assert_eq!(&output.buffer()[b"previous".len()..], expected);
+}
+
 /// The live loop's side of it: `config.birds = live_birds`.
 #[test]
 fn the_live_loop_puts_the_count_back_when_growing_fails() {

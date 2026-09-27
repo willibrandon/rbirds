@@ -21,7 +21,7 @@ cargo build --release
 ./target/release/rbirds
 ./target/release/rbirds --hawks 2 --panel
 ./target/release/rbirds --render kitty    # needs Kitty or Ghostty
-./target/release/rbirds --render sixel    # needs Sixel and a cell-size query reply
+./target/release/rbirds --render sixel    # needs a Sixel-capable terminal
 ./target/release/rbirds --record flock.gif --seed 42
 ./target/release/rbirds --help
 ```
@@ -42,6 +42,10 @@ emulators that do. Braille remains the default on every platform. `blocks` and
 `sextants` are also available; sextants need a font containing those glyphs.
 Sixel support is negotiated when requested, and an unsupported terminal produces
 an error with guidance. See [Windows and Sixel](docs/WINDOWS.md) for details.
+
+Kitty graphics in iTerm2 require **3.7.3 or newer**. Earlier releases retain
+animation frames in memory, so rbirds rejects that path before uploading images.
+Use Sixel or a text renderer with older iTerm versions.
 
 There are no crate dependencies. Native bindings use system libraries: libc /
 libSystem on Unix and Win32 / the Microsoft C runtime on Windows. Builds use
@@ -104,6 +108,7 @@ See the [test results](docs/evidence/windows-sixel.md) for what has run locally.
 - [PORTING.md](docs/PORTING.md) describes the porting process and release checks.
 - [COMPATIBILITY.md](docs/COMPATIBILITY.md) lists the behavior that has to match and how it's tested.
 - [WINDOWS.md](docs/WINDOWS.md) covers Windows setup, Sixel, PowerShell workflows and validation limits.
+- [PERFORMANCE.md](docs/PERFORMANCE.md) explains live CPU and frame-timing measurements.
 - [docs/evidence](docs/evidence/README.md) records test runs and results.
 - [DEVIATIONS.md](docs/DEVIATIONS.md) lists differences from cbirds.
 - [c-test-inventory.csv](docs/c-test-inventory.csv) maps each C test to its Rust version.

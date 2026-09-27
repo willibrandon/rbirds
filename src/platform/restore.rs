@@ -4,9 +4,10 @@
 //! `restore_terminal`.
 //!
 //! The state is process-global, as in the C, because the signal handler has
-//! no other way to reach it. Everything the handler touches is here and is
+//! no other way to reach it. The terminal state the handler touches is here and is
 //! async-signal-safe: lock-free atomics, `tcsetattr`, `write`, `errno`. No
 //! allocation, locking, formatting or unwinding happens on this path.
+//! macOS shared-image cleanup is separately audited in `shared_image.rs`.
 //!
 //! The saved attributes are kept field by field in atomics rather than as a
 //! `Termios` behind an `UnsafeCell`. The protocol is the same: they are
@@ -226,14 +227,21 @@ pub fn enter_alt_screen() {
 /// [`MOUSE_REPORT_OFF`], [`SYNC_UPDATE_END`], [`CURSOR_SHOW`],
 /// [`ALT_SCREEN_OFF`]. Async-signal-safe.
 pub fn restore_terminal() {
+    #[cfg(target_os = "macos")]
+    super::shared_image::cleanup();
     // A plain check then set, as the C's `sig_atomic_t` flag is, rather than a
     // swap: the window between them behaves exactly as the reference's does.
     if TERMINAL_RESTORED.load(Ordering::SeqCst) {
         return;
     }
     TERMINAL_RESTORED.store(true, Ordering::SeqCst);
-    if SIXEL_MODE.swap(0, Ordering::SeqCst) == 2 {
-        write_all_quietly(STDOUT_FILENO, b"\x1b[?80l");
+    match SIXEL_MODE.swap(0, Ordering::SeqCst) {
+        // Cancel a partially written control sequence first. CAN aborts
+        // standard parsers; ESC CAN also unhooks iTerm's Sixel parser, which
+        // accumulates a lone CAN. A crop may have temporarily reset DECSDM.
+        1 => write_all_quietly(STDOUT_FILENO, b"\x18\x1b\x18\x1b[?80h"),
+        2 => write_all_quietly(STDOUT_FILENO, b"\x18\x1b\x18\x1b[?80l"),
+        _ => {}
     }
     if TERMINAL_IS_RAW.load(Ordering::Acquire) {
         let saved = SAVED_TERMIOS.load();

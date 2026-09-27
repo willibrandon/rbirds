@@ -182,6 +182,9 @@ int main(int argc, char **argv) {
                     fail("bad R");
                 ssize_t got = read(drain_fd, drained, wanted);
                 fprintf(stderr, "read %ld\n", (long)got);
+                fprintf(stderr, "drained ");
+                if (got > 0) print_escaped(drained, (size_t)got);
+                fputc('\n', stderr);
                 continue;
             }
             case 'O': {

@@ -67,9 +67,22 @@ fn counted<T>(body: impl FnOnce() -> T) -> (T, usize) {
     (result, ALLOCATIONS.with(Cell::get))
 }
 
+#[cfg(target_os = "macos")]
+#[test]
+fn sharing_a_frame_and_deferring_an_unread_frame_allocate_no_rust_storage() {
+    let pixels = vec![71; 640 * 480 * 4];
+    let mut image = rbirds::platform::SharedImage::new().unwrap();
+    let (result, allocations) = counted(|| image.stage(&pixels, 640 * 4, 0, 640 * 4, 480));
+    assert!(result.unwrap());
+    assert_eq!(allocations, 0);
+    let (result, allocations) = counted(|| image.stage(&pixels, 640 * 4, 0, 640 * 4, 480));
+    assert!(!result.unwrap());
+    assert_eq!(allocations, 0);
+}
+
 /// Allocations made by frames 30 to 150 of a live session with the panel up,
 /// hawks, trails, depth and two flocks.
-fn steady_state_allocations(render: RenderMode) -> usize {
+fn steady_state_allocations(render: RenderMode, erase_sixel: bool, kitty_raster: bool) -> usize {
     let mut sim = Sim::new();
     sim.config.birds = 300;
     sim.config.hawks = 2;
@@ -84,8 +97,20 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     let window = WinSize { row: 30, col: 100, xpixel: 800, ypixel: 480 };
     sim.apply_screen_size(100, 30, 800, 480);
     let mut renderer = Renderer::default();
-    if sim.drawing_with_text() {
+    renderer.erase_sixel_before_frame = erase_sixel;
+    renderer.crop_sixel_frames = erase_sixel;
+    renderer.kitty_raster = kitty_raster.then(rbirds::render::compose::KittyRaster::default);
+    renderer.incremental_legend = true;
+    let mut graphics = KittyGraphics::new(1).expect("graphics");
+    if sim.drawing_with_text() || render == RenderMode::Sixel || kitty_raster {
         renderer.prepare_text_renderer(&mut sim, None, b"rbirds").expect("sprites");
+    } else {
+        sim.rasterise_sprites(&mut renderer.sprites, None, b"rbirds").expect("sprites");
+        renderer.atlas = Some(
+            rbirds::render::atlas::Atlas::queue_upload(&mut graphics, &renderer.sprites)
+                .expect("atlas"),
+        );
+        rbirds::sprites::free_sprites(&mut renderer.sprites);
     }
     let mut grid = SpatialGrid::new(12).expect("grid");
     grid.prepare(800, 480, 300).expect("prepare");
@@ -96,8 +121,8 @@ fn steady_state_allocations(render: RenderMode) -> usize {
     let mut snapshot = birds.clone();
     sim.initialize_birds(&mut birds);
     sim.place_hawks();
-    let mut graphics = KittyGraphics::new(1).expect("graphics");
     let mut live = LiveLoop::new(Timespec { tv_sec: 10, tv_nsec: 0 }, 300);
+    live.reuse_paused_frame = true;
     let mut total = 0;
     for frame in 1..=150 {
         let at = Timespec { tv_sec: 10, tv_nsec: frame * 16_666_667 };
@@ -110,12 +135,12 @@ fn steady_state_allocations(render: RenderMode) -> usize {
                 &mut birds,
                 &mut snapshot,
                 &mut grid,
-                None,
+                if frame == 60 || frame == 120 { Some(b" ") } else { None },
                 at,
                 window,
             )
         });
-        assert_eq!(drawn, Ok(Frame::Drawn));
+        assert_eq!(drawn, Ok(if (61..120).contains(&frame) { Frame::Idle } else { Frame::Drawn }));
         if frame > 30 {
             total += allocations;
         }
@@ -125,12 +150,25 @@ fn steady_state_allocations(render: RenderMode) -> usize {
 
 #[test]
 fn a_kitty_frame_allocates_nothing_in_steady_state() {
-    assert_eq!(steady_state_allocations(RenderMode::Kitty), 0);
+    for raster in [false, true] {
+        assert_eq!(
+            steady_state_allocations(RenderMode::Kitty, false, raster),
+            0,
+            "raster={raster}"
+        );
+    }
 }
 
 #[test]
 fn a_text_frame_allocates_nothing_in_steady_state() {
     for render in [RenderMode::Braille, RenderMode::Sextants, RenderMode::Blocks] {
-        assert_eq!(steady_state_allocations(render), 0, "{render:?}");
+        assert_eq!(steady_state_allocations(render, false, false), 0, "{render:?}");
+    }
+}
+
+#[test]
+fn a_sixel_frame_allocates_nothing_in_steady_state() {
+    for erase in [false, true] {
+        assert_eq!(steady_state_allocations(RenderMode::Sixel, erase, false), 0, "erase={erase}");
     }
 }

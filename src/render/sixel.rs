@@ -6,7 +6,27 @@ use crate::image::Image;
 use crate::render::kitty::{KittyError, KittyGraphics};
 use crate::sprites::PICTURE_GROUND;
 
-#[derive(Debug, Default)]
+const GROUND_BLOCK: [u8; 32] = {
+    let mut bytes = [0; 32];
+    let mut i = 0;
+    while i < 8 {
+        bytes[i * 4] = PICTURE_GROUND[0];
+        bytes[i * 4 + 1] = PICTURE_GROUND[1];
+        bytes[i * 4 + 2] = PICTURE_GROUND[2];
+        bytes[i * 4 + 3] = 255;
+        i += 1;
+    }
+    bytes
+};
+
+pub(crate) fn background_colour(round: bool) -> [u8; 3] {
+    PICTURE_GROUND.map(|component| {
+        let percent = (usize::from(component) * 100 + 127) / 255;
+        ((percent * 255 + if round { 50 } else { 0 }) / 100) as u8
+    })
+}
+
+#[derive(Debug)]
 pub struct Sixel {
     bytes: Vec<u8>,
     /// One row of six-pixel columns per palette colour. Each band clears the
@@ -14,6 +34,39 @@ pub struct Sixel {
     planes: Vec<u8>,
     /// Whether an encode stopped partway through a band, leaving bits set.
     dirty: bool,
+    /// Exact RGBA-to-palette memoization. Collisions replace an entry; they
+    /// never approximate a colour. Flat sprites reuse very few colours.
+    colours: [ColourEntry; 4096],
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct ColourEntry {
+    rgba: u32,
+    index: u8,
+}
+
+impl Default for Sixel {
+    fn default() -> Self {
+        Self {
+            bytes: Vec::new(),
+            planes: Vec::new(),
+            dirty: false,
+            colours: [ColourEntry::default(); 4096],
+        }
+    }
+}
+
+fn cached_colour(cache: &mut [ColourEntry; 4096], pixel: &[u8]) -> usize {
+    if pixel[3] == 0 || pixel[..3] == PICTURE_GROUND {
+        return 0;
+    }
+    let rgba = u32::from_le_bytes(pixel.try_into().unwrap());
+    let slot = (rgba.wrapping_mul(0x9e37_79b1) >> 20) as usize;
+    let entry = &mut cache[slot];
+    if entry.rgba != rgba {
+        *entry = ColourEntry { rgba, index: colour(pixel) as u8 };
+    }
+    usize::from(entry.index)
 }
 
 fn palette(index: usize) -> [u8; 3] {
@@ -95,16 +148,68 @@ fn run_length(row: &[u8]) -> usize {
 }
 
 impl Sixel {
+    /// Opaque empty sky behind a whole-cell crop. Paint every cell: iTerm can
+    /// retain stale regions when glyphs only surround a moving image. Background
+    /// attributes alone become translucent; full blocks stay opaque.
+    pub(crate) fn queue_ground(
+        &mut self,
+        graphics: &mut KittyGraphics,
+        cols: usize,
+        rows: usize,
+        background: [u8; 3],
+    ) -> Result<(), KittyError> {
+        self.bytes.clear();
+        put(&mut self.bytes, b"\x1b[0;38;2")?;
+        for component in background {
+            put(&mut self.bytes, b";")?;
+            number(&mut self.bytes, usize::from(component))?;
+        }
+        put(&mut self.bytes, b"m")?;
+        for row in 0..rows {
+            put(&mut self.bytes, b"\x1b[")?;
+            number(&mut self.bytes, row + 1)?;
+            put(&mut self.bytes, ";1H█".as_bytes())?;
+            if cols > 2 {
+                put(&mut self.bytes, b"\x1b[")?;
+                number(&mut self.bytes, cols - 2)?;
+                put(&mut self.bytes, b"b")?;
+            }
+            // REP eagerly wraps in WezTerm, scrolling at the bottom-right
+            // corner. Finish with an ordinary character, whose wrap is deferred.
+            if cols > 1 {
+                put(&mut self.bytes, "█".as_bytes())?;
+            }
+        }
+        graphics.write_raw(&self.bytes)
+    }
+
     /// Encodes an RGBA image, flattening alpha onto the picture background.
     /// Colour definitions are sent in each image so it is self-contained.
     pub fn encode(&mut self, image: &Image) -> Result<&[u8], KittyError> {
-        let Sixel { bytes: out, planes, dirty } = self;
+        self.encode_region(image, 0, 0, image.width.max(0) as usize, image.height.max(0) as usize)
+    }
+
+    /// Encode a rectangle directly from the image's existing row storage.
+    pub fn encode_region(
+        &mut self,
+        image: &Image,
+        left: usize,
+        top: usize,
+        width: usize,
+        height: usize,
+    ) -> Result<&[u8], KittyError> {
+        let Sixel { bytes: out, planes, dirty, colours } = self;
         out.clear();
-        let width = usize::try_from(image.width).map_err(|_| KittyError::Argument)?;
-        let height = usize::try_from(image.height).map_err(|_| KittyError::Argument)?;
+        let image_width = usize::try_from(image.width).map_err(|_| KittyError::Argument)?;
+        let image_height = usize::try_from(image.height).map_err(|_| KittyError::Argument)?;
         if width == 0
             || height == 0
-            || width.checked_mul(height).and_then(|n| n.checked_mul(4)) != Some(image.pixels.len())
+            || left > image_width
+            || top > image_height
+            || width > image_width - left
+            || height > image_height - top
+            || image_width.checked_mul(image_height).and_then(|n| n.checked_mul(4))
+                != Some(image.pixels.len())
         {
             return Err(KittyError::Argument);
         }
@@ -126,13 +231,29 @@ impl Sixel {
         let mut defined = [false; 256];
         for y in (0..height).step_by(6) {
             let mut ends = [0; 256];
+            let band_height = 6.min(height - y);
+            ends[0] = width;
             *dirty = true;
-            for dy in 0..6.min(height - y) {
-                for x in 0..width {
-                    let pixel = ((y + dy) * width + x) * 4;
-                    let c = colour(&image.pixels[pixel..pixel + 4]);
-                    planes[c * width + x] |= 1 << dy;
-                    ends[c] = ends[c].max(x + 1);
+            for dy in 0..band_height {
+                let start = ((top + y + dy) * image_width + left) * 4;
+                let row = &image.pixels[start..start + width * 4];
+                // Paint a solid background before the foreground planes.
+                // Empty sky needs neither palette lookups nor plane bits.
+                for (block, pixels) in row.chunks(32).enumerate() {
+                    let x = block * 8;
+                    if pixels == GROUND_BLOCK {
+                        continue;
+                    } else {
+                        for (offset, pixel) in pixels.chunks_exact(4).enumerate() {
+                            let x = x + offset;
+                            let c = cached_colour(colours, pixel);
+                            if c == 0 {
+                                continue;
+                            }
+                            planes[c * width + x] |= 1 << dy;
+                            ends[c] = ends[c].max(x + 1);
+                        }
+                    }
                 }
             }
             let mut first = true;
@@ -154,6 +275,14 @@ impl Sixel {
                         number(out, (usize::from(component) * 100 + 127) / 255)?;
                     }
                     defined[c] = true;
+                    // Some decoders (including WezTerm) only define the
+                    // palette entry here. Select it explicitly before drawing.
+                    put(out, b"#")?;
+                    number(out, c)?;
+                }
+                if c == 0 {
+                    run(out, ((1 << band_height) - 1) + b'?', width)?;
+                    continue;
                 }
                 let row = &planes[c * width..c * width + end];
                 let mut x = 0;
@@ -165,7 +294,7 @@ impl Sixel {
             }
             // A colour's bits all lie before its end, and only the colours in
             // this band have any: clearing those rows leaves the planes zero.
-            for (c, &end) in ends.iter().enumerate() {
+            for (c, &end) in ends.iter().enumerate().skip(1) {
                 if end != 0 {
                     planes[c * width..c * width + end].fill(0);
                 }
@@ -180,5 +309,26 @@ impl Sixel {
     }
     pub fn queue(&mut self, graphics: &mut KittyGraphics, image: &Image) -> Result<(), KittyError> {
         graphics.write_raw(self.encode(image)?)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn palette_cache_remains_exact_after_collisions_and_alpha_changes() {
+        let mut cache = [ColourEntry::default(); 4096];
+        let mut word = 1_u32;
+        for _ in 0..100_000 {
+            word = word.wrapping_mul(1664525).wrapping_add(1013904223);
+            let pixel = word.to_le_bytes();
+            assert_eq!(cached_colour(&mut cache, &pixel), colour(&pixel));
+            assert_eq!(cached_colour(&mut cache, &pixel), colour(&pixel));
+        }
+        for alpha in 0..=255 {
+            let pixel = [PICTURE_GROUND[0], PICTURE_GROUND[1], PICTURE_GROUND[2], alpha];
+            assert_eq!(cached_colour(&mut cache, &pixel), colour(&pixel));
+        }
     }
 }

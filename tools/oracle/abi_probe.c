@@ -34,6 +34,10 @@
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#ifdef __APPLE__
+#include <sys/event.h>
+#include <sys/mman.h>
+#endif
 
 #if !defined(__APPLE__) && !defined(__linux__)
 #error "the probe knows the prototypes of Darwin and GNU/Linux only"
@@ -147,6 +151,24 @@ static void report(void) {
     OFFSET("timespec", struct timespec, tv_nsec);
     FIELD_SIZE("timespec", struct timespec, tv_nsec);
     CONST(CLOCK_MONOTONIC);
+    CONST(CLOCK_PROCESS_CPUTIME_ID);
+#ifdef __APPLE__
+    SIZE("kevent64_s", struct kevent64_s);
+    ALIGN("kevent64_s", struct kevent64_s);
+    OFFSET("kevent64_s", struct kevent64_s, ident);
+    OFFSET("kevent64_s", struct kevent64_s, filter);
+    OFFSET("kevent64_s", struct kevent64_s, flags);
+    OFFSET("kevent64_s", struct kevent64_s, fflags);
+    OFFSET("kevent64_s", struct kevent64_s, data);
+    OFFSET("kevent64_s", struct kevent64_s, udata);
+    OFFSET("kevent64_s", struct kevent64_s, ext);
+    CONST(EVFILT_TIMER);
+    CONST(EV_ADD);
+    CONST(EV_ONESHOT);
+    CONST(EV_ERROR);
+    CONST(NOTE_NSECONDS);
+    CONST(NOTE_CRITICAL);
+#endif
 
     /* struct sigaction, as the sigaction() wrapper takes it */
     SIZE("sigset_t", sigset_t);
@@ -197,6 +219,20 @@ static void report(void) {
     CONST(O_RDWR);
     CONST(O_NOCTTY);
     CONST(O_CLOEXEC);
+#ifdef __APPLE__
+    SCALAR("off_t", off_t);
+    CONST(O_RDONLY);
+    CONST(O_CREAT);
+    CONST(O_EXCL);
+    CONST(PROT_READ);
+    CONST(PROT_WRITE);
+    CONST(MAP_SHARED);
+    CONST(EEXIST);
+    CONST(ENOENT);
+    CONST(SIG_BLOCK);
+    CONST(SIG_SETMASK);
+    CONST((intptr_t)MAP_FAILED);
+#endif
 
     /* Prototypes. Top-level parameter qualifiers (restrict) and attributes
      * such as noreturn are not part of the function type being compared. */
@@ -212,6 +248,11 @@ static void report(void) {
     FN(clock_gettime, int (*)(clockid_t, struct timespec *), "int(clockid_t, struct timespec *)");
     FN(nanosleep, int (*)(const struct timespec *, struct timespec *),
        "int(const struct timespec *, struct timespec *)");
+#ifdef __APPLE__
+    FN(kqueue, int (*)(void), "int(void)");
+    FN(kevent64, int (*)(int, const struct kevent64_s *, int, struct kevent64_s *, int, unsigned int, const struct timespec *),
+       "int(int, const struct kevent64_s *, int, struct kevent64_s *, int, unsigned int, const struct timespec *)");
+#endif
     FN(time, time_t (*)(time_t *), "time_t(time_t *)");
     /* With these feature macros glibc's strerror_r is the XSI one, which it
      * links as __xpg_strerror_r; the Rust declaration names that symbol. */
@@ -230,6 +271,14 @@ static void report(void) {
     FN(__error, int *(*)(void), "int *(void)");
 #else
     FN(__errno_location, int *(*)(void), "int *(void)");
+#endif
+#ifdef __APPLE__
+    FN(shm_open, int (*)(const char *, int, ...), "int(const char *, int, ...)");
+    FN(shm_unlink, int (*)(const char *), "int(const char *)");
+    FN(mmap, void *(*)(void *, size_t, int, int, int, off_t), "void *(void *, size_t, int, int, int, off_t)");
+    FN(munmap, int (*)(void *, size_t), "int(void *, size_t)");
+    FN(sigfillset, int (*)(sigset_t *), "int(sigset_t *)");
+    FN(sigprocmask, int (*)(int, const sigset_t *, sigset_t *), "int(int, const sigset_t *, sigset_t *)");
 #endif
 }
 

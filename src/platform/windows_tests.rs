@@ -181,6 +181,7 @@ fn hidden_console_child() {
                         if supported { &b"\x1b[?64;4;22c"[..] } else { &b"\x1b[?64;22c"[..] },
                     ),
                     (&b"\x1b[16t"[..], &b"\x1b[6;20;10t"[..]),
+                    (&b"\x1b[>q"[..], &b"\x1bP>|Windows Terminal\x1b\\"[..]),
                     (&b"\x1b[?80$p"[..], &b"\x1b[?80;2$y"[..]),
                     (&b"\x1b[?80h"[..], &b""[..]),
                 ] {
@@ -203,8 +204,16 @@ fn hidden_console_child() {
             });
             let result = crate::terminal::prepare_sixel();
             if supported {
-                assert_eq!(result.unwrap(), (10, 20));
-                assert_eq!(emulator.join().unwrap(), b"\x1b[c\x1b[16t\x1b[?80$p\x1b[?80h");
+                assert_eq!(
+                    result.unwrap(),
+                    crate::terminal::SixelTerminal {
+                        cell_size: (10, 20),
+                        erase_before_frame: false,
+                        can_position_images: true,
+                        crop_background: None,
+                    }
+                );
+                assert_eq!(emulator.join().unwrap(), b"\x1b[c\x1b[16t\x1b[>q\x1b[?80$p\x1b[?80h");
             } else {
                 assert_eq!(result.unwrap_err().kind(), io::ErrorKind::Unsupported);
                 assert_eq!(emulator.join().unwrap(), b"\x1b[c");
@@ -360,7 +369,10 @@ fn hidden_console_child() {
                 loop {
                     match graphics.flush_nonblocking() {
                         Ok(()) => break,
-                        Err(crate::render::kitty::KittyError::Again) => std::thread::yield_now(),
+                        Err(crate::render::kitty::KittyError::Again) => {
+                            let mut ready = [PollFd::new(1, POLLOUT)];
+                            assert_eq!(poll(&mut ready, 2000).unwrap(), 1);
+                        }
                         Err(error) => panic!("{error}"),
                     }
                     assert!(start.elapsed() < Duration::from_secs(5));
@@ -368,7 +380,7 @@ fn hidden_console_child() {
                 assert_eq!(drain.join().unwrap(), expected);
                 assert_eq!(graphics.len(), 0);
             } else {
-                assert!(!WRITER.get().unwrap().stop());
+                assert!(!active_writer().unwrap().stop());
                 // The cancelled write and the stopped writer both fail the
                 // flush with EIO, rather than the EINTR it would retry forever.
                 assert_eq!(

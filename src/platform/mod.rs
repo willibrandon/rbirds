@@ -62,6 +62,8 @@ mod poll;
 pub mod pty;
 mod restore;
 mod scan;
+#[cfg(target_os = "macos")]
+mod shared_image;
 mod signals;
 mod termios;
 mod time;
@@ -93,9 +95,14 @@ pub use restore::{
     write_all_quietly,
 };
 pub use scan::scan_osc_rgb;
+#[cfg(target_os = "macos")]
+pub use shared_image::SharedImage;
 pub use signals::{default_sigpipe, install_signal_handlers, send_signal};
 pub use termios::{RawModeView, tcgetattr, tcsetattr};
-pub use time::{Timespec, clock_gettime, monotonic_now, nanosleep, time_now};
+pub use time::{
+    FrameSleeper, MEASUREMENT_CLOCK, Timespec, clock_gettime, measurement_clock_ns, monotonic_now,
+    nanosleep, process_cpu_time, time_now,
+};
 pub use trig::sin_cos;
 pub use tty::{WinSize, is_terminal, set_window_size, window_size, window_size_or_zero};
 
@@ -167,6 +174,8 @@ macro_rules! foreign {
 /// is exported as `__xpg_strerror_r` (plain `strerror_r` is the GNU variant
 /// returning `char *`).
 mod sys {
+    #[cfg(target_os = "macos")]
+    use super::os::Kevent64;
     use super::os::{SigAction, Termios, clockid_t, nfds_t, pid_t, sigset_t, time_t};
     use super::poll::PollFd;
     use super::time::Timespec;
@@ -193,6 +202,13 @@ mod sys {
         fn clock_gettime(clock: clockid_t, now: *mut Timespec) -> c_int;
         ["nanosleep", "int(const struct timespec *, struct timespec *)"]
         fn nanosleep(delay: *const Timespec, remaining: *mut Timespec) -> c_int;
+        ["kqueue", "int(void)"]
+        #[cfg(target_os = "macos")]
+        fn kqueue() -> c_int;
+        ["kevent64", "int(int, const struct kevent64_s *, int, struct kevent64_s *, int, unsigned int, const struct timespec *)"]
+        #[cfg(target_os = "macos")]
+        fn kevent64(fd: c_int, changes: *const Kevent64, change_count: c_int,
+            events: *mut Kevent64, event_count: c_int, flags: std::ffi::c_uint, timeout: *const Timespec) -> c_int;
         ["time", "time_t(time_t *)"]
         fn time(out: *mut time_t) -> time_t;
         ["strerror_r", "int(int, char *, size_t)"]
@@ -227,6 +243,24 @@ mod sys {
         ["__errno_location", "int *(void)"]
         #[cfg(target_os = "linux")]
         fn __errno_location() -> *mut c_int;
+        ["shm_open", "int(const char *, int, ...)"]
+        #[cfg(target_os = "macos")]
+        fn shm_open(name: *const c_char, flags: c_int, ...) -> c_int;
+        ["shm_unlink", "int(const char *)"]
+        #[cfg(target_os = "macos")]
+        fn shm_unlink(name: *const c_char) -> c_int;
+        ["mmap", "void *(void *, size_t, int, int, int, off_t)"]
+        #[cfg(target_os = "macos")]
+        fn mmap(address: *mut c_void, length: usize, protection: c_int, flags: c_int, fd: c_int, offset: super::os::off_t) -> *mut c_void;
+        ["munmap", "int(void *, size_t)"]
+        #[cfg(target_os = "macos")]
+        fn munmap(address: *mut c_void, length: usize) -> c_int;
+        ["sigfillset", "int(sigset_t *)"]
+        #[cfg(target_os = "macos")]
+        fn sigfillset(set: *mut sigset_t) -> c_int;
+        ["sigprocmask", "int(int, const sigset_t *, sigset_t *)"]
+        #[cfg(target_os = "macos")]
+        fn sigprocmask(how: c_int, set: *const sigset_t, old: *mut sigset_t) -> c_int;
     }
 }
 

@@ -1,12 +1,14 @@
 # Deviations
 
 D-001 through D-003 are proposed changes. D-004 and D-005 describe the accepted
-Sixel and Windows additions. Test results are in [the evidence index](evidence/README.md).
+Sixel and Windows additions. D-006 through D-009 describe live pacing, Kitty
+sprite grouping, paused frames and iTerm composition. Test results are in
+[the evidence index](evidence/README.md).
 
 The first three entries cover C behavior that is undefined, and so can't be reproduced
 without reproducing memory corruption or an implementation-defined accident.
 Where the reference's behavior is well defined, rbirds reproduces it, quirks
-included (for example the benchmark's double hunt, the `c` byte that ends a
+included except for the changes below (for example the benchmark's double hunt, the `c` byte that ends a
 theme query, and the panel columns padded by bytes).
 
 Reference for every entry: cbirds 1.4.0, commit
@@ -94,3 +96,92 @@ Reference for every entry: cbirds 1.4.0, commit
 - Claim affected: Windows has its own tests. C comparisons, Unix ABI checks and
   POSIX signal tests run on Unix. Windows ARM64 and appearance in real terminals
   still need testing. Forced termination may prevent terminal cleanup.
+
+## D-006: live frame deadlines
+
+The C loop sleeps for the remaining part of each frame, so wake-up delays shift
+every subsequent frame. rbirds instead keeps monotonic 60 Hz deadlines and
+rebases after an overrun. It blocks between frames without spinning. On macOS,
+a one-shot kqueue timer requests minimal timer coalescing. No thread priority is
+raised and the simulation still uses the actual elapsed frame duration.
+
+This intentionally changes live timing under C07/C13, while retaining exact
+simulation results for injected times, renderer output for identical state,
+recordings and benchmark behavior. `--unlock-fps` still disables pacing.
+The scheduler tests in `src/timing.rs`, ABI probe, PTY lifecycle tests and live
+measurements cover the change. `RBIRDS_TRACE` is an optional developer diagnostic;
+it does not add an option to the user-facing CLI. See [PERFORMANCE.md](PERFORMANCE.md).
+
+## D-007: live Kitty sprite textures
+
+Live Kitty playback packs rotations into vertical image strips and places their
+source rectangles. The protocol's source pixels, pixel offsets and draw order
+are preserved; uploads and placement bytes differ. Text, Sixel, recordings and
+the C construction benchmark retain their existing formats. Explicit z values
+preserve the original image ordering within the near and far layers. Repeated
+border pixels preserve filtering at crop edges, and strips stay within 2048
+pixels high for the supported sprite sizes.
+
+The purpose is to reduce image lookup and texture switching in the terminal.
+`render::atlas` tests compare decoded pixels and placement fields;
+`tools/kitty-atlas-check.sh` checks the terminal's own decoding at sizes 4, 30
+and 64, including overlapping birds, trails, depth and hawks. This changes the
+live Kitty part of C12 and C15; exact C comparisons still cover the reference
+protocol construction path. It does not change simulation arithmetic.
+
+## D-008: unchanged paused live frames
+
+Live playback skips the grid rebuild, composition and output when a paused
+scene is unchanged. Input revisions include keys consumed during a blocked
+flush. Resize, single-step, population changes and visible autopilot changes
+invalidate the held frame. Pointer reports update the simulation's mouse state
+without repainting a paused image. Quit still plays the outro, and input/window
+polling remains at 60 Hz even with unlocked animation.
+
+The live panel shows zero frame cost, bytes and rate while paused, with a fresh
+statistics window on resume. The frame-limit counter and simulation clock keep
+advancing. Traces distinguish idle ticks from submitted frames. The construction
+and C-oracle path retains its original per-tick output by default. This changes
+the paused live output and statistics portions of C12/C15, not simulation
+arithmetic or the reference construction benchmark.
+
+`tests/paused_live.rs` compares state and submitted bytes with full rendering in
+all five renderers through controls, resize, autopilot and the outro. The PTY
+case in `tests/pty_rbirds.rs` verifies silence, single-step, restoration and
+bounded idle wakeups with both normal and unlocked pacing. Allocation checks
+include pause and resume.
+
+## D-009: composed Kitty frames in iTerm
+
+An iTerm XTVERSION reply selects local composition for live Kitty graphics.
+Live startup requires iTerm 3.7.3 or a dated nightly from September 19, 2026
+onward; earlier releases retain each uploaded frame's GPU texture. Affected or
+unrecognized iTerm versions exit before uploading, with Sixel/text alternatives
+in the diagnostic. Version and restoration checks cover this startup change
+under C07/C13; the [stable-release investigation](evidence/live-iterm-stable-2026-09-27-macos-arm64.md)
+records the failed reusable-texture alternative and fixed-release observations.
+iTerm 3.6.6 accepts the capability query but fails image-number placements;
+using explicit image IDs alone still incurs a display-list rebuild for every
+sprite. The renderer instead sends one cropped transparent surface, or two
+when a visible panel separates the far and near layers. Source pixels retain
+their native resolution, clipping and image-ID stacking order. A lossless
+zlib stream carries RGBA pixels through the Kitty protocol using explicit IDs.
+On macOS, a successful local shared-memory query selects raw RGBA objects
+instead. The live parser ignores late graphics replies, including a reply split
+by the query deadline, so their payload cannot act as keys. At most four private
+objects are pending; unread objects retain their contents and that frame falls
+back to inline encoding. Unavailable or remote
+connections keep the zlib path. The shared transport preserves the same pixels
+and includes normal, error, panic and caught-signal cleanup.
+Uploads alternate between two image-ID sets before a synchronized placement
+swap, avoiding invalidation of the image still being displayed.
+
+This changes live Kitty transport under C12/C15 for iTerm. Composing in local
+8-bit RGBA can produce small overlap-color differences from iTerm blending
+individual textures after color conversion. It does not alter the simulation,
+recordings, C construction comparisons or other terminals' atlas path.
+The codec, composition, PTY negotiation, paused-frame and allocation tests cover
+the path; foreground observations and their limits are recorded in the
+[Mac evidence](evidence/live-2026-09-26-macos-arm64.md).
+The [local transport follow-up](evidence/live-iterm-shm-2026-09-27-macos-arm64.md)
+records the shared-memory CPU, presentation, ABI and lifecycle checks.

@@ -12,20 +12,22 @@
 
 use crate::platform::OsStrExt;
 use std::ffi::OsStr;
+use std::time::{Duration, Instant};
 
-use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Program, frame_delay_after};
+use crate::app::{EXIT_FAILURE, EXIT_SUCCESS, Program};
 use crate::config::*;
 use crate::image::{Image, PngError, png};
 use crate::input::InputParser;
 use crate::platform::{self, STDIN_FILENO, Timespec, WinSize};
 use crate::render::Renderer;
-use crate::render::compose::{compose_onto, text_style, upload_sprite_sets};
+use crate::render::compose::{compose_onto, text_style};
 use crate::render::kitty::{KittyError, KittyGraphics};
 use crate::simulation::{Bird, RenderMode, Sim};
 use crate::spatial_grid::{SpatialGrid, status_string};
 use crate::sprites::{PICTURE_GROUND, SpriteError, empty_catalogue, free_sprites};
 use crate::stdio::{CStdout, cat, eprint};
 use crate::terminal::{self, Terminal};
+use crate::timing::{FramePacer, FrameProfile, Trace};
 
 /// `handle_input`'s read: at most INPUT_BUFFER_SIZE bytes, whatever is there.
 pub fn read_keys(sim: &mut Sim, parser: &mut InputParser) -> bool {
@@ -108,8 +110,17 @@ pub fn write_snapshot(
 pub enum Frame {
     /// Queued in the output buffer, to be flushed.
     Drawn,
+    /// The paused scene is already on screen; no output was queued.
+    Idle,
     /// The flight out is over: leave the loop without drawing.
     Over,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct PausedFrame {
+    input_revision: u64,
+    window: WinSize,
+    drift_at: f64,
 }
 
 /// The loop's own state (`live_birds`, `leaving`, the clocks, the parser).
@@ -121,6 +132,10 @@ pub struct LiveLoop {
     pub live_birds: i32,
     /// Seconds left of the flight out.
     pub leaving: f64,
+    /// Live playback may keep an unchanged paused image on screen. The
+    /// reference construction path retains its per-tick output by default.
+    pub reuse_paused_frame: bool,
+    paused_frame: Option<PausedFrame>,
 }
 
 impl LiveLoop {
@@ -131,6 +146,8 @@ impl LiveLoop {
             previous_frame: started,
             live_birds,
             leaving: 0.0,
+            reuse_paused_frame: false,
+            paused_frame: None,
         }
     }
 
@@ -171,6 +188,33 @@ impl LiveLoop {
         sim.release_the_formation_if_due();
         sim.maybe_drift();
         terminal::apply_window_size(sim, window);
+        let stationary = self.reuse_paused_frame && sim.paused && self.leaving <= 0.0;
+        let paused_frame = stationary.then_some(PausedFrame {
+            input_revision: self.parser.revision,
+            window,
+            // Autopilot still changes sliders while paused. Only a visible
+            // panel needs to be repainted for those changes.
+            drift_at: if sim.screen.legend_width > 0 { sim.last_drift_at } else { 0.0 },
+        });
+        if stationary
+            && !sim.step_once
+            && !sim.population_changed
+            && self.paused_frame == paused_frame
+        {
+            if let Some(profile) = &mut renderer.profile {
+                profile.updated();
+                profile.rendered();
+            }
+            return Ok(Frame::Idle);
+        }
+        if stationary != self.paused_frame.is_some() {
+            // A paused image has no ongoing frame cost or frame rate. Start
+            // a fresh statistics window on both pause and resume.
+            renderer.stats = crate::render::Stats {
+                window_started: sim.clock.seconds,
+                ..crate::render::Stats::default()
+            };
+        }
         if let Err(error) = grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds) {
             return Err(grid_failure("Cannot resize spatial grid", error));
         }
@@ -190,19 +234,25 @@ impl LiveLoop {
         if let Err(error) = sim.snapshot_and_build(birds, snapshot, grid) {
             return Err(grid_failure("Cannot build spatial grid", error));
         }
-        let rendered = if self.leaving > 0.0 {
+        if self.leaving > 0.0 {
             sim.fly_away(birds);
-            renderer.queue_render_frame(graphics, sim, birds)
         } else {
             sim.advance(birds, snapshot, grid);
-            renderer.queue_render_frame(graphics, sim, birds)
-        };
+        }
+        if let Some(profile) = &mut renderer.profile {
+            profile.updated();
+        }
+        let rendered = renderer.queue_render_frame(graphics, sim, birds);
+        if let Some(profile) = &mut renderer.profile {
+            profile.rendered();
+        }
         if let Err(error) = rendered {
             let renderer = if sim.render_mode == RenderMode::Sixel { "Sixel" } else { "Kitty" };
             return Err(fail(
                 format!("Cannot render {renderer} graphics: {}\n", kitty_status(error)).as_bytes(),
             ));
         }
+        self.paused_frame = paused_frame;
         Ok(Frame::Drawn)
     }
 }
@@ -273,18 +323,45 @@ fn flush_frame(
 /// whichever way it returns.
 pub fn run(program: &mut Program, _stdout: &mut CStdout) -> i32 {
     let Program { sim, settings, renderer } = program;
-    match run_live(sim, renderer, settings) {
+    match run_live::<false>(sim, renderer, settings) {
         Ok(code) | Err(code) => code,
     }
 }
 
-fn run_live(
+/// The measurement executable's controlled scene. Rendering, negotiation and
+/// output use the live path; simulation time advances by frame number. Input
+/// or resize invalidates the run. Ordinary `run` specializes these hooks away.
+pub fn run_fixed_scene(program: &mut Program, _stdout: &mut CStdout) -> i32 {
+    let Program { sim, settings, renderer } = program;
+    if settings.requested_seed < 0
+        || settings.frame_limit <= 0
+        || settings.bench_frames > 0
+        || settings.record_path.is_some()
+        || settings.sprite_path.is_some()
+        || sim.legend_enabled
+    {
+        return fail(b"Fixed scenes require --seed and --frames, without --bench, --record, --sprite or --panel\n");
+    }
+    match run_live::<true>(sim, renderer, settings) {
+        Ok(code) | Err(code) => code,
+    }
+}
+
+fn run_live<const FIXED_SCENE: bool>(
     sim: &mut Sim,
     renderer: &mut Renderer,
     settings: &crate::app::Settings,
 ) -> Result<i32, i32> {
+    let gate = if FIXED_SCENE {
+        crate::fixed_scene::Gate::from_environment(settings.frame_limit)
+            .map_err(|error| fail(format!("Cannot start fixture gate: {error}\n").as_bytes()))?
+    } else {
+        None
+    };
     let name = settings.program_name.clone();
     let sprite_path = settings.sprite_path.as_deref();
+    let mut trace = Trace::from_environment()
+        .map_err(|error| fail(format!("Cannot start live trace: {error}\n").as_bytes()))?;
     platform::install_signal_handlers();
 
     // The terminal is asked its questions before anything is built for it.
@@ -296,17 +373,35 @@ fn run_live(
     if sim.palette_follows_the_theme() && !terminal::learn_the_theme(&mut sim.theme) {
         sim.config.palette = crate::palette::fallback_palette();
     }
+    #[cfg(target_os = "macos")]
+    let mut startup_parser = InputParser::default();
+    if sim.render_mode == RenderMode::Kitty
+        && terminal::prepare_kitty()
+            .map_err(|error| fail(format!("Cannot enable Kitty graphics: {error}\n").as_bytes()))?
+    {
+        renderer.kitty_raster = Some(crate::render::compose::KittyRaster::default());
+        #[cfg(target_os = "macos")]
+        if let Some(raster) = renderer.kitty_raster.as_mut() {
+            raster.shared = terminal::shared_images(&mut startup_parser);
+        }
+    }
     let sixel_cell = if sim.render_mode == RenderMode::Sixel {
-        Some(
-            terminal::prepare_sixel()
-                .map_err(|error| fail(format!("Cannot enable Sixel: {error}\n").as_bytes()))?,
-        )
+        let options = terminal::prepare_sixel()
+            .map_err(|error| fail(format!("Cannot enable Sixel: {error}\n").as_bytes()))?;
+        renderer.erase_sixel_before_frame = options.erase_before_frame;
+        renderer.crop_sixel_frames =
+            options.can_position_images && options.crop_background.is_some();
+        if let Some(background) = options.crop_background {
+            renderer.sixel_background = background;
+        }
+        Some(options.cell_size)
     } else {
         None
     };
 
     let mut grid = SpatialGrid::new(SPATIAL_CELL_SIZE)
         .map_err(|error| grid_failure("Cannot initialize spatial grid", error))?;
+    renderer.incremental_legend = true;
     // A named seed makes a run repeatable.
     let seed = if settings.requested_seed >= 0 {
         settings.requested_seed as u32
@@ -324,7 +419,10 @@ fn run_live(
     grid.prepare(sim.screen.width, sim.screen.height, sim.config.birds)
         .map_err(|error| grid_failure("Cannot prepare spatial grid", error))?;
     // The sprites, once, as pixels.
-    let built = if sim.drawing_with_text() {
+    let built = if sim.drawing_with_text()
+        || sim.render_mode == RenderMode::Sixel
+        || renderer.kitty_raster.is_some()
+    {
         renderer.prepare_text_renderer(sim, sprite_path, &name)
     } else {
         sim.rasterise_sprites(&mut renderer.sprites, sprite_path, &name)
@@ -353,6 +451,9 @@ fn run_live(
 
     terminal.enter_alt_screen();
     terminal::write_all(b"\x1b[J");
+    if renderer.crop_sixel_frames {
+        renderer.crop_sixel_frames &= terminal::sixel_backdrop_is_single_width();
+    }
     terminal::apply_window_size(
         sim,
         terminal::graphics_window(
@@ -365,21 +466,67 @@ fn run_live(
     sim.begin_the_intro();
     if sim.render_mode == RenderMode::Kitty {
         terminal.mark_sprites_uploaded();
-        let uploaded = upload_sprite_sets(sim, &mut graphics, &renderer.sprites);
-        free_sprites(&mut renderer.sprites);
-        if let Err(error) = uploaded {
-            return Err(fail(
-                format!("Cannot upload Kitty graphics: {}\n", kitty_status(error)).as_bytes(),
-            ));
+        if renderer.kitty_raster.is_none() {
+            let uploaded = crate::render::atlas::Atlas::upload(
+                &mut graphics,
+                &renderer.sprites[..(sim.sprite_set_count() * ROTATION_FRAMES) as usize],
+            )
+            .map(|atlas| renderer.atlas = Some(atlas));
+            free_sprites(&mut renderer.sprites);
+            if let Err(error) = uploaded {
+                return Err(fail(
+                    format!("Cannot upload Kitty graphics: {}\n", kitty_status(error)).as_bytes(),
+                ));
+            }
         }
     }
 
-    let mut live = LiveLoop::new(platform::monotonic_now(), sim.config.birds);
+    let started =
+        if FIXED_SCENE { crate::fixed_scene::frame_time(0) } else { platform::monotonic_now() };
+    let mut live = LiveLoop::new(started, sim.config.birds);
+    #[cfg(target_os = "macos")]
+    {
+        live.parser = startup_parser;
+    }
+    live.reuse_paused_frame = true;
+    let fixed_window = FIXED_SCENE.then(|| {
+        terminal::graphics_window(
+            platform::window_size_or_zero(platform::STDOUT_FILENO),
+            sixel_cell,
+        )
+    });
+    if let Some(trace) = &mut trace {
+        if FIXED_SCENE {
+            trace.fixed_scene(format!("v1;seed={seed};{sim:?}"));
+        }
+        trace
+            .begin(
+                sim.render_mode.name(),
+                [sim.screen.cols, sim.screen.rows, sim.screen.width, sim.screen.height],
+            )
+            .map_err(|error| fail(format!("Cannot start live trace: {error}\n").as_bytes()))?;
+    }
+    let mut pacer = FramePacer::new(Instant::now());
+    let mut sleeper = platform::FrameSleeper::new();
     let mut input = [0_u8; INPUT_BUFFER_SIZE];
     loop {
         if platform::exit_requested() {
             return Ok(130);
         }
+        if let Some(gate) = &gate
+            && sim.clock.frame == gate.warmup
+        {
+            gate.wait("begin")
+                .map_err(|error| fail(format!("Fixture begin: {error}\n").as_bytes()))?;
+            pacer = FramePacer::new(Instant::now());
+        }
+        renderer.profile = trace.as_ref().map(|_| {
+            let mut profile = FrameProfile::new();
+            if !settings.unlock_fps {
+                profile.target = pacer.target();
+            }
+            profile
+        });
         let keys = platform::read(STDIN_FILENO, &mut input).ok();
         let frame_start = platform::monotonic_now();
         let window = terminal::graphics_window(
@@ -387,6 +534,9 @@ fn run_live(
             sixel_cell,
         );
         let keys = keys.map(|length| &input[..length]);
+        if fixed_window.is_some_and(|fixed| fixed != window) {
+            return Err(fail(b"Fixed scene invalidated by a window resize\n"));
+        }
         // The clock is read after the keys, as the C reads it; the window a
         // moment later, which no step in between depends on.
         let drawn = live.frame(
@@ -397,39 +547,82 @@ fn run_live(
             &mut snapshot,
             &mut grid,
             keys,
-            frame_start,
+            if FIXED_SCENE {
+                crate::fixed_scene::frame_time(sim.clock.frame + 1)
+            } else {
+                frame_start
+            },
             window,
         )?;
+        if FIXED_SCENE && (live.parser.revision != 0 || sim.mouse.present) {
+            return Err(fail(b"Fixed scene invalidated by input\n"));
+        }
         if drawn == Frame::Over {
             break;
         }
         let frame_bytes = graphics.len();
-        if !flush_frame(sim, &mut live.parser, &mut graphics, &name)? {
+        let flushed_all = flush_frame(sim, &mut live.parser, &mut graphics, &name)?;
+        if FIXED_SCENE && (live.parser.revision != 0 || sim.mouse.present) {
+            return Err(fail(b"Fixed scene invalidated by input during output\n"));
+        }
+        if !flushed_all {
             break;
         }
-        if settings.frame_limit > 0 && sim.clock.frame >= i64::from(settings.frame_limit) {
-            break;
-        }
+        let flushed = Instant::now();
+        let last = settings.frame_limit > 0 && sim.clock.frame >= i64::from(settings.frame_limit);
         let frame_end = platform::monotonic_now();
-        account_frame(
-            renderer,
-            sim.clock.seconds,
-            elapsed_microseconds(&frame_start, &frame_end),
-            frame_bytes,
-        );
-        let remaining =
-            frame_delay_after(settings.unlock_fps, elapsed_microseconds(&frame_start, &frame_end));
-        if remaining > 0 {
-            let _ = platform::nanosleep(&Timespec {
-                tv_sec: remaining / 1_000_000,
-                tv_nsec: (remaining % 1_000_000) * 1000,
-            });
+        if drawn == Frame::Drawn && (!sim.paused || live.leaving > 0.0) {
+            account_frame(
+                renderer,
+                sim.clock.seconds,
+                elapsed_microseconds(&frame_start, &frame_end),
+                frame_bytes,
+            );
         }
+        // Unlocked animation must not turn an unchanged paused scene into a
+        // busy loop. Keep the same input/resize polling cadence while idle.
+        let unlimited = settings.unlock_fps && (!sim.paused || live.leaving > 0.0);
+        let delay = if unlimited || last { Duration::ZERO } else { pacer.delay_after(flushed) };
+        if let Some(trace) = &mut trace {
+            trace
+                .record(
+                    renderer.profile.unwrap(),
+                    flushed,
+                    delay,
+                    frame_bytes,
+                    keys.map_or(0, <[u8]>::len),
+                )
+                .map_err(|error| fail(format!("Cannot record live trace: {error}\n").as_bytes()))?;
+        }
+        if let Some(gate) = &gate
+            && sim.clock.frame == gate.end
+        {
+            gate.wait("end").map_err(|error| fail(format!("Fixture end: {error}\n").as_bytes()))?;
+        }
+        if last {
+            break;
+        }
+        sleeper.sleep(delay);
     }
     // A Ctrl event may also interrupt a blocked frame flush, which exits the
     // loop before its next iteration can observe the cancellation flag.
     if platform::exit_requested() {
         return Ok(130);
+    }
+    if fixed_window.is_some_and(|fixed| {
+        fixed
+            != terminal::graphics_window(
+                platform::window_size_or_zero(platform::STDOUT_FILENO),
+                sixel_cell,
+            )
+    }) {
+        return Err(fail(b"Fixed scene invalidated by a window resize\n"));
+    }
+    if let Some(trace) = trace {
+        terminal.restore();
+        trace
+            .finish()
+            .map_err(|error| fail(format!("Cannot finish live trace: {error}\n").as_bytes()))?;
     }
     // A snapshot asked for and not written is a failed run.
     let mut outcome = EXIT_SUCCESS;

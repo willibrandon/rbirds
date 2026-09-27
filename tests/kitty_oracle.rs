@@ -200,6 +200,11 @@ fn transcript(mode: Mode, ops: &[Op]) -> (String, Vec<u8>) {
                 let reader = output.drain.as_mut().expect("drain needs the full pipe");
                 let got = reader.read(&mut drained[..*n]).map(|n| n as i64).unwrap_or(-1);
                 let _ = writeln!(out, "read {got}");
+                out.push_str("drained ");
+                if got > 0 {
+                    escaped(&mut out, &drained[..got as usize]);
+                }
+                out.push('\n');
                 continue;
             }
             Op::Nonblock(on) => {
@@ -565,6 +570,14 @@ fn backpressure_matches_the_reference() {
         Op::Dump,
         Op::Raw(rng.bytes(100_000)),
         Op::Upload(2, rng.bytes(7000)),
+        // A partial flush followed by appends must expose only its unsent
+        // suffix and preserve the C capacity, including multi-command uploads.
+        Op::FlushNonblocking,
+        Op::Dump,
+        Op::Raw(rng.bytes(6000)),
+        Op::Upload(4, rng.bytes(5000)),
+        Op::Text(1, 2, b"pending tail".to_vec()),
+        Op::Dump,
     ];
     // Every drain follows a refused flush, so the pipe is full and the read
     // cannot block; the queue outlasts all but the last of them.
@@ -586,6 +599,12 @@ fn backpressure_matches_the_reference() {
     ops.push(Op::Flush);
     ops.push(Op::Nonblock(false));
     ops.push(Op::FlushNonblocking);
+    ops.push(Op::Dump);
+    // Clearing a partially sent queue must also reset its position before
+    // another command is appended, without changing the allocated capacity.
+    ops.push(Op::Clear);
+    ops.push(Op::Dump);
+    ops.push(Op::Text(0, 0, b"fresh queue".to_vec()));
     ops.push(Op::Dump);
     check(&exe, "full", Mode::Full, &ops);
 }

@@ -27,6 +27,7 @@ pub type nfds_t = c_uint;
 pub type pid_t = i32;
 /// `__uint32_t`: one bit per signal.
 pub type sigset_t = u32;
+pub type off_t = i64;
 
 pub const NCCS: usize = 20;
 
@@ -81,6 +82,25 @@ pub const POLLHUP: c_short = 0x0010;
 pub const POLLNVAL: c_short = 0x0020;
 
 pub const CLOCK_MONOTONIC: clockid_t = 6;
+pub const CLOCK_PROCESS_CPUTIME_ID: clockid_t = 12;
+
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+pub struct Kevent64 {
+    pub ident: u64,
+    pub filter: i16,
+    pub flags: u16,
+    pub fflags: u32,
+    pub data: i64,
+    pub udata: u64,
+    pub ext: [u64; 2],
+}
+pub const EVFILT_TIMER: i16 = -7;
+pub const EV_ADD: u16 = 0x0001;
+pub const EV_ONESHOT: u16 = 0x0010;
+pub const EV_ERROR: u16 = 0x4000;
+pub const NOTE_NSECONDS: u32 = 0x0004;
+pub const NOTE_CRITICAL: u32 = 0x0020;
 
 /// The `struct sigaction` that libSystem's `sigaction()` takes (not the
 /// kernel's `struct __sigaction`, which adds a trampoline): the handler union,
@@ -119,3 +139,13 @@ pub const FD_CLOEXEC: c_int = 1;
 pub const O_RDWR: c_int = 0x0002;
 pub const O_CLOEXEC: c_int = 0x0100_0000;
 pub const O_NOCTTY: c_int = 0x0002_0000;
+pub const O_RDONLY: c_int = 0;
+pub const O_CREAT: c_int = 0x0200;
+pub const O_EXCL: c_int = 0x0800;
+pub const PROT_READ: c_int = 1;
+pub const PROT_WRITE: c_int = 2;
+pub const MAP_SHARED: c_int = 1;
+pub const EEXIST: c_int = 17;
+pub const ENOENT: c_int = 2;
+pub const SIG_BLOCK: c_int = 1;
+pub const SIG_SETMASK: c_int = 3;

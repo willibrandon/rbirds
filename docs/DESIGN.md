@@ -76,6 +76,11 @@ Use owned structs for configuration, simulation, render state, input parsing, an
 
 Application time is an explicit input. Preserve the distinction between elapsed wall time, frame duration, flight time, and encoded recording time. Live execution measures a monotonic clock; tests inject durations and event timing. Recording advances its encoded clock independently of machine speed. Do not add a new fixed-step accumulator, frame-delta cap, or pause policy during the port.
 
+Live scheduling now follows monotonic frame deadlines rather than allowing
+sleep overshoot to accumulate (D-006). The simulation still receives measured
+frame durations, and injected-time and recording comparisons remain exact.
+Efficiency and playback qualification are described in [PERFORMANCE.md](PERFORMANCE.md).
+
 Use `Vec`/slices for contiguous storage and preserve iteration order. Reuse grid, sprite, canvas, cell, and output buffers. Preallocate before steady-state drawing where practical. Population changes and resizes can allocate; failures must preserve the C recovery behavior where it is defined. Avoid unordered containers in any path that affects numerical accumulation, random draws, palette ordering, or protocol output.
 
 Rendering produces bytes separately from writing those bytes. All renderers share a pending-output buffer that retains an unwritten suffix. Input remains serviceable during output backpressure. Do not discard, repeat, reorder, or replace a partially written frame.

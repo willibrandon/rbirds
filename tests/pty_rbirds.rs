@@ -13,6 +13,7 @@
 mod support;
 
 use std::sync::Mutex;
+use std::time::Duration;
 
 use rbirds::platform;
 use support::oracle;
@@ -26,6 +27,107 @@ fn serial() -> std::sync::MutexGuard<'static, ()> {
 
 fn rbirds() -> Subject {
     Subject { exe: oracle::rust_binary(), name: "rbirds".into() }
+}
+
+#[test]
+fn live_trace_covers_every_flushed_frame_and_reports_cpu_time() {
+    let _serial = serial();
+    let path = std::env::temp_dir().join(format!("rbirds-trace-{}.jsonl", std::process::id()));
+    let before = platform::measurement_clock_ns().unwrap();
+    let outcome = pty::run(
+        &pty::Spec::new(&rbirds(), &["--frames", "8", "--color", "ember", "--birds", "10"])
+            .env("RBIRDS_TRACE", &path)
+            .env("RBIRDS_TRACE_SESSION", "42"),
+    );
+    let after = platform::measurement_clock_ns().unwrap();
+    assert_eq!(outcome.exit, Some(pty::Exit::Code(0)), "{}", outcome.describe());
+    outcome.assert_attributes_restored();
+    let report = std::fs::read_to_string(&path).unwrap();
+    std::fs::remove_file(&path).unwrap();
+    let lines: Vec<_> = report.lines().collect();
+    assert_eq!(lines.len(), 9);
+    assert!(lines[0].contains("\"samples\":8,\"omitted\":0"));
+    assert!(lines[0].contains("\"cpu_us\":"));
+    assert!(!lines[0].contains("\"cpu_us\":0,"));
+    assert!(lines[0].contains("\"version\":2,"));
+    assert!(lines[0].contains("\"session\":42,"));
+    assert!(lines[0].contains(platform::MEASUREMENT_CLOCK));
+    let number = |line: &str, key: &str| -> u64 {
+        line.split(&format!("\"{key}\":"))
+            .nth(1)
+            .unwrap()
+            .split([',', '}'])
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap()
+    };
+    let mut previous = number(lines[0], "begin_ns");
+    let end = number(lines[0], "end_ns");
+    assert!(before <= previous && previous <= end && end <= after);
+    for line in &lines[1..] {
+        assert!(line.starts_with("{\"kind\":\"frame\","));
+        assert!(line.contains("\"wake_late_us\":"));
+        assert!(line.contains("\"flush_us\":"));
+        let submitted = number(line, "submitted_ns");
+        assert!(previous <= submitted && submitted <= end);
+        previous = submitted;
+    }
+}
+
+#[test]
+fn paused_playback_sends_nothing_steps_once_and_sleeps_even_when_unlocked() {
+    use support::pty::{Action, Spec, Step};
+    let _serial = serial();
+    let path =
+        std::env::temp_dir().join(format!("rbirds-paused-trace-{}.jsonl", std::process::id()));
+    for unlocked in [false, true] {
+        let mut args = vec!["--color", "ember", "--birds", "100"];
+        if unlocked {
+            args.push("--unlock-fps");
+        }
+        let frame_end = b"\x1b[?2026l";
+        let outcome = pty::run(
+            &Spec::new(&rbirds(), &args)
+                .env("RBIRDS_TRACE", &path)
+                .step(Step::after_output(frame_end, Action::Input(b" ".to_vec())))
+                .step(Step::after(Duration::from_millis(200), Action::Mark("idle begin")))
+                .step(Step::after(Duration::from_millis(200), Action::Mark("idle end")))
+                .step(Step::after(Duration::ZERO, Action::Input(b".".to_vec())))
+                .step(Step::after_output(frame_end, Action::Mark("stepped")))
+                .step(Step::after(Duration::from_millis(200), Action::Mark("still")))
+                .step(Step::after(Duration::ZERO, Action::Input(b"q".to_vec()))),
+        );
+        assert_eq!(outcome.exit, Some(pty::Exit::Code(0)), "{}", outcome.describe());
+        outcome.assert_attributes_restored();
+        let offset = |name: &str| outcome.events.iter().find(|e| e.what == name).unwrap().offset;
+        assert_eq!(offset("mark idle begin"), offset("mark idle end"));
+        let stepped = &outcome.transcript[offset("mark idle end")..offset("mark stepped")];
+        assert_eq!(stepped.windows(frame_end.len()).filter(|bytes| *bytes == frame_end).count(), 1);
+        assert_eq!(offset("mark stepped"), offset("mark still"));
+        let report = std::fs::read_to_string(&path).unwrap();
+        let idle_starts: Vec<u64> = report
+            .lines()
+            .filter(|line| line.contains("\"drawn\":false"))
+            .map(|line| {
+                line.split("\"start_us\":")
+                    .nth(1)
+                    .unwrap()
+                    .split(',')
+                    .next()
+                    .unwrap()
+                    .parse()
+                    .unwrap()
+            })
+            .collect();
+        assert!(idle_starts.len() >= 5, "no paused ticks: {report}");
+        let span = idle_starts.last().unwrap() - idle_starts.first().unwrap();
+        assert!(
+            idle_starts.len() as u64 <= span / 10_000 + 5,
+            "paused loop spun while unlocked={unlocked}"
+        );
+    }
+    std::fs::remove_file(path).unwrap();
 }
 
 macro_rules! rust_case {

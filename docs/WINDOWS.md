@@ -66,8 +66,12 @@ is separate. Support here is based on capability replies, not the terminal name.
 
 `--render sixel` is explicit on every platform. Startup asks for primary device
 attributes (`CSI c`) and requires capability `4`, then asks for graphics cell
-dimensions (`CSI 16 t`). Missing or invalid replies fail clearly. Windows
-Terminal's virtual raster must be used instead of the font's physical pixel
+dimensions (`CSI 16 t`). On Unix, a missing or invalid cell-size reply falls back
+to native terminal pixel dimensions only when both axes divide exactly into
+nonzero whole cells. This supports iTerm2 without guessing a font size. Windows
+still requires the query reply because console font metrics can differ from
+graphics pixels. If neither source supplies valid dimensions, startup fails
+clearly. Windows Terminal's virtual raster must be used instead of the font's physical pixel
 size. Window resizing recomputes the raster from columns/rows and the negotiated
 cell size; changing another emulator's cell size during a run requires restarting.
 
@@ -78,6 +82,14 @@ repaints it, so moving birds do not leave old pixels behind. This uses more
 bandwidth than retained Kitty sprites and quantizes colors; it is not a
 byte-for-byte Kitty replacement. The panel is drawn over the raster, with
 synchronized updates around each frame.
+
+Startup also requests the terminal's name with `XTVERSION`. For iTerm2, each
+Sixel frame explicitly erases the previous image inside its synchronized update.
+Overwriting the image directly can display iTerm2's brown missing-image
+placeholder across the window. This workaround leaves the encoded raster intact;
+other terminals keep their existing replacement path. See the
+[visible-window evidence](evidence/live-2026-09-26-macos-arm64.md) for its measured
+cadence and limits.
 
 Sixel display mode (`DECSDM`, private mode 80) clips the image at the viewport
 instead of scrolling. rbirds queries and restores its prior state; if an emulator
@@ -95,7 +107,9 @@ and code pages are saved and restored. These choices follow Microsoft's
 and [VT sequence documentation](https://learn.microsoft.com/en-us/windows/console/console-virtual-terminal-sequences).
 
 A single writer thread holds at most one 64 KiB chunk so keys remain serviceable
-while output is blocked. Shutdown allows a short drain, then cancels a blocked
+while output is blocked. Its transfer buffer is reused, and the main thread
+waits on input, completion and cancellation events rather than polling a timer.
+Shutdown allows a short drain, then cancels a blocked
 write, and gives up on a write that can't be cancelled after a second. If output
 cannot drain, it cannot carry screen-cleanup sequences; native console
 modes/code pages are still restored. Normal exit, handled Ctrl events,
