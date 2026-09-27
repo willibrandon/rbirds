@@ -425,6 +425,61 @@ pause/resume trace were checked explicitly.
 The [paused-playback archive](live-paused-2026-09-26-macos-arm64.tar.gz) retains
 measurements, traces, validation logs, drivers and source changes.
 
+## Further iTerm and neighbor-cache checks
+
+A fresh thirty-second foreground Sixel capture of `dcbfd4c` found zero
+mostly-yellow samples among 2,731. The greatest yellow-pixel fraction was
+10.14%, consistent with the yellow birds on the dark background in the saved
+screenshot. Changed samples averaged 46.95/s, with a p99 interval of 34.25 ms
+and maximum of 41.75 ms. The capture process used 1.15 CPU seconds; this was
+not a CPU comparison. The 2,400-frame command exited successfully, and its
+dedicated window was closed. This confirms that the subsequent CPU changes
+retain the Sixel flicker workaround; the presentation-rate limitation remains.
+All seven Sixel regression tests passed again, including exact raster decoding,
+erase ordering, resize and terminal identification.
+
+An iTerm-only Kitty prototype replaced image-number addressing with explicit
+image IDs. Birds became visible, but the application submitted only about 21
+frames/s and a separate ten-second capture measured only 2.53 changed samples/s,
+with a maximum interval of 704.87 ms. The 1,200-frame command took 58.17 seconds.
+This prototype was discarded.
+
+A separate intrusive iTerm profile traced most display-command samples through
+the rebuilding of the draw list. In iTerm 3.6.6, each
+[placement invokes its delegate](https://github.com/gnachman/iTerm2/blob/v3.6.6/sources/KittyImageController.swift#L805),
+which immediately
+[rebuilds the list](https://github.com/gnachman/iTerm2/blob/v3.6.6/sources/VT100ScreenMutableState.m#L6584).
+That operation
+[filters, converts and sorts all placements](https://github.com/gnachman/iTerm2/blob/v3.6.6/sources/KittyImageController.swift#L1065).
+With hundreds of bird placements per frame, this repeats substantial terminal
+work. Addressing compatibility alone therefore does not establish usable
+Kitty playback in this version of iTerm. These profile stacks are diagnostic
+evidence, not a CPU reduction measurement.
+
+A separate simulation experiment packed neighbor positions, flock, layer and
+cached heading into a contiguous array. It retained arithmetic and traversal
+order and passed 17 C simulation comparisons, four floating-point checks and
+three allocation checks. Two alternating construction pairs gave:
+
+| Configuration | Before ms/frame | Prototype ms/frame |
+| --- | ---: | ---: |
+| Kitty, default population | 0.2920 | 0.2885 |
+| Kitty, trails/depth/hawks/flocks, speed 12 | 0.9325 | 0.8985 |
+| Kitty, 4,096 birds | 2.5625 | 2.4460 |
+| Kitty, 32 birds | 0.0090 | 0.0095 |
+| Braille, default population | 1.0005 | 1.0030 |
+
+Every pair retained identical output byte counts; that check alone does not
+establish pixel equivalence. These are construction timings without terminal
+painting. The modest crowded-case gain came with a larger stack cache and no
+demonstrated default-session saving. The experiment was discarded without
+claiming an improvement in live CPU use.
+
+The [diagnostic archive](live-diagnostics-2026-09-26-macos-arm64.tar.gz) retains
+both rejected patches, benchmark samples, profiles, captures, executable
+hashes and an independently checked file manifest. Neither prototype is in
+the accepted source or the current release executable.
+
 ## Wider atlas experiment
 
 A follow-up prototype packed sprites into two-dimensional pages, keeping the
