@@ -308,6 +308,73 @@ The [heading and panel archive](live-panels-2026-09-26-macos-arm64.tar.gz) retai
 these samples, the prototype results, corrected event scripts, screenshots of
 the dedicated test windows, source changes and executable hashes.
 
+## Cell color selection
+
+A fresh six-second application stack sample of `c1513cb` identified
+`read_patch` as the largest active stack in default text playback. The sample
+ran separately from CPU comparisons. The reader calculated both a dominant
+color and an average for every patch, although it uses only the dominant color
+until its eight-entry color table fills.
+
+The reader now calculates the average only when the eighth distinct visible
+color appears, then stops building the histogram. That fallback restarts the
+original floating-point sums in the original pixel order. Transparent colors
+do not count toward the limit, and dominant-color ties retain their ordering.
+The C cell oracle covers both paths, including a new boundary case with an
+eighth color at different positions and alpha values. Glyphs, emitted bytes
+and reconstructed pixels remain exact; steady-state allocation checks pass.
+
+Two alternating construction pairs used seed 42 and 1,000 frames per run,
+after one warm-up per build. Median frame construction times were:
+
+| Renderer | Ordinary sprite, ms before → after | Shaded custom sprite, ms before → after |
+| --- | ---: | ---: |
+| Braille | 1.094 → 1.015 | 1.365 → 0.938 |
+| Sextants | 1.086 → 1.016 | 1.363 → 0.938 |
+| Blocks | 1.032 → 0.911 | 1.337 → 0.909 |
+
+The custom sprite is a retained 32×32 gradient disk with many distinct colors.
+Output byte counts matched within each scenario. These construction results
+exclude terminal work and do not measure presentation.
+
+Foreground comparisons used dedicated Kitty 0.44.0 processes, the same
+114×40-cell / 1596×1000-pixel viewport, seed 42 and 1,800 ticks. Each CPU sample
+covered twenty seconds after three seconds of warm-up. Two pairs ran in
+before/after/after/before order, without capture, profiling, builds or tests.
+
+| Renderer | Application CPU ms/s, before → after | Terminal CPU ms/s | Combined CPU ms/s |
+| --- | ---: | ---: | ---: |
+| default | 223.25 → 193.05 | 127.01 → 113.36 | 350.27 → 306.41 |
+| blocks | 216.97 → 195.50 | 127.20 → 132.18 | 344.17 → 327.68 |
+
+These are medians of two runs per build. Combined CPU fell in both pairs:
+5–20% for default and 2–8% for blocks. Terminal readings varied, and the
+simulation follows elapsed time, so the median is not a guaranteed saving.
+Compositor and GPU costs remain outside these counters. This change does not
+affect Kitty graphics or Sixel rendering.
+
+Application traces stayed near 60 Hz. One default candidate run had a 25.11 ms
+start interval; the other seven runs had none above 25 ms. Median encoding
+time fell from about 1.73 to 1.35 ms for default and from 1.69 to 1.19 ms for
+blocks. Separate twelve-second foreground captures measured 59.69 and 59.83
+changed samples/s respectively. Their p99 intervals were 26.90 and 25.29 ms,
+and maxima were 30.37 and 37.89 ms, with no gaps above 50 ms. The capture
+process used about 0.75 CPU seconds in each run. These samples do not prove
+physical scanout timing or the absence of every possible stall.
+
+An additional iTerm 3.6.6 Kitty-protocol check produced a blank window: all 936
+capture samples had the same content hash. A capability query returned `OK`.
+A smaller probe then isolated image addressing: an upload using image number
+`I` succeeded, but placements using that number received no reply and drew
+nothing. Uploads and placements using explicit image ID `i` returned `OK`
+and appeared, including cropped placements. This identifies another
+compatibility issue to resolve; the text-reader change does not address it.
+
+Raw CPU intervals, traces, construction runs, captures, protocol replies and
+validation logs are retained in
+[`live-cell-colour-2026-09-26-macos-arm64.tar.gz`](live-cell-colour-2026-09-26-macos-arm64.tar.gz),
+with source changes, executable hashes and an independently checked manifest.
+
 ## Paused playback
 
 Previously, pause stopped flight but continued rebuilding the spatial grid and

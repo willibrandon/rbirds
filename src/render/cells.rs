@@ -174,7 +174,7 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
     let mut colour = [[0u8; 3]; PATCH_COLOURS];
     let mut weight = [0.0f64; PATCH_COLOURS];
     let mut colours = 0usize;
-    let (mut alpha_sum, mut red, mut green, mut blue) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let mut alpha_sum = 0.0f64;
     let mut counted: i64 = 0;
     // The C walks the whole rectangle and skips what lies off the canvas; only
     // the pixels on it do anything, so the walk starts and stops at the canvas
@@ -193,47 +193,68 @@ fn read_patch(canvas: &Image, x0: i32, y0: i32, width: i32, height: i32) -> Patc
             if a == 0.0 {
                 continue;
             }
-            // fma: cells.c:130:17
-            red = mul_add(f64::from(px[0]), a, red);
-            // fma: cells.c:131:19
-            green = mul_add(f64::from(px[1]), a, green);
-            // fma: cells.c:132:18
-            blue = mul_add(f64::from(px[2]), a, blue);
             let rgb = [px[0], px[1], px[2]];
             let mut slot = 0;
             while slot < colours && colour[slot] != rgb {
                 slot += 1;
             }
-            if slot == colours && colours < PATCH_COLOURS {
+            if slot == colours {
+                // A full table selects the mean, even with exactly eight
+                // colours. Stop looking up colours as soon as that is known.
+                if colours + 1 == PATCH_COLOURS {
+                    return read_mean_patch(canvas, x_start, y_start, x_end, y_end);
+                }
                 colour[colours] = rgb;
                 colours += 1;
             }
-            if slot < colours {
-                weight[slot] += a;
-            }
+            weight[slot] += a;
         }
     }
     if counted == 0 || alpha_sum == 0.0 {
         return patch;
     }
     patch.coverage = alpha_sum / counted as f64;
-    let mut best: Option<usize> = None;
-    for slot in 0..colours {
-        if best.is_none_or(|best| weight[slot] > weight[best]) {
-            best = Some(slot);
+    let mut best = 0;
+    for slot in 1..colours {
+        if weight[slot] > weight[best] {
+            best = slot;
         }
     }
-    match best {
-        Some(best) if colours < PATCH_COLOURS => patch.rgb = colour[best],
-        _ => {
-            // More colours than the table holds: a sprite of somebody's own,
-            // with shading of its own. The mean is the honest answer for that.
-            patch.rgb[0] = (red / alpha_sum + 0.5) as u8;
-            patch.rgb[1] = (green / alpha_sum + 0.5) as u8;
-            patch.rgb[2] = (blue / alpha_sum + 0.5) as u8;
-        }
-    }
+    patch.rgb = colour[best];
     patch
+}
+
+/// Shaded sprites can fill the colour table. Only then compute the mean,
+/// restarting the sums in the reference's pixel order to preserve rounding.
+fn read_mean_patch(canvas: &Image, x0: i32, y0: i32, x1: i32, y1: i32) -> Patch {
+    let (mut alpha_sum, mut red, mut green, mut blue) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let mut counted = 0_i64;
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let at = canvas.offset(x, y);
+            let px = &canvas.pixels[at..at + 4];
+            let a = f64::from(px[3]);
+            counted += 1;
+            alpha_sum += a;
+            if a == 0.0 {
+                continue;
+            }
+            // fma: cells.c:130:17
+            red = mul_add(f64::from(px[0]), a, red);
+            // fma: cells.c:131:19
+            green = mul_add(f64::from(px[1]), a, green);
+            // fma: cells.c:132:18
+            blue = mul_add(f64::from(px[2]), a, blue);
+        }
+    }
+    Patch {
+        coverage: alpha_sum / counted as f64,
+        rgb: [
+            (red / alpha_sum + 0.5) as u8,
+            (green / alpha_sum + 0.5) as u8,
+            (blue / alpha_sum + 0.5) as u8,
+        ],
+    }
 }
 
 fn inked(patch: &Patch) -> bool {

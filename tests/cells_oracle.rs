@@ -570,6 +570,32 @@ fn every_style_colour_mode_and_cell_size_matches_the_reference() {
     }
 }
 
+#[test]
+fn filling_the_colour_table_switches_to_the_reference_mean() {
+    let Some(exe) = oracle() else { return };
+    for style in STYLES {
+        for truecolor in [true, false] {
+            let mut ops = vec![Op::Init(truecolor), Op::Resize(1, 1)];
+            for (x, y) in [(0, 0), (7, 7), (3, 4)] {
+                for alpha in [0, 1, 63, 64, 255] {
+                    let mut image = sky(8, 8);
+                    for col in 0..8 {
+                        // Seven colours; the first has twice the weight.
+                        let shade = (col % 7) as u8;
+                        fill(&mut image, col, 0, 1, 8, [24 + shade * 16, 40, 70, 255]);
+                    }
+                    frame(&mut ops, image.clone(), style, 8, 8);
+                    // An eighth colour, early or late in the scan, switches
+                    // to the mean only when its alpha is nonzero.
+                    fill(&mut image, x, y, 1, 1, [249, 250, 251, alpha]);
+                    frame(&mut ops, image, style, 8, 8);
+                }
+            }
+            check(&exe, &format!("colour-table-{style:?}-{truecolor}"), &ops);
+        }
+    }
+}
+
 /// Changed cells at chosen columns of a wide row: hops of 98 and 99 are a
 /// cursor forward, 100 and 101 an absolute move, and the panel's corner
 /// forgets where the cursor is.
