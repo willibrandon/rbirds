@@ -21,7 +21,7 @@ jobs:
     outputs:
       commit: ${{ steps.main.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - id: main
         env:
           GH_TOKEN: ${{ github.token }}
@@ -48,7 +48,7 @@ jobs:
     env:
       COMMIT: ${{ needs.check.outputs.commit }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: rustup show active-toolchain || rustup toolchain install
       - name: Comparison suite against cbirds main
         run: |
@@ -58,7 +58,7 @@ jobs:
             cargo test --release --all-targets --locked --offline --no-fail-fast 2>&1 | tee suite.log
           awk '/^ *Running / { file = $0; sub(/^ *Running (unittests )?/, "", file); sub(/ .*/, "", file) }
                /^test .* \.\.\. FAILED$/ { print file "::" $2 }' suite.log > failures.txt
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: failures-${{ matrix.os }}
@@ -74,8 +74,8 @@ jobs:
       COMMIT: ${{ needs.check.outputs.commit }}
       GH_TOKEN: ${{ github.token }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
         with:
           path: results
       - run: |
